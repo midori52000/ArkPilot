@@ -1,0 +1,25 @@
+# Upstream source snapshot kept outside this workspace repo
+/codex-main/
+/codex-main.zip
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# DevEco / HarmonyOS generated outputs
+/Agent/.hvigor/
+/Agent/.idea/
+/Agent/oh_modules/
+/Agent/node_modules/
+/Agent/build/
+/Agent/entry/build/
+/Agent/entry/.cxx/
+/Agent/local.properties
+
+# Rust cross-compilation cache for the embedded OHOS host
+/Agent/.cargo-target/
+
+# Local logs and generated diagnostics
+/Agent/build_codex_ohos_host_full.log
