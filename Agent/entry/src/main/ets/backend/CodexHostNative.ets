@@ -1,11 +1,4 @@
-import codexHost from 'libcodexhost.so';
-
-interface NativeCodexHostStatus {
-  code: number;
-  running: boolean;
-  serverUrl: string;
-  message: string;
-}
+import codexHost, { NativeCodexHostStatus } from 'libcodexhost.so';
 
 export class CodexHostStatus {
   code: number;

@@ -22,7 +22,20 @@ get_filename_component(
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../.."
     ABSOLUTE
 )
-set(RUST_TARGET_TRIPLE "aarch64-unknown-linux-ohos")
+
+set(OHOS_ARCH_ABI "${CMAKE_OHOS_ARCH_ABI}")
+if(NOT OHOS_ARCH_ABI)
+    set(OHOS_ARCH_ABI "${OHOS_ARCH}")
+endif()
+
+if(OHOS_ARCH_ABI STREQUAL "arm64-v8a")
+    set(RUST_TARGET_TRIPLE "aarch64-unknown-linux-ohos")
+elseif(OHOS_ARCH_ABI STREQUAL "x86_64")
+    set(RUST_TARGET_TRIPLE "x86_64-unknown-linux-ohos")
+else()
+    message(FATAL_ERROR "Unsupported OHOS ABI for codexhost: ${OHOS_ARCH_ABI}")
+endif()
+
 set(RUST_TARGET_DIR "${AGENT_ROOT_DIR}/.cargo-target/codex-ohos-host")
 set(OHOS_LLVM_BIN_DIR "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native/llvm/bin")
 set(OHOS_CMAKE_BIN_DIR "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native/build-tools/cmake/bin")
@@ -41,7 +54,7 @@ set(RUST_STATIC_LIB
 
 add_custom_command(
     OUTPUT "${RUST_STATIC_LIB}"
-    COMMAND cmd /c "${RUST_BUILD_SCRIPT}" "${RUST_WORKSPACE_DIR}" "${RUST_TARGET_DIR}" "${RUST_PROFILE_DIR}"
+    COMMAND cmd /c "${RUST_BUILD_SCRIPT}" "${RUST_WORKSPACE_DIR}" "${RUST_TARGET_DIR}" "${RUST_PROFILE_DIR}" "${RUST_TARGET_TRIPLE}"
     WORKING_DIRECTORY "${RUST_WORKSPACE_DIR}"
     DEPENDS
         "${RUST_WORKSPACE_DIR}/Cargo.toml"
@@ -49,6 +62,10 @@ add_custom_command(
         "${RUST_WORKSPACE_DIR}/ohos-host/Cargo.toml"
         "${RUST_WORKSPACE_DIR}/ohos-host/src/lib.rs"
         "${RUST_WORKSPACE_DIR}/core/src/tools/runtimes/apply_patch.rs"
+        "${RUST_WORKSPACE_DIR}/toolchains/ohos-aarch64-clang.cmd"
+        "${RUST_WORKSPACE_DIR}/toolchains/ohos-aarch64-clangxx.cmd"
+        "${RUST_WORKSPACE_DIR}/toolchains/ohos-x86_64-clang.cmd"
+        "${RUST_WORKSPACE_DIR}/toolchains/ohos-x86_64-clangxx.cmd"
         "${RUST_BUILD_SCRIPT}"
     COMMENT "Building embedded codex-ohos-host (${RUST_PROFILE_DIR})"
     VERBATIM
@@ -66,7 +83,7 @@ add_dependencies(codex_ohos_host codex_ohos_host_build)
 
 add_library(codexhost SHARED napi_init.cpp)
 add_dependencies(codexhost codex_ohos_host_build)
-set(CODEXHOST_STAGE_DIR "${CMAKE_BINARY_DIR}/staging/arm64-v8a")
+set(CODEXHOST_STAGE_DIR "${CMAKE_BINARY_DIR}/staging/${OHOS_ARCH_ABI}")
 set_target_properties(
     codexhost
     PROPERTIES

@@ -93,6 +93,8 @@ struct Index {
     new SelectorOption('xhigh', 'xhigh')
   ];
   private backendSubscriptionId: number = -1;
+  private reconnectTimerId: number = -1;
+  private reconnectAttemptCount: number = 0;
   private readonly workspaceRoots: Map<number, string> = new Map();
 
   @State private activeWorkspaceId: number = 1;
@@ -134,13 +136,14 @@ struct Index {
     });
     this.applyBackendSnapshot(codexBackend.snapshot());
     this.applyEmbeddedHostStatus();
-    void this.connectEmbeddedHost();
+    this.scheduleEmbeddedHostReconnect(0);
   }
 
   aboutToDisappear(): void {
     if (this.backendSubscriptionId >= 0) {
       codexBackend.unsubscribe(this.backendSubscriptionId);
     }
+    this.clearReconnectTimer();
   }
 
   private applyBackendSnapshot(snapshot: CodexBackendSnapshot): void {
@@ -174,6 +177,21 @@ struct Index {
         '如果持续失败，需要检查 native/Rust 构建产物是否被正确打包。'
       ];
     }
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimerId >= 0) {
+      clearTimeout(this.reconnectTimerId);
+      this.reconnectTimerId = -1;
+    }
+  }
+
+  private scheduleEmbeddedHostReconnect(delayMs: number): void {
+    this.clearReconnectTimer();
+    this.reconnectTimerId = setTimeout(() => {
+      this.reconnectTimerId = -1;
+      void this.connectEmbeddedHost();
+    }, delayMs);
   }
 
   private activeWorkspace(): WorkspaceItem {
@@ -215,6 +233,7 @@ struct Index {
     codexBackend.configureServerUrl(this.serverUrl);
 
     const workspace: WorkspaceItem = this.activeWorkspace();
+    this.applyEmbeddedHostStatus();
     try {
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(
@@ -263,6 +282,8 @@ struct Index {
 
     try {
       await codexBackend.connect();
+      this.reconnectAttemptCount = 0;
+      this.clearReconnectTimer();
       this.summaryTitle = '连接成功';
       this.summaryPoints = [
         'initialize / initialized 握手已经完成。',
@@ -290,13 +311,17 @@ struct Index {
         '现在可以直接发送 turn/start 请求。'
       ];
     } catch (err) {
+      this.reconnectAttemptCount += 1;
       const hostStatus = getEmbeddedCodexHostStatus();
+      const retryDelayMs: number = Math.min(1500 * this.reconnectAttemptCount, 6000);
       this.summaryTitle = '应用内后端连接失败';
       this.summaryPoints = [
         hostStatus.message.length > 0 ? hostStatus.message : 'embedded host status unavailable',
         JSON.stringify(err),
+        `ç³»ç»Ÿå°†åœ¨ ${retryDelayMs} ms åŽè‡ªåŠ¨é‡è¯•è¿žæŽ¥ã€‚`,
         '可以点击连接按钮重试，或者检查 native 日志。'
       ];
+      this.scheduleEmbeddedHostReconnect(retryDelayMs);
     }
   }
 
