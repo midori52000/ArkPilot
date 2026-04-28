@@ -7,7 +7,12 @@ import {
   CodexTurnRequest,
   CodexTurnResult
 } from '../backend/CodexBackend';
-import { getEmbeddedCodexHostStatus } from '../backend/CodexHostNative';
+import {
+  CodexProviderConfig,
+  getEmbeddedCodexHostStatus,
+  getEmbeddedCodexProviderConfig,
+  saveEmbeddedCodexProviderConfig
+} from '../backend/CodexHostNative';
 
 class WorkspaceItem {
   id: number;
@@ -76,14 +81,6 @@ struct Index {
     '总结最近一次改动',
     '解释右侧 diff'
   ];
-  private readonly modelOptions: SelectorOption[] = [
-    new SelectorOption('默认', 'default'),
-    new SelectorOption('gpt-5.5', 'gpt-5.5'),
-    new SelectorOption('gpt-5.4', 'gpt-5.4'),
-    new SelectorOption('gpt-5.4-mini', 'gpt-5.4-mini'),
-    new SelectorOption('gpt-5.3-codex', 'gpt-5.3-codex'),
-    new SelectorOption('gpt-5.2', 'gpt-5.2')
-  ];
   private readonly effortOptions: SelectorOption[] = [
     new SelectorOption('默认', 'default'),
     new SelectorOption('minimal', 'minimal'),
@@ -98,12 +95,18 @@ struct Index {
   private readonly workspaceRoots: Map<number, string> = new Map();
 
   @State private activeWorkspaceId: number = 1;
-  @State private selectedModelIndex: number = 0;
   @State private selectedEffortIndex: number = 0;
-  @State private showModelOptions: boolean = false;
   @State private showEffortOptions: boolean = false;
   @State private serverUrl: string = 'ws://127.0.0.1:7456';
   @State private workspaceRoot: string = '';
+  @State private providerBaseUrl: string = '';
+  @State private providerApiKey: string = '';
+  @State private manualModel: string = '';
+  @State private providerStatusText: string = 'Provider config not loaded yet.';
+  @State private isSavingProvider: boolean = false;
+  @State private apiKey: string = '';
+  @State private isAuthenticating: boolean = false;
+  @State private authStatusText: string = 'æœªç™»å½•';
   @State private connectionState: CodexConnectionState = 'disconnected';
   @State private connectionText: string = '未连接';
   @State private summaryTitle: string = '等待连接真实 app-server';
@@ -136,6 +139,7 @@ struct Index {
     });
     this.applyBackendSnapshot(codexBackend.snapshot());
     this.applyEmbeddedHostStatus();
+    this.loadProviderConfig();
     this.scheduleEmbeddedHostReconnect(0);
   }
 
@@ -204,11 +208,19 @@ struct Index {
   }
 
   private currentModelLabel(): string {
-    return this.modelOptions[this.selectedModelIndex].label;
+    const model: string = this.manualModel.trim();
+    if (model.length === 0) {
+      return 'default';
+    }
+    return model;
   }
 
   private currentModelValue(): string {
-    return this.modelOptions[this.selectedModelIndex].value;
+    const model: string = this.manualModel.trim();
+    if (model.length === 0) {
+      return 'default';
+    }
+    return model;
   }
 
   private currentEffortLabel(): string {
@@ -252,7 +264,7 @@ struct Index {
       this.draft = '';
     } catch (err) {
       this.summaryTitle = '调用失败';
-      this.summaryPoints = [JSON.stringify(err)];
+      this.summaryPoints = [this.describeError(err)];
     } finally {
       this.isRunning = false;
     }
@@ -282,6 +294,7 @@ struct Index {
 
     try {
       await codexBackend.connect();
+      this.loadProviderConfig();
       this.reconnectAttemptCount = 0;
       this.clearReconnectTimer();
       this.summaryTitle = '连接成功';
@@ -292,7 +305,7 @@ struct Index {
       ];
     } catch (err) {
       this.summaryTitle = '连接失败';
-      this.summaryPoints = [JSON.stringify(err)];
+      this.summaryPoints = [this.describeError(err)];
     }
   }
 
@@ -304,6 +317,7 @@ struct Index {
     try {
       codexBackend.configureServerUrl(this.serverUrl);
       await codexBackend.connect();
+      this.loadProviderConfig();
       this.summaryTitle = '应用内后端连接成功';
       this.summaryPoints = [
         'initialize / initialized 握手已经完成。',
@@ -317,11 +331,78 @@ struct Index {
       this.summaryTitle = '应用内后端连接失败';
       this.summaryPoints = [
         hostStatus.message.length > 0 ? hostStatus.message : 'embedded host status unavailable',
-        JSON.stringify(err),
+        this.describeError(err),
         `ç³»ç»Ÿå°†åœ¨ ${retryDelayMs} ms åŽè‡ªåŠ¨é‡è¯•è¿žæŽ¥ã€‚`,
         '可以点击连接按钮重试，或者检查 native 日志。'
       ];
       this.scheduleEmbeddedHostReconnect(retryDelayMs);
+    }
+  }
+
+  private async loginWithApiKey(): Promise<void> {
+    if (this.isAuthenticating) {
+      return;
+    }
+
+    const apiKey: string = this.apiKey.trim();
+    if (apiKey.length === 0) {
+      this.summaryTitle = 'ç™»å½•å¤±è´¥';
+      this.summaryPoints = ['è¯·å…ˆè¾“å…¥ OpenAI API Keyã€‚'];
+      return;
+    }
+
+    this.isAuthenticating = true;
+    try {
+      await codexBackend.loginWithApiKey(apiKey);
+      this.summaryTitle = 'OpenAI è®¤è¯å·²å°±ç»ª';
+      this.summaryPoints = [
+        'å·²ç»é€šè¿‡ account/login/start å®Œæˆ API Key ç™»å½•ã€‚',
+        'çŽ°åœ¨å¯ä»¥é‡æ–°å‘é€ä½ çš„é—®é¢˜ã€‚',
+        this.authStatusText
+      ];
+    } catch (err) {
+      this.summaryTitle = 'ç™»å½•å¤±è´¥';
+      this.summaryPoints = [this.describeError(err)];
+    } finally {
+      this.isAuthenticating = false;
+    }
+  }
+
+  private loadProviderConfig(): void {
+    const config: CodexProviderConfig = getEmbeddedCodexProviderConfig();
+    this.providerBaseUrl = config.baseUrl;
+    this.providerApiKey = config.apiKey;
+    this.manualModel = config.model;
+    this.providerStatusText = this.describeProviderConfig(config);
+  }
+
+  private async saveProviderConfig(): Promise<void> {
+    if (this.isSavingProvider) {
+      return;
+    }
+
+    this.isSavingProvider = true;
+    try {
+      const config: CodexProviderConfig = saveEmbeddedCodexProviderConfig(
+        this.providerBaseUrl.trim(),
+        this.providerApiKey.trim(),
+        this.manualModel.trim()
+      );
+      this.providerBaseUrl = config.baseUrl;
+      this.providerApiKey = config.apiKey;
+      this.manualModel = config.model;
+      this.providerStatusText = this.describeProviderConfig(config);
+      this.summaryTitle = 'Provider config saved';
+      this.summaryPoints = [
+        'base_url, api_key, and default model were written to CODEX_HOME/config.toml.',
+        'Restart the app to apply provider changes to the embedded app-server.',
+        this.providerStatusText
+      ];
+    } catch (err) {
+      this.summaryTitle = 'Provider config failed';
+      this.summaryPoints = [this.describeError(err)];
+    } finally {
+      this.isSavingProvider = false;
     }
   }
 
@@ -347,6 +428,24 @@ struct Index {
       return '连接中';
     }
     return '连接';
+  }
+
+  private authButtonLabel(): string {
+    return 'Log in';
+  }
+
+  private providerButtonLabel(): string {
+    if (this.isSavingProvider) {
+      return 'Saving...';
+    }
+    return 'Save provider';
+  }
+
+  private describeProviderConfig(config: CodexProviderConfig): string {
+    const baseUrl: string = config.baseUrl.trim().length > 0 ? config.baseUrl.trim() : 'https://api.openai.com/v1';
+    const model: string = config.model.trim().length > 0 ? config.model.trim() : 'default';
+    const auth: string = config.apiKey.trim().length > 0 ? 'API key set' : 'No API key';
+    return `base_url: ${baseUrl} | model: ${model} | ${auth}`;
   }
 
   private connectionChipBackground(): string {
@@ -427,6 +526,13 @@ struct Index {
 
   private isWorkspaceActive(item: WorkspaceItem): boolean {
     return this.activeWorkspaceId === item.id;
+  }
+
+  private describeError(err: Object): string {
+    if (err instanceof Error) {
+      return err.message;
+    }
+    return JSON.stringify(err);
   }
 
   @Builder
@@ -751,6 +857,69 @@ struct Index {
       .width('100%')
       .margin({ top: 14, bottom: 8 })
 
+      Column() {
+        this.panelTitle('Provider', 'Configure base_url, api_key, and the default model used by the embedded backend')
+
+        Text(this.providerStatusText)
+          .fontSize(11)
+          .fontColor('#334155')
+          .margin({ top: 10 })
+
+        TextInput({ text: this.providerBaseUrl, placeholder: 'https://api.openai.com/v1' })
+          .width('100%')
+          .height(38)
+          .margin({ top: 10 })
+          .fontSize(12)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.providerBaseUrl = value;
+          })
+
+        TextInput({ text: this.providerApiKey, placeholder: 'sk-...' })
+          .width('100%')
+          .height(38)
+          .margin({ top: 10 })
+          .fontSize(12)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.providerApiKey = value;
+          })
+
+        TextInput({ text: this.manualModel, placeholder: 'gpt-5.5 or a custom model id' })
+          .width('100%')
+          .height(38)
+          .margin({ top: 10 })
+          .fontSize(12)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.manualModel = value;
+          })
+
+        Button(this.providerButtonLabel())
+          .height(34)
+          .margin({ top: 10 })
+          .fontSize(12)
+          .backgroundColor('#111827')
+          .fontColor('#FFFFFF')
+          .borderRadius(16)
+          .onClick(() => {
+            void this.saveProviderConfig();
+          })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(12)
+      .margin({ bottom: 10 })
+      .backgroundColor('#FFFFFF')
+      .border({ width: 1, color: '#E2E8F0' })
+      .borderRadius(18)
+
       List({ space: 6 }) {
         ForEach(this.workspaces, (item: WorkspaceItem) => {
           ListItem() {
@@ -867,33 +1036,11 @@ struct Index {
 
       Column() {
         Row() {
-          this.selectorButton('模型', this.currentModelLabel(), this.showModelOptions, () => {
-            this.showModelOptions = !this.showModelOptions;
-            this.showEffortOptions = false;
-          })
-
-          Blank()
-            .width(8)
-
           this.selectorButton('推理', this.currentEffortLabel(), this.showEffortOptions, () => {
             this.showEffortOptions = !this.showEffortOptions;
-            this.showModelOptions = false;
           })
         }
         .width('100%')
-
-        if (this.showModelOptions) {
-          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-            ForEach(this.modelOptions, (item: SelectorOption, index: number) => {
-              this.optionChip(item, this.selectedModelIndex === index, () => {
-                this.selectedModelIndex = index;
-                this.showModelOptions = false;
-              })
-            })
-          }
-          .width('100%')
-          .margin({ top: 8 })
-        }
 
         if (this.showEffortOptions) {
           Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {

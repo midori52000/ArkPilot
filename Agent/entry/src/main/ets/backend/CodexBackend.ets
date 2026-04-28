@@ -5,6 +5,7 @@ export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupt
 export type CodexDiffKind = 'add' | 'delete' | 'context';
 export type CodexConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type CodexApprovalKind = 'command' | 'fileChange' | 'permissions';
+export type CodexAuthMode = 'none' | 'apiKey' | 'chatgpt' | 'chatgptAuthTokens' | 'unknown';
 export type CodexTurnUpdateHandler = (result: CodexTurnResult) => void;
 type BackendListener = (snapshot: CodexBackendSnapshot) => void;
 
@@ -89,6 +90,41 @@ class InitializeRequestParams {
 
 class InitializeResultPayload {
   platformOs?: string;
+}
+
+class LoginApiKeyRequestParams {
+  type: string = 'apiKey';
+  apiKey: string = '';
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+}
+
+class AccountPayload {
+  type?: string;
+  email?: string;
+  planType?: string;
+}
+
+class GetAccountRequestParams {
+  refreshToken: boolean = false;
+}
+
+class GetAccountResponsePayload {
+  account?: AccountPayload;
+  requiresOpenaiAuth: boolean = true;
+}
+
+class AccountUpdatedParams {
+  authMode?: string;
+  planType?: string;
+}
+
+class AccountLoginCompletedParams {
+  loginId?: string;
+  success: boolean = false;
+  error?: string;
 }
 
 class ThreadPayload {
@@ -402,17 +438,29 @@ export class CodexBackendSnapshot {
   connectionState: CodexConnectionState;
   connectionText: string;
   pendingApproval: CodexApprovalRequest | null;
+  authMode: CodexAuthMode;
+  requiresOpenAIAuth: boolean;
+  authStatusText: string;
+  planTypeText: string;
 
   constructor(
     serverUrl: string,
     connectionState: CodexConnectionState,
     connectionText: string,
-    pendingApproval: CodexApprovalRequest | null
+    pendingApproval: CodexApprovalRequest | null,
+    authMode: CodexAuthMode,
+    requiresOpenAIAuth: boolean,
+    authStatusText: string,
+    planTypeText: string
   ) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
     this.connectionText = connectionText;
     this.pendingApproval = pendingApproval;
+    this.authMode = authMode;
+    this.requiresOpenAIAuth = requiresOpenAIAuth;
+    this.authStatusText = authStatusText;
+    this.planTypeText = planTypeText;
   }
 }
 
@@ -476,6 +524,10 @@ export class CodexBackend {
   private listenerSequence: number = 1;
   private connectPromise: Promise<void> | null = null;
   private pendingApproval: CodexApprovalRequest | null = null;
+  private authMode: CodexAuthMode = 'none';
+  private requiresOpenAIAuth: boolean = true;
+  private authStatusText: string = '未登录';
+  private planTypeText: string = '';
 
   subscribe(listener: BackendListener): number {
     const subscriptionId: number = this.listenerSequence;
@@ -493,7 +545,11 @@ export class CodexBackend {
       this.serverUrl,
       this.connectionState,
       this.connectionText,
-      this.cloneApproval(this.pendingApproval)
+      this.cloneApproval(this.pendingApproval),
+      this.authMode,
+      this.requiresOpenAIAuth,
+      this.authStatusText,
+      this.planTypeText
     );
   }
 
@@ -519,6 +575,23 @@ export class CodexBackend {
       this.socket = null;
     }
     this.updateConnectionState('disconnected', '已断开连接');
+  }
+
+  async loginWithApiKey(apiKey: string): Promise<void> {
+    const trimmedApiKey: string = apiKey.trim();
+    if (trimmedApiKey.length === 0) {
+      throw new Error('è¯·è¾“å…¥æœ‰æ•ˆçš„ OpenAI API Keyã€‚');
+    }
+
+    await this.ensureConnected();
+    await this.sendRpcRequest(
+      new RpcRequestEnvelope(
+        this.nextRequestId(),
+        'account/login/start',
+        new LoginApiKeyRequestParams(trimmedApiKey)
+      )
+    );
+    await this.refreshAccountState();
   }
 
   async approvePendingRequest(): Promise<void> {
@@ -565,6 +638,9 @@ export class CodexBackend {
 
   async startTurn(request: CodexTurnRequest, onUpdate?: CodexTurnUpdateHandler): Promise<CodexTurnResult> {
     await this.ensureConnected();
+    if (this.requiresOpenAIAuth && this.authMode === 'none') {
+      throw new Error('å½“å‰åŽç«¯å°šæœªç™»å½• OpenAIã€‚è¯·å…ˆå¡«å†™ API Key å¹¶ç™»å½•ã€‚');
+    }
     const thread: CodexThreadRecord = await this.ensureRemoteThread(request);
     const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate);
     thread.activeTurn = pendingTurn;
@@ -635,6 +711,7 @@ export class CodexBackend {
       );
       await this.sendNotification(new RpcNotificationEnvelope('initialized'));
       this.initialized = true;
+      await this.refreshAccountState();
       const initializeResult: InitializeResultPayload = initializeResultObject as InitializeResultPayload;
       const platformOs: string = initializeResult.platformOs ?? 'unknown';
       this.updateConnectionState('connected', `已连接 · ${platformOs}`);
@@ -733,6 +810,16 @@ export class CodexBackend {
   }
 
   private handleNotification(method: string, paramsObject?: Object): void {
+    if (method === 'account/updated') {
+      this.handleAccountUpdated(paramsObject as AccountUpdatedParams);
+      return;
+    }
+
+    if (method === 'account/login/completed') {
+      this.handleAccountLoginCompleted(paramsObject as AccountLoginCompletedParams);
+      return;
+    }
+
     if (method === 'item/started') {
       this.handleItemStarted(paramsObject as ItemNotificationParams);
       return;
@@ -767,6 +854,98 @@ export class CodexBackend {
       this.pendingApproval = null;
       this.notifyListeners();
     }
+  }
+
+  private async refreshAccountState(): Promise<void> {
+    const payload: Object = await this.sendRpcRequest(
+      new RpcRequestEnvelope(this.nextRequestId(), 'account/read', new GetAccountRequestParams())
+    );
+    this.applyAccountState(payload as GetAccountResponsePayload);
+  }
+
+  private handleAccountUpdated(params?: AccountUpdatedParams): void {
+    if (params === undefined) {
+      return;
+    }
+
+    this.authMode = this.normalizeAuthMode(params.authMode);
+    this.planTypeText = params.planType ?? '';
+    this.authStatusText = this.authStatusFromMode(this.authMode);
+    this.notifyListeners();
+  }
+
+  private handleAccountLoginCompleted(params?: AccountLoginCompletedParams): void {
+    if (params === undefined) {
+      return;
+    }
+
+    if (!params.success) {
+      this.authStatusText = params.error ?? 'ç™»å½•å¤±è´¥';
+      this.notifyListeners();
+    }
+  }
+
+  private applyAccountState(payload: GetAccountResponsePayload): void {
+    this.requiresOpenAIAuth = payload.requiresOpenaiAuth !== false;
+    if (!this.requiresOpenAIAuth) {
+      this.authMode = 'unknown';
+      this.authStatusText = 'å½“å‰æ¨¡åž‹æä¾›æ–¹ä¸è¦æ±‚ OpenAI è®¤è¯';
+      this.planTypeText = '';
+      this.notifyListeners();
+      return;
+    }
+
+    const account: AccountPayload | undefined = payload.account;
+    if (account === undefined) {
+      this.authMode = 'none';
+      this.authStatusText = 'æœªç™»å½•';
+      this.planTypeText = '';
+      this.notifyListeners();
+      return;
+    }
+
+    this.authMode = this.normalizeAuthMode(account.type);
+    if (this.authMode === 'chatgpt' || this.authMode === 'chatgptAuthTokens') {
+      this.authStatusText = account.email ?? 'å·²ç™»å½• ChatGPT';
+    } else if (this.authMode === 'apiKey') {
+      this.authStatusText = 'å·²ä½¿ç”¨ API Key ç™»å½•';
+    } else {
+      this.authStatusText = 'å·²ç™»å½•';
+    }
+    this.planTypeText = account.planType ?? this.planTypeText;
+    this.notifyListeners();
+  }
+
+  private normalizeAuthMode(rawMode?: string): CodexAuthMode {
+    if (rawMode === 'apiKey') {
+      return 'apiKey';
+    }
+    if (rawMode === 'chatgpt') {
+      return 'chatgpt';
+    }
+    if (rawMode === 'chatgptAuthTokens') {
+      return 'chatgptAuthTokens';
+    }
+    if (rawMode === undefined || rawMode.length === 0) {
+      return 'none';
+    }
+    return 'unknown';
+  }
+
+  private authStatusFromMode(authMode: CodexAuthMode): string {
+    if (authMode === 'apiKey') {
+      return 'å·²ä½¿ç”¨ API Key ç™»å½•';
+    }
+    if (authMode === 'chatgpt') {
+      return 'å·²ç™»å½• ChatGPT';
+    }
+    if (authMode === 'chatgptAuthTokens') {
+      return 'å·²æŽ¥å…¥å¤–éƒ¨ ChatGPT Token';
+    }
+    if (authMode === 'none') {
+      return 'æœªç™»å½•';
+    }
+    return 'è®¤è¯çŠ¶æ€�æœªçŸ¥';
   }
 
   private handleItemStarted(params: ItemNotificationParams): void {

@@ -1,5 +1,4 @@
-# Upstream source snapshot kept outside this workspace repo
-/codex-main/
+# Upstream source archive kept outside this workspace repo
 /codex-main.zip
 
 # OS / editor noise
@@ -20,6 +19,22 @@ Thumbs.db
 
 # Rust cross-compilation cache for the embedded OHOS host
 /Agent/.cargo-target/
+
+# Upstream codex-main generated outputs and caches
+/codex-main/codex-rs/target/
+/codex-main/codex-rs/.cargo-target/
+/codex-main/node_modules/
+/codex-main/oh_modules/
+/codex-main/.pnpm-store/
+/codex-main/.turbo/
+/codex-main/.cache/
+/codex-main/.parcel-cache/
+/codex-main/coverage/
+/codex-main/dist/
+/codex-main/out/
+/codex-main/storybook-static/
+/codex-main/bazel-*/
+/codex-main/result
 
 # Local logs and generated diagnostics
 /Agent/build_codex_ohos_host_full.log

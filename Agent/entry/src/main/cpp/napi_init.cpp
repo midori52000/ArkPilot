@@ -9,11 +9,20 @@ int32_t codex_ohos_host_start(const char* codex_home, const char* listen_url);
 int32_t codex_ohos_host_is_running(void);
 const char* codex_ohos_host_last_message(void);
 const char* codex_ohos_host_server_url(void);
+const char* codex_ohos_host_provider_config_json(const char* codex_home);
+int32_t codex_ohos_host_save_provider_config(
+    const char* codex_home,
+    const char* base_url,
+    const char* api_key,
+    const char* model
+);
 }
 
 namespace {
 constexpr size_t MAX_HOME_ARG_LEN = 4096;
 constexpr size_t MAX_URL_ARG_LEN = 1024;
+constexpr size_t MAX_MODEL_ARG_LEN = 512;
+constexpr size_t MAX_API_KEY_ARG_LEN = 8192;
 
 bool ReadOptionalUtf8(
     napi_env env,
@@ -128,6 +137,67 @@ napi_value GetServerUrl(napi_env env, napi_callback_info info) {
     (void)info;
     return CreateUtf8String(env, codex_ohos_host_server_url());
 }
+
+napi_value GetProviderConfig(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    char codex_home[MAX_HOME_ARG_LEN];
+    codex_home[0] = '\0';
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) {
+        return nullptr;
+    }
+
+    const char* codex_home_ptr = codex_home[0] == '\0' ? nullptr : codex_home;
+    return CreateUtf8String(env, codex_ohos_host_provider_config_json(codex_home_ptr));
+}
+
+napi_value SaveProviderConfig(napi_env env, napi_callback_info info) {
+    size_t argc = 4;
+    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    char codex_home[MAX_HOME_ARG_LEN];
+    char base_url[MAX_URL_ARG_LEN];
+    char api_key[MAX_API_KEY_ARG_LEN];
+    char model[MAX_MODEL_ARG_LEN];
+    codex_home[0] = '\0';
+    base_url[0] = '\0';
+    api_key[0] = '\0';
+    model[0] = '\0';
+
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) {
+        return nullptr;
+    }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], base_url, sizeof(base_url))) {
+        return nullptr;
+    }
+    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], api_key, sizeof(api_key))) {
+        return nullptr;
+    }
+    if (argc >= 4 && !ReadOptionalUtf8(env, args[3], model, sizeof(model))) {
+        return nullptr;
+    }
+
+    const char* codex_home_ptr = codex_home[0] == '\0' ? nullptr : codex_home;
+    const char* base_url_ptr = base_url[0] == '\0' ? nullptr : base_url;
+    const char* api_key_ptr = api_key[0] == '\0' ? nullptr : api_key;
+    const char* model_ptr = model[0] == '\0' ? nullptr : model;
+
+    int32_t code = codex_ohos_host_save_provider_config(
+        codex_home_ptr,
+        base_url_ptr,
+        api_key_ptr,
+        model_ptr
+    );
+    if (code != 0) {
+        napi_throw_error(env, nullptr, "Failed to save provider config.");
+        return nullptr;
+    }
+
+    return CreateUtf8String(env, codex_ohos_host_provider_config_json(codex_home_ptr));
+}
 }  // namespace
 
 EXTERN_C_START
@@ -138,6 +208,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"isHostRunning", nullptr, IsHostRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getLastMessage", nullptr, GetLastMessage, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getServerUrl", nullptr, GetServerUrl, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getProviderConfig", nullptr, GetProviderConfig, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"saveProviderConfig", nullptr, SaveProviderConfig, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
