@@ -1,0 +1,37 @@
+> hvigor [32mhvigor client: Starting hvigor daemon.[39m
+> hvigor [32mHvigor Daemon started in 710 ms[39m
+> hvigor [32mFinished :entry:clean... after 161 ms [39m
+> hvigor [32mFinished :entry:default@PreBuild... after 118 ms [39m
+> hvigor [32mFinished :entry:default@CreateModuleInfo... after 1 ms [39m
+> hvigor [32mFinished :entry:default@GenerateMetadata... after 4 ms [39m
+> hvigor [32mFinished :entry:default@ConfigureCmake... after 85 ms [39m
+> hvigor [32mFinished :entry:default@MergeProfile... after 4 ms [39m
+> hvigor [32mFinished :entry:default@CreateBuildProfile... after 3 ms [39m
+> hvigor [32mFinished :entry:default@PreCheckSyscap... after 1 ms [39m
+> hvigor [32mFinished :entry:default@GeneratePkgSdkInfo... after 5 ms [39m
+> hvigor [32mFinished :entry:default@ProcessIntegratedHsp... after 1 ms [39m
+> hvigor [32mFinished :entry:default@MakePackInfo... after 4 ms [39m
+> hvigor [32mFinished :entry:default@SyscapTransform... after 4 ms [39m
+> hvigor [32mFinished :entry:default@BuildNativeWithCmake... after 3 s 142 ms [39m
+> hvigor [32mFinished :entry:default@GeneratePkgContextInfo... after 21 ms [39m
+> hvigor [32mFinished :entry:default@ProcessProfile... after 198 ms [39m
+> hvigor [32mFinished :entry:default@ProcessRouterMap... after 5 ms [39m
+> hvigor [32mFinished :entry:default@ProcessShareConfig... after 4 ms [39m
+> hvigor [32mFinished :entry:default@ProcessStartupConfig... after 2 ms [39m
+> hvigor [32mFinished :entry:default@ProcessResource... after 5 ms [39m
+> hvigor [32mFinished :entry:default@GenerateLoaderJson... after 11 ms [39m
+> hvigor [32mFinished :entry:default@CompileResource... after 451 ms [39m
+> hvigor [32mFinished :entry:default@BuildJS... after 3 ms [39m
+> hvigor [32mFinished :entry:default@CompileArkTS... after 7 s 895 ms [39m
+> hvigor [32mFinished :entry:default@BuildNativeWithNinja... after 3 min 12 s 460 ms [39m
+> hvigor [32mFinished :entry:default@ProcessLibs... after 6 s 607 ms [39m
+> hvigor [32mFinished :entry:default@DoNativeStrip... after 2 s 701 ms [39m
+> hvigor [32mFinished :entry:default@CacheNativeLibs... after 8 ms [39m
+> hvigor [32mFinished :entry:default@GeneratePkgModuleJson... after 5 ms [39m
+> hvigor [32mFinished :entry:default@ProcessCompiledResources... after 1 ms [39m
+> hvigor [32mFinished :entry:default@PackageHap... after 1 s 875 ms [39m
+> hvigor [32mFinished :entry:default@PackingCheck... after 5 ms [39m
+> hvigor [32mFinished :entry:default@SignHap... after 250 ms [39m
+> hvigor [32mFinished :entry:default@CollectDebugSymbol... after 2 ms [39m
+> hvigor [32mFinished :entry:assembleHap... after 1 ms [39m
+> hvigor [32mBUILD SUCCESSFUL in 3 min 31 s 122 ms [39m

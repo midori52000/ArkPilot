@@ -1,0 +1,8 @@
+[2026-04-29T20:10:40.156] [DEBUG] debug-file - env: nodejsVersion=v24.14.1
+[2026-04-29T20:10:40.218] [DEBUG] debug-file - env: daemon=true
+[2026-04-29T20:10:40.157] [DEBUG] debug-file - env: hvigor-config.json5 content = {
+  properties: { 'hvigor.dependency.useNpm': true },
+  modelVersion: '',
+  dependencies: {}
+}
+[2026-04-29T20:10:40.928] [DEBUG] debug-file - java daemon tryConnect success

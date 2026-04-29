@@ -1,0 +1,652 @@
+> hvigor [33mWARN:     Blocking waiting for file lock on package cache
+[39m
+> hvigor [33mWARN:     Blocking waiting for file lock on package cache
+[39m
+> hvigor [33mWARN:     Blocking waiting for file lock on package cache
+[39m
+> hvigor [33mWARN:     Blocking waiting for file lock on package cache
+[39m
+> hvigor [33mWARN:     Blocking waiting for file lock on package cache
+[39m
+> hvigor [33mWARN:     Blocking waiting for file lock on package cache
+[39m
+> hvigor [33mWARN:     Blocking waiting for file lock on artifact directory
+[39m
+> hvigor [33mWARN:    Compiling ring v0.17.14
+[39m
+> hvigor [33mWARN: warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\completion.rs:416:17
+    |
+416 | fn normalize(s: &str) -> Cow<str> {
+    |                 ^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |                 |
+    |                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+416 | fn normalize(s: &str) -> Cow<'_, str> {
+    |                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> third_party\rustyline-14.0.0\src\history.rs:60:12
+   |
+60 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult>>;
+   |            ^^^^^ the lifetime is elided here                           ^^^^^^^^^^^^ the same lifetime is hidden here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+60 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult<'_>>>;
+   |                                                                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:154:9
+    |
+154 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+158 |     ) -> Result<Option<SearchResult>>;
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+158 |     ) -> Result<Option<SearchResult<'_>>>;
+    |                                    ++++
+
+[39m
+> hvigor [33mWARN: warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:162:9
+    |
+162 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+166 |     ) -> Result<Option<SearchResult>>;
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+166 |     ) -> Result<Option<SearchResult<'_>>>;
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:205:9
+    |
+205 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+210 |     ) -> Option<SearchResult>
+    |                 ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+210 |     ) -> Option<SearchResult<'_>>
+    |                             ++++
+
+[39m
+> hvigor [33mWARN: warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:285:12
+    |
+285 |     fn get(&self, index: usize, _: SearchDirection) -> Result<Option<SearchResult>> {
+    |            ^^^^^ the lifetime is elided here                         ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+285 |     fn get(&self, index: usize, _: SearchDirection) -> Result<Option<SearchResult<'_>>> {
+    |                                                                                  ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:357:9
+    |
+357 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+361 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+361 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:385:9
+    |
+385 |         &self,
+    |         ^^^^^ the lifetime is elided here
+[39m
+> hvigor [33mWARN: ...
+389 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+389 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:641:12
+    |
+641 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult>> {
+    |            ^^^^^ the lifetime is elided here                           ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+641 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult<'_>>> {
+    |                                                                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:769:9
+    |
+769 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+773 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+773 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:778:9
+    |
+778 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+782 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+782 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+[39m
+> hvigor [33mWARN: warning: `rustyline` (lib) generated 11 warnings (run `cargo fix --lib -p rustyline` to apply 11 suggestions)
+[39m
+> hvigor [33mWARN:    Compiling zstd-sys v2.0.16+zstd.1.5.7
+[39m
+> hvigor [33mWARN:    Compiling libsqlite3-sys v0.30.1
+[39m
+> hvigor [33mWARN:    Compiling tree-sitter v0.25.10
+[39m
+> hvigor [33mWARN:    Compiling tree-sitter-bash v0.25.1
+[39m
+> hvigor [33mWARN:    Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling lzma-sys v0.1.20
+[39m
+> hvigor [33mWARN: warning: function `enabled_tool_metadata` is never used
+   --> code-mode\src\description.rs:226:8
+    |
+226 | pub fn enabled_tool_metadata(definition: &ToolDefinition) -> EnabledToolMetadata {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `EnabledToolMetadata` is never constructed
+   --> code-mode\src\description.rs:236:12
+    |
+236 | pub struct EnabledToolMetadata {
+    |            ^^^^^^^^^^^^^^^^^^^
+
+[39m
+> hvigor [33mWARN: warning: `codex-code-mode` (lib) generated 2 warnings
+[39m
+> hvigor [33mWARN:    Compiling bzip2 v0.5.2
+[39m
+> hvigor [33mWARN:    Compiling rustls v0.23.36
+[39m
+> hvigor [33mWARN: [33mWARN: [33m[33mArkTS:WARN File: D:/code/harmony/ArkPilot/Agent/entry/src/main/ets/backend/CodexBackend.ets:1514:11
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/code/harmony/ArkPilot/Agent/entry/src/main/ets/backend/CodexBackend.ets:1522:11
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/code/harmony/ArkPilot/Agent/entry/src/main/ets/backend/CodexBackend.ets:1530:11
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[39m
+> hvigor [33mWARN:    Compiling xz2 v0.1.7
+[39m
+> hvigor [33mWARN:    Compiling rustls-webpki v0.103.10
+[39m
+> hvigor [33mWARN:    Compiling x509-parser v0.18.1
+   Compiling jsonwebtoken v9.3.1
+[39m
+> hvigor [33mWARN:    Compiling zstd-safe v7.2.4
+[39m
+> hvigor [33mWARN:    Compiling zstd v0.13.3
+[39m
+> hvigor [33mWARN:    Compiling codex-apply-patch v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\apply-patch)
+[39m
+> hvigor [33mWARN:    Compiling codex-shell-command v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\shell-command)
+[39m
+> hvigor [33mWARN:    Compiling rcgen v0.14.7
+[39m
+> hvigor [33mWARN:    Compiling zip v2.4.2
+[39m
+> hvigor [33mWARN:    Compiling tokio-rustls v0.26.4
+   Compiling tungstenite v0.27.0 (https://github.com/openai-oss-forks/tungstenite-rs?rev=9200079d3b54a1ff51072e24d81fd354f085156f#9200079d)
+   Compiling codex-utils-rustls-provider v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\utils\rustls-provider)
+[39m
+> hvigor [33mWARN:    Compiling sqlx-core v0.8.6
+[39m
+> hvigor [33mWARN:    Compiling hyper-rustls v0.27.7
+[39m
+> hvigor [33mWARN:    Compiling tonic v0.14.3
+   Compiling rama-tls-rustls v0.3.0-alpha.4
+[39m
+> hvigor [33mWARN:    Compiling reqwest v0.12.28
+[39m
+> hvigor [33mWARN:    Compiling tokio-tungstenite v0.28.0 (https://github.com/openai-oss-forks/tokio-tungstenite?rev=132f5b39c862e3a970f731d709608b3e6276d5f6#132f5b39)
+[39m
+> hvigor [33mWARN:    Compiling codex-network-proxy v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\network-proxy)
+[39m
+> hvigor [33mWARN:    Compiling axum v0.8.8
+[39m
+> hvigor [33mWARN:    Compiling tonic-prost v0.14.3
+[39m
+> hvigor [33mWARN:    Compiling opentelemetry-proto v0.31.0
+[39m
+> hvigor [33mWARN:    Compiling sqlx-sqlite v0.8.6
+[39m
+> hvigor [33mWARN:    Compiling oauth2 v5.0.0
+[39m
+> hvigor [33mWARN:    Compiling codex-client v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\codex-client)
+   Compiling opentelemetry-http v0.31.0
+   Compiling sentry v0.46.1
+[39m
+> hvigor [33mWARN:    Compiling codex-sandboxing v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\sandboxing)
+[39m
+> hvigor [33mWARN:    Compiling codex-feedback v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\feedback)
+[39m
+> hvigor [33mWARN:    Compiling codex-api v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\codex-api)
+[39m
+> hvigor [33mWARN:    Compiling codex-arg0 v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\arg0)
+[39m
+> hvigor [33mWARN:    Compiling sqlx v0.8.6
+[39m
+> hvigor [33mWARN:    Compiling opentelemetry-otlp v0.31.0
+[39m
+> hvigor [33mWARN:    Compiling codex-state v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\state)
+[39m
+> hvigor [33mWARN:    Compiling rmcp v0.15.0
+[39m
+> hvigor [33mWARN:    Compiling codex-app-server-protocol v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\app-server-protocol)
+[39m
+> hvigor [33mWARN:    Compiling codex-tools v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\tools)
+   Compiling codex-rmcp-client v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\rmcp-client)
+[39m
+> hvigor [33mWARN:    Compiling codex-config v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\config)
+[39m
+> hvigor [33mWARN:    Compiling codex-otel v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\otel)
+   Compiling codex-connectors v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\connectors)
+   Compiling codex-exec-server v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\exec-server)
+[39m
+> hvigor [33mWARN:    Compiling codex-login v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\login)
+[39m
+> hvigor [33mWARN:    Compiling codex-hooks v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\hooks)
+[39m
+> hvigor [33mWARN:    Compiling codex-analytics v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\analytics)
+[39m
+> hvigor [33mWARN:    Compiling codex-features v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\features)
+   Compiling codex-rollout v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\rollout)
+[39m
+> hvigor [33mWARN:    Compiling codex-core-skills v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\core-skills)
+[39m
+> hvigor [33mWARN:    Compiling codex-core v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\core)
+[39m
+> hvigor [33mWARN: warning: unreachable statement
+   --> core\src\tools\runtimes\apply_patch.rs:228:9
+    |
+222 |             return run_apply_patch_in_process(req);
+    |             -------------------------------------- any code following this expression is unreachable
+...
+228 |         let command = Self::build_sandbox_command(req, ctx.turn.codex_self_exe.as_ref())?;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+[39m
+> hvigor [33mWARN:    Compiling codex-backend-client v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\backend-client)
+[39m
+> hvigor [33mWARN:    Compiling codex-chatgpt v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\chatgpt)
+[39m
+> hvigor [33mWARN:    Compiling codex-cloud-requirements v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\cloud-requirements)
+[39m
+> hvigor [33mWARN:    Compiling codex-app-server v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\app-server)
+[39m
+> hvigor [33mWARN: warning: `codex-core` (lib) generated 1 warning
+[39m
+> hvigor [33mWARN:    Compiling codex-ohos-host v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\ohos-host)
+[39m
+> hvigor [33mWARN:     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 21s
+[39m
+> hvigor [33mWARN:    Compiling ring v0.17.14
+[39m
+> hvigor [33mWARN: warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\completion.rs:416:17
+    |
+416 | fn normalize(s: &str) -> Cow<str> {
+    |                 ^^^^     ^^^^^^^^ the same lifetime is hidden here
+    |                 |
+    |                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+416 | fn normalize(s: &str) -> Cow<'_, str> {
+    |                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> third_party\rustyline-14.0.0\src\history.rs:60:12
+   |
+60 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult>>;
+   |            ^^^^^ the lifetime is elided here                           ^^^^^^^^^^^^ the same lifetime is hidden here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+60 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult<'_>>>;
+   |                                                                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:154:9
+    |
+154 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+158 |     ) -> Result<Option<SearchResult>>;
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+158 |     ) -> Result<Option<SearchResult<'_>>>;
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:162:9
+    |
+162 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+166 |     ) -> Result<Option<SearchResult>>;
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+166 |     ) -> Result<Option<SearchResult<'_>>>;
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:205:9
+    |
+205 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+210 |     ) -> Option<SearchResult>
+    |                 ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+210 |     ) -> Option<SearchResult<'_>>
+    |                             ++++
+
+[39m
+> hvigor [33mWARN: warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:285:12
+    |
+285 |     fn get(&self, index: usize, _: SearchDirection) -> Result<Option<SearchResult>> {
+    |            ^^^^^ the lifetime is elided here                         ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+285 |     fn get(&self, index: usize, _: SearchDirection) -> Result<Option<SearchResult<'_>>> {
+    |                                                                                  ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:357:9
+    |
+357 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+361 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+361 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:385:9
+    |
+385 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+389 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+389 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:641:12
+    |
+641 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult>> {
+    |            ^^^^^ the lifetime is elided here                           ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+641 |     fn get(&self, index: usize, dir: SearchDirection) -> Result<Option<SearchResult<'_>>> {
+    |                                                                                    ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:769:9
+    |
+769 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+773 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+773 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+[39m
+> hvigor [33mWARN: warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party\rustyline-14.0.0\src\history.rs:778:9
+    |
+778 |         &self,
+    |         ^^^^^ the lifetime is elided here
+...
+782 |     ) -> Result<Option<SearchResult>> {
+    |                        ^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+782 |     ) -> Result<Option<SearchResult<'_>>> {
+    |                                    ++++
+
+[39m
+> hvigor [33mWARN: warning: `rustyline` (lib) generated 11 warnings (run `cargo fix --lib -p rustyline` to apply 11 suggestions)
+[39m
+> hvigor [33mWARN:    Compiling zstd-sys v2.0.16+zstd.1.5.7
+[39m
+> hvigor [33mWARN:    Compiling libsqlite3-sys v0.30.1
+[39m
+> hvigor [33mWARN:    Compiling tree-sitter v0.25.10
+[39m
+> hvigor [33mWARN:    Compiling lzma-sys v0.1.20
+[39m
+> hvigor [33mWARN:    Compiling bzip2-sys v0.1.13+1.0.8
+[39m
+> hvigor [33mWARN:    Compiling tree-sitter-bash v0.25.1
+[39m
+> hvigor [33mWARN: warning: function `enabled_tool_metadata` is never used
+   --> code-mode\src\description.rs:226:8
+    |
+226 | pub fn enabled_tool_metadata(definition: &ToolDefinition) -> EnabledToolMetadata {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `EnabledToolMetadata` is never constructed
+   --> code-mode\src\description.rs:236:12
+    |
+236 | pub struct EnabledToolMetadata {
+    |            ^^^^^^^^^^^^^^^^^^^
+
+[39m
+> hvigor [33mWARN: warning: `codex-code-mode` (lib) generated 2 warnings
+[39m
+> hvigor [33mWARN:    Compiling bzip2 v0.5.2
+[39m
+> hvigor [33mWARN:    Compiling rustls v0.23.36
+[39m
+> hvigor [33mWARN:    Compiling xz2 v0.1.7
+[39m
+> hvigor [33mWARN:    Compiling rustls-webpki v0.103.10
+[39m
+> hvigor [33mWARN:    Compiling x509-parser v0.18.1
+[39m
+> hvigor [33mWARN:    Compiling jsonwebtoken v9.3.1
+[39m
+> hvigor [33mWARN:    Compiling rcgen v0.14.7
+[39m
+> hvigor [33mWARN:    Compiling codex-apply-patch v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\apply-patch)
+[39m
+> hvigor [33mWARN:    Compiling codex-shell-command v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\shell-command)
+[39m
+> hvigor [33mWARN:    Compiling zstd-safe v7.2.4
+[39m
+> hvigor [33mWARN:    Compiling zstd v0.13.3
+[39m
+> hvigor [33mWARN:    Compiling zip v2.4.2
+[39m
+> hvigor [33mWARN:    Compiling tokio-rustls v0.26.4
+[39m
+> hvigor [33mWARN:    Compiling tungstenite v0.27.0 (https://github.com/openai-oss-forks/tungstenite-rs?rev=9200079d3b54a1ff51072e24d81fd354f085156f#9200079d)
+   Compiling codex-utils-rustls-provider v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\utils\rustls-provider)
+   Compiling sqlx-core v0.8.6
+[39m
+> hvigor [33mWARN:    Compiling hyper-rustls v0.27.7
+[39m
+> hvigor [33mWARN:    Compiling tonic v0.14.3
+   Compiling rama-tls-rustls v0.3.0-alpha.4
+[39m
+> hvigor [33mWARN:    Compiling reqwest v0.12.28
+[39m
+> hvigor [33mWARN:    Compiling codex-network-proxy v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\network-proxy)
+[39m
+> hvigor [33mWARN:    Compiling tokio-tungstenite v0.28.0 (https://github.com/openai-oss-forks/tokio-tungstenite?rev=132f5b39c862e3a970f731d709608b3e6276d5f6#132f5b39)
+[39m
+> hvigor [33mWARN:    Compiling axum v0.8.8
+[39m
+> hvigor [33mWARN:    Compiling tonic-prost v0.14.3
+[39m
+> hvigor [33mWARN:    Compiling sqlx-sqlite v0.8.6
+[39m
+> hvigor [33mWARN:    Compiling opentelemetry-proto v0.31.0
+[39m
+> hvigor [33mWARN:    Compiling oauth2 v5.0.0
+[39m
+> hvigor [33mWARN:    Compiling codex-client v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\codex-client)
+   Compiling opentelemetry-http v0.31.0
+   Compiling sentry v0.46.1
+[39m
+> hvigor [33mWARN:    Compiling codex-sandboxing v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\sandboxing)
+[39m
+> hvigor [33mWARN:    Compiling codex-api v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\codex-api)
+[39m
+> hvigor [33mWARN:    Compiling codex-feedback v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\feedback)
+[39m
+> hvigor [33mWARN:    Compiling codex-arg0 v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\arg0)
+[39m
+> hvigor [33mWARN:    Compiling sqlx v0.8.6
+[39m
+> hvigor [33mWARN:    Compiling codex-state v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\state)
+[39m
+> hvigor [33mWARN:    Compiling opentelemetry-otlp v0.31.0
+[39m
+> hvigor [33mWARN:    Compiling rmcp v0.15.0
+[39m
+> hvigor [33mWARN:    Compiling codex-app-server-protocol v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\app-server-protocol)
+[39m
+> hvigor [33mWARN:    Compiling codex-tools v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\tools)
+   Compiling codex-rmcp-client v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\rmcp-client)
+[39m
+> hvigor [33mWARN:    Compiling codex-config v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\config)
+[39m
+> hvigor [33mWARN:    Compiling codex-otel v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\otel)
+   Compiling codex-connectors v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\connectors)
+   Compiling codex-exec-server v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\exec-server)
+[39m
+> hvigor [33mWARN:    Compiling codex-login v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\login)
+[39m
+> hvigor [33mWARN:    Compiling codex-hooks v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\hooks)
+[39m
+> hvigor [33mWARN:    Compiling codex-analytics v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\analytics)
+[39m
+> hvigor [33mWARN:    Compiling codex-rollout v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\rollout)
+[39m
+> hvigor [33mWARN:    Compiling codex-features v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\features)
+[39m
+> hvigor [33mWARN:    Compiling codex-core-skills v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\core-skills)
+[39m
+> hvigor [33mWARN:    Compiling codex-core v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\core)
+[39m
+> hvigor [33mWARN: warning: unreachable statement
+   --> core\src\tools\runtimes\apply_patch.rs:228:9
+    |
+222 |             return run_apply_patch_in_process(req);
+    |             -------------------------------------- any code following this expression is unreachable
+...
+228 |         let command = Self::build_sandbox_command(req, ctx.turn.codex_self_exe.as_ref())?;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+[39m
+> hvigor [33mWARN:    Compiling codex-backend-client v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\backend-client)
+[39m
+> hvigor [33mWARN:    Compiling codex-chatgpt v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\chatgpt)
+[39m
+> hvigor [33mWARN:    Compiling codex-cloud-requirements v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\cloud-requirements)
+[39m
+> hvigor [33mWARN:    Compiling codex-app-server v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\app-server)
+[39m
+> hvigor [33mWARN: warning: `codex-core` (lib) generated 1 warning
+[39m
+> hvigor [33mWARN:    Compiling codex-ohos-host v0.0.0 (D:\code\harmony\ArkPilot\codex-main\codex-rs\ohos-host)
+[39m
+> hvigor [33mWARN:     Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 04s
+[39m
+> hvigor [33mWARN: Will skip sign 'hos_hap'. No signingConfigs profile is configured in current project.
+             If needed, configure the signingConfigs in D:\code\harmony\ArkPilot\Agent\build-profile.json5.[39m
