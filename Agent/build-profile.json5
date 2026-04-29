@@ -1,11 +1,8 @@
 {
   "app": {
-    "signingConfigs": [
-    ],
     "products": [
       {
         "name": "default",
-        "signingConfig": "default",
         "targetSdkVersion": "6.1.0(23)",
         "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
@@ -25,6 +22,9 @@
         "name": "release"
       }
     ]
+    // Local signing is intentionally not committed.
+    // Fresh clones should be able to build an unsigned debug HAP without
+    // requiring machine-specific .cer/.p12/.p7b paths.
   },
   "modules": [
     {

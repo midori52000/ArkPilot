@@ -14,23 +14,39 @@ if errorlevel 1 exit /b 1
 
 for %%I in ("%PROJECT_DIR%\..") do set "REPO_ROOT=%%~fI"
 
-call "%SCRIPT_DIR%\setup_env.bat"
+call "%SCRIPT_DIR%\setup_env.bat" --quiet
 if errorlevel 1 exit /b 1
 
+if /I "%MODE%"=="clean" goto :clean
+if /I not "%MODE%"=="debug" (
+  echo [ERROR] Unsupported build mode: %MODE%
+  echo         This portable script only supports unsigned debug HAP builds.
+  goto :help
+)
+
 set "SDK_ROOT=%DEVECO_SDK_HOME%"
+set "DEVECO_NODE_HOME=%DEVECO_NODE_HOME%"
+set "HVIGOR_CMD=%DEVECO_HVIGOR_CMD%"
+set "OHOS_NATIVE=%SDK_ROOT%\default\openharmony\native"
+set "RUST_WORKSPACE=%REPO_ROOT%\codex-main\codex-rs"
+set "OUTPUT_FILE=%PROJECT_DIR%\entry\build\default\outputs\default\entry-default-unsigned.hap"
+
+for %%I in ("%RUST_WORKSPACE%") do set "RUST_WORKSPACE=%%~fI"
+
 if not defined SDK_ROOT (
   echo [ERROR] DEVECO_SDK_HOME is not set after setup.
   exit /b 1
 )
 
-set "OHOS_NATIVE=%SDK_ROOT%\default\openharmony\native"
-set "HVIGOR_JS=%SDK_ROOT%\..\tools\hvigor\hvigor\bin\hvigor.js"
-set "RUST_WORKSPACE=%REPO_ROOT%\codex-main\codex-rs"
-for %%I in ("%RUST_WORKSPACE%") do set "RUST_WORKSPACE=%%~fI"
+if not exist "%DEVECO_NODE_HOME%\node.exe" (
+  echo [ERROR] DevEco bundled node.exe not found:
+  echo         %DEVECO_NODE_HOME%\node.exe
+  exit /b 1
+)
 
-if not exist "%HVIGOR_JS%" (
-  echo [ERROR] Hvigor entrypoint not found:
-  echo         %HVIGOR_JS%
+if not exist "%HVIGOR_CMD%" (
+  echo [ERROR] Hvigor wrapper not found:
+  echo         %HVIGOR_CMD%
   exit /b 1
 )
 
@@ -47,40 +63,29 @@ set "OHOS_NATIVE=%OHOS_NATIVE%"
 set "OHOS_SDK_NATIVE=%OHOS_NATIVE%"
 set "OHOS_NDK_HOME=%OHOS_NATIVE%"
 set "SDK_NATIVE=%OHOS_NATIVE%"
-
-if /I "%MODE%"=="clean" goto :clean
-if /I not "%MODE%"=="debug" if /I not "%MODE%"=="release" (
-  echo [ERROR] Unsupported build mode: %MODE%
-  goto :help
-)
+set "NODE_HOME=%DEVECO_NODE_HOME%"
 
 echo ========================================
-echo ArkPilot Agent Windows Build
+echo ArkPilot Agent Debug HAP Build
 echo ========================================
-echo Mode: %MODE%
+echo Project: %PROJECT_DIR%
 echo DevEco SDK: %SDK_ROOT%
 echo Rust workspace: %RUST_WORKSPACE%
+echo Output: %OUTPUT_FILE%
 echo.
 
-node "%HVIGOR_JS%" --stop-daemon >nul 2>&1
+call "%HVIGOR_CMD%" --stop-daemon >nul 2>&1
 if exist "%PROJECT_DIR%\.hvigor" rmdir /s /q "%PROJECT_DIR%\.hvigor"
 
-if /I "%MODE%"=="release" (
-  node "%HVIGOR_JS%" assembleHap --mode release
-) else (
-  node "%HVIGOR_JS%" assembleHap
-)
+pushd "%PROJECT_DIR%" >nul
+call "%HVIGOR_CMD%" assembleHap
+set "BUILD_EXIT_CODE=%ERRORLEVEL%"
+popd >nul
 
-if errorlevel 1 (
+if not "%BUILD_EXIT_CODE%"=="0" (
   echo.
   echo [ERROR] Build failed.
-  exit /b 1
-)
-
-if /I "%MODE%"=="release" (
-  set "OUTPUT_FILE=%PROJECT_DIR%\entry\build\default\outputs\default\entry-default-signed.hap"
-) else (
-  set "OUTPUT_FILE=%PROJECT_DIR%\entry\build\default\outputs\default\entry-default-unsigned.hap"
+  exit /b %BUILD_EXIT_CODE%
 )
 
 echo.
@@ -93,24 +98,29 @@ echo ========================================
 echo Cleaning ArkPilot Agent build artifacts
 echo ========================================
 
-node "%HVIGOR_JS%" --stop-daemon >nul 2>&1
+set "NODE_HOME=%DEVECO_NODE_HOME%"
+
+call "%DEVECO_HVIGOR_CMD%" --stop-daemon >nul 2>&1
 
 if exist "%PROJECT_DIR%\.hvigor" rmdir /s /q "%PROJECT_DIR%\.hvigor"
 if exist "%PROJECT_DIR%\entry\build" rmdir /s /q "%PROJECT_DIR%\entry\build"
 if exist "%PROJECT_DIR%\entry\.cxx" rmdir /s /q "%PROJECT_DIR%\entry\.cxx"
+if exist "%PROJECT_DIR%\.cargo-target" rmdir /s /q "%PROJECT_DIR%\.cargo-target"
 
 echo [OK] Clean complete.
 exit /b 0
 
 :help
 echo Usage:
-echo   build.bat [debug^|release^|clean]
+echo   build.bat [debug^|clean]
 echo.
 echo Examples:
 echo   build.bat
 echo   build.bat debug
-echo   build.bat release
 echo   build.bat clean
+echo.
+echo This script builds an unsigned debug HAP.
+echo Signed packages and IDE-run signing are intentionally left to local DevEco configuration.
 exit /b 1
 
 :find_project_root

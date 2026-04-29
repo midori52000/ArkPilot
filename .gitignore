@@ -8,6 +8,7 @@ Thumbs.db
 *.swo
 
 # DevEco / HarmonyOS generated outputs
+/.hvigor/
 /Agent/.hvigor/
 /Agent/.idea/
 /Agent/oh_modules/
