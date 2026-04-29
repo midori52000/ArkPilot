@@ -93,6 +93,7 @@ struct Index {
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
   private readonly workspaceRoots: Map<number, string> = new Map();
+  private readonly messageScroller: Scroller = new Scroller();
 
   @State private activeWorkspaceId: number = 1;
   @State private selectedEffortIndex: number = 0;
@@ -141,6 +142,7 @@ struct Index {
     this.applyEmbeddedHostStatus();
     this.loadProviderConfig();
     this.scheduleEmbeddedHostReconnect(0);
+    this.scheduleMessageScrollToBottom();
   }
 
   aboutToDisappear(): void {
@@ -283,6 +285,16 @@ struct Index {
     this.summaryPoints = result.summaryPoints.length > 0 ? result.summaryPoints : ['没有可展示的摘要信息。'];
     this.changedFiles = result.changedFiles;
     this.diffStat = result.diffStat;
+    this.scheduleMessageScrollToBottom();
+  }
+
+  private scheduleMessageScrollToBottom(): void {
+    setTimeout(() => {
+      try {
+        this.messageScroller.scrollEdge(Edge.Bottom);
+      } catch (_err) {
+      }
+    }, 0);
   }
 
   private async connectOrDisconnect(): Promise<void> {
@@ -1022,7 +1034,7 @@ struct Index {
         this.approvalCard(this.pendingApproval!)
       }
 
-      List({ space: 8 }) {
+      List({ space: 8, scroller: this.messageScroller }) {
         ForEach(this.messages, (item: ChatMessage) => {
           ListItem() {
             this.messageCard(item)
