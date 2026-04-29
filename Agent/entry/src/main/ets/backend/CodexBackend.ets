@@ -1,4 +1,5 @@
 import webSocket from '@ohos.net.webSocket';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 export type CodexMessageRole = 'user' | 'assistant' | 'system';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
@@ -10,6 +11,8 @@ export type CodexTurnUpdateHandler = (result: CodexTurnResult) => void;
 type BackendListener = (snapshot: CodexBackendSnapshot) => void;
 
 const DEFAULT_SERVER_URL: string = 'ws://127.0.0.1:7456';
+const BACKEND_LOG_DOMAIN: number = 0x0ff1;
+const BACKEND_LOG_TAG: string = 'CodexBackend';
 
 class EmptyPayload {}
 
@@ -239,6 +242,24 @@ class AgentMessageDeltaParams {
   turnId: string = '';
   itemId: string = '';
   delta: string = '';
+}
+
+class RawResponseContentPayload {
+  type?: string;
+  text?: string;
+}
+
+class RawResponseItemPayload {
+  type: string = '';
+  id?: string;
+  role?: string;
+  content?: RawResponseContentPayload[];
+}
+
+class RawResponseItemCompletedParams {
+  threadId: string = '';
+  turnId: string = '';
+  item: RawResponseItemPayload = new RawResponseItemPayload();
 }
 
 class TurnDiffUpdatedParams {
@@ -528,6 +549,18 @@ export class CodexBackend {
   private requiresOpenAIAuth: boolean = true;
   private authStatusText: string = '未登录';
   private planTypeText: string = '';
+
+  private logInfo(message: string): void {
+    hilog.info(BACKEND_LOG_DOMAIN, BACKEND_LOG_TAG, '%{public}s', message);
+  }
+
+  private messagePreview(text: string, maxLength: number = 120): string {
+    const normalized: string = text.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, maxLength)}...`;
+  }
 
   subscribe(listener: BackendListener): number {
     const subscriptionId: number = this.listenerSequence;
@@ -830,6 +863,11 @@ export class CodexBackend {
       return;
     }
 
+    if (method === 'rawResponseItem/completed') {
+      this.handleRawResponseItemCompleted(paramsObject as RawResponseItemCompletedParams);
+      return;
+    }
+
     if (method === 'item/agentMessage/delta') {
       this.handleAgentMessageDelta(paramsObject as AgentMessageDeltaParams);
       return;
@@ -981,13 +1019,19 @@ export class CodexBackend {
     }
 
     if (params.item.type === 'agentMessage') {
+      const finalText: string = this.mergeAssistantMessageContent(thread, params.item.id, params.item.text ?? '');
       this.upsertMessage(
         thread,
         params.item.id,
         'Codex',
         'assistant',
-        params.item.text ?? '',
+        finalText,
         this.currentTimestamp()
+      );
+      this.logInfo(
+        `item completed agentMessage thread=${params.threadId} turn=${params.turnId} item=${params.item.id} ` +
+        `itemTextLen=${(params.item.text ?? '').length} mergedLen=${finalText.length} ` +
+        `preview=${this.messagePreview(finalText)}`
       );
       this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
       return;
@@ -1045,6 +1089,46 @@ export class CodexBackend {
       this.upsertMessage(thread, params.itemId, 'Codex', 'assistant', params.delta, this.currentTimestamp());
     }
 
+    const currentText: string = this.findMessageIndex(thread, params.itemId) >= 0
+      ? thread.messages[this.findMessageIndex(thread, params.itemId)].content
+      : params.delta;
+    this.logInfo(
+      `agent delta thread=${params.threadId} turn=${params.turnId} item=${params.itemId} ` +
+      `deltaLen=${params.delta.length} totalLen=${currentText.length} ` +
+      `preview=${this.messagePreview(currentText)}`
+    );
+    this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
+  }
+
+  private handleRawResponseItemCompleted(params: RawResponseItemCompletedParams): void {
+    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
+    if (thread === null) {
+      return;
+    }
+
+    const item: RawResponseItemPayload = params.item;
+    if (item.type !== 'message' || item.role !== 'assistant') {
+      return;
+    }
+
+    const finalText: string = this.extractRawAssistantText(item);
+    if (finalText.length === 0) {
+      return;
+    }
+
+    if (item.id !== undefined && item.id.length > 0) {
+      const merged: string = this.mergeAssistantMessageContent(thread, item.id, finalText);
+      this.upsertMessage(thread, item.id, 'Codex', 'assistant', merged, this.currentTimestamp());
+    } else {
+      this.updateLatestAssistantMessageContent(thread, finalText);
+    }
+
+    const lastAssistantText: string = this.latestAssistantMessageContent(thread);
+    this.logInfo(
+      `raw response completed thread=${params.threadId} turn=${params.turnId} item=${item.id ?? 'unknown'} ` +
+      `rawLen=${finalText.length} mergedLen=${lastAssistantText.length} ` +
+      `preview=${this.messagePreview(lastAssistantText)}`
+    );
     this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
   }
 
@@ -1097,6 +1181,11 @@ export class CodexBackend {
     }
 
     const turnId: string = thread.activeTurn.turnId.length > 0 ? thread.activeTurn.turnId : params.turn.id;
+    const finalAssistantText: string = this.latestAssistantMessageContent(thread);
+    this.logInfo(
+      `turn completed thread=${params.threadId} turn=${turnId} status=${status} ` +
+      `lastAssistantLen=${finalAssistantText.length} preview=${this.messagePreview(finalAssistantText)}`
+    );
     const snapshot: CodexTurnResult = this.snapshotForThread(thread, status, turnId);
     const activeTurn: PendingTurnState = thread.activeTurn;
     thread.activeTurn = null;
@@ -1212,6 +1301,68 @@ export class CodexBackend {
     thread.messages.push(
       new CodexChatMessage(messageId, thread.messages.length + 1, author, role, content, timestamp)
     );
+  }
+
+  private mergeAssistantMessageContent(
+    thread: CodexThreadRecord,
+    messageId: string,
+    completedText: string
+  ): string {
+    const existingIndex: number = this.findMessageIndex(thread, messageId);
+    const existingText: string = existingIndex >= 0 ? thread.messages[existingIndex].content : '';
+    if (completedText.length === 0) {
+      return existingText;
+    }
+    if (existingText.length === 0) {
+      return completedText;
+    }
+    if (completedText.length >= existingText.length) {
+      return completedText;
+    }
+    return existingText;
+  }
+
+  private extractRawAssistantText(item: RawResponseItemPayload): string {
+    if (item.content === undefined || item.content.length === 0) {
+      return '';
+    }
+
+    const parts: string[] = [];
+    item.content.forEach((contentItem: RawResponseContentPayload) => {
+      if (contentItem.type === 'output_text' && contentItem.text !== undefined) {
+        parts.push(contentItem.text);
+      }
+    });
+    return parts.join('');
+  }
+
+  private updateLatestAssistantMessageContent(thread: CodexThreadRecord, completedText: string): void {
+    for (let index: number = thread.messages.length - 1; index >= 0; index -= 1) {
+      const current: CodexChatMessage = thread.messages[index];
+      if (current.role !== 'assistant') {
+        continue;
+      }
+      const nextText: string = completedText.length >= current.content.length ? completedText : current.content;
+      thread.messages[index] = new CodexChatMessage(
+        current.messageId,
+        current.sequence,
+        current.author,
+        current.role,
+        nextText,
+        current.timestamp
+      );
+      return;
+    }
+  }
+
+  private latestAssistantMessageContent(thread: CodexThreadRecord): string {
+    for (let index: number = thread.messages.length - 1; index >= 0; index -= 1) {
+      const current: CodexChatMessage = thread.messages[index];
+      if (current.role === 'assistant') {
+        return current.content;
+      }
+    }
+    return '';
   }
 
   private findMessageIndex(thread: CodexThreadRecord, messageId: string): number {

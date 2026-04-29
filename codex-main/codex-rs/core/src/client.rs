@@ -691,8 +691,17 @@ impl ModelClientSession {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
         let tools = create_tools_json_for_responses_api(&prompt.tools)?;
+        let is_harmony_provider = provider.name == HARMONY_COMPAT_PROVIDER_NAME;
         let default_reasoning_effort = model_info.default_reasoning_level;
-        let reasoning = if model_info.supports_reasoning_summaries {
+        let reasoning = if is_harmony_provider {
+            // The embedded Harmony path targets a wide range of third-party
+            // OpenAI-compatible providers. Many of them either do not fully
+            // support Responses reasoning fields or count reasoning tokens
+            // against the visible assistant output budget, which results in
+            // responses ending mid-sentence. Prefer compatibility and完整输出
+            // over encrypted reasoning on this provider path.
+            None
+        } else if model_info.supports_reasoning_summaries {
             Some(Reasoning {
                 effort: effort.or(default_reasoning_effort),
                 summary: if summary == ReasoningSummaryConfig::None {
@@ -725,6 +734,11 @@ impl ModelClientSession {
         };
         let text = create_text_param_for_request(verbosity, &prompt.output_schema);
         let prompt_cache_key = Some(self.client.state.conversation_id.to_string());
+        let max_output_tokens = if is_harmony_provider {
+            Some(HARMONY_COMPAT_MAX_OUTPUT_TOKENS)
+        } else {
+            None
+        };
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions: instructions.clone(),
@@ -742,6 +756,7 @@ impl ModelClientSession {
                 None => None,
             },
             prompt_cache_key,
+            max_output_tokens,
             text,
         };
         Ok(request)
@@ -1821,3 +1836,5 @@ impl WebsocketTelemetry for ApiTelemetry {
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+const HARMONY_COMPAT_PROVIDER_NAME: &str = "Harmony OpenAI Compatible";
+const HARMONY_COMPAT_MAX_OUTPUT_TOKENS: u32 = 8192;

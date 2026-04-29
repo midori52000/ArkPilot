@@ -290,11 +290,22 @@ struct Index {
 
   private scheduleMessageScrollToBottom(): void {
     setTimeout(() => {
-      try {
-        this.messageScroller.scrollEdge(Edge.Bottom);
-      } catch (_err) {
-      }
+      this.scrollMessagesToBottom();
     }, 0);
+    setTimeout(() => {
+      this.scrollMessagesToBottom();
+    }, 32);
+  }
+
+  private scrollMessagesToBottom(): void {
+    try {
+      this.messageScroller.scrollEdge(Edge.Bottom);
+    } catch (_err) {
+    }
+  }
+
+  private messageRenderKey(item: ChatMessage): string {
+    return `${item.id}:${item.content.length}:${item.timestamp}`;
   }
 
   private async connectOrDisconnect(): Promise<void> {
@@ -1034,12 +1045,14 @@ struct Index {
         this.approvalCard(this.pendingApproval!)
       }
 
-      List({ space: 8, scroller: this.messageScroller }) {
-        ForEach(this.messages, (item: ChatMessage) => {
-          ListItem() {
+      Scroll(this.messageScroller) {
+        Column() {
+          ForEach(this.messages, (item: ChatMessage) => {
             this.messageCard(item)
-          }
-        }, (item: ChatMessage) => item.id)
+          }, (item: ChatMessage) => this.messageRenderKey(item))
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
       }
       .layoutWeight(1)
       .width('100%')
