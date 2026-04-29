@@ -37,8 +37,6 @@ else()
 endif()
 
 set(RUST_TARGET_DIR "${AGENT_ROOT_DIR}/.cargo-target/codex-ohos-host")
-set(OHOS_LLVM_BIN_DIR "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native/llvm/bin")
-set(OHOS_CMAKE_BIN_DIR "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native/build-tools/cmake/bin")
 set(RUST_BUILD_SCRIPT "${NATIVE_ROOT_PATH}/build_codex_ohos_host.cmd")
 
 string(TOLOWER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE_LOWER)
