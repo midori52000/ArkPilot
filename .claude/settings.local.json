@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& cmd.exe /c \"D:\\\\code\\\\harmony\\\\ArkPilot\\\\Agent\\\\script\\\\helpsetup\\\\build.bat debug\"; Write-Output \"EXIT_CODE=$LASTEXITCODE\")"
+    ]
+  }
+}

@@ -28,6 +28,8 @@ const DEFAULT_PROVIDER_BASE_URL: &str = "https://api.openai.com/v1";
 const CUSTOM_PROVIDER_ID: &str = "harmony-openai-compatible";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const DEFAULT_PROVIDER_MODE: &str = "exclusive";
+const DEFAULT_PROVIDER_SYNC_STATUS: &str = "synced";
 
 #[derive(Default)]
 struct HostState {
@@ -55,6 +57,41 @@ impl Default for ProviderSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCatalogRecord {
+    id: String,
+    name: String,
+    app_type: String,
+    mode: String,
+    base_url: String,
+    api_key: String,
+    model: String,
+    is_active: bool,
+    sync_status: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCatalog {
+    version: u32,
+    active_provider_id: String,
+    providers: Vec<ProviderCatalogRecord>,
+    updated_at: String,
+}
+
+impl Default for ProviderCatalog {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            active_provider_id: String::new(),
+            providers: Vec::new(),
+            updated_at: current_timestamp_string(),
+        }
+    }
+}
+
 static HOST_STATE: Lazy<Mutex<HostState>> = Lazy::new(|| Mutex::new(HostState::default()));
 static LAST_MESSAGE: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
@@ -63,6 +100,10 @@ static LAST_SERVER_URL: Lazy<Mutex<CString>> =
 static LAST_PROVIDER_CONFIG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     let json = serde_json::to_string(&ProviderSettings::default()).expect("default provider json");
     Mutex::new(CString::new(json).expect("provider config cstring"))
+});
+static LAST_PROVIDER_CATALOG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    let json = serde_json::to_string(&ProviderCatalog::default()).expect("default provider catalog json");
+    Mutex::new(CString::new(json).expect("provider catalog cstring"))
 });
 
 #[unsafe(no_mangle)]
@@ -144,6 +185,46 @@ pub extern "C" fn codex_ohos_host_save_provider_config(
         }
         Err(err) => {
             set_host_message(format!("failed to save provider config: {err}"));
+            1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_provider_catalog_json(codex_home: *const c_char) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let catalog = load_provider_catalog(&codex_home).unwrap_or_default();
+    let json = serde_json::to_string(&catalog).unwrap_or_else(|_| "{}".to_string());
+    write_cstring(&LAST_PROVIDER_CATALOG_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_save_provider_catalog(
+    codex_home: *const c_char,
+    catalog_json: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(raw_catalog) = ffi_string(catalog_json) else {
+        set_host_message("failed to save provider catalog: empty catalog json".to_string());
+        return 1;
+    };
+
+    let parsed = serde_json::from_str::<ProviderCatalog>(&raw_catalog);
+    let catalog = match parsed {
+        Ok(catalog) => normalize_catalog(catalog),
+        Err(err) => {
+            set_host_message(format!("failed to parse provider catalog: {err}"));
+            return 1;
+        }
+    };
+
+    match persist_provider_catalog(&codex_home, &catalog) {
+        Ok(()) => {
+            set_host_message("provider catalog saved".to_string());
+            0
+        }
+        Err(err) => {
+            set_host_message(format!("failed to save provider catalog: {err}"));
             1
         }
     }
@@ -267,6 +348,10 @@ fn provider_settings_path(codex_home: &Path) -> PathBuf {
     codex_home.join("harmony-provider.json")
 }
 
+fn provider_catalog_path(codex_home: &Path) -> PathBuf {
+    codex_home.join("harmony-provider-catalog.json")
+}
+
 fn codex_config_path(codex_home: &Path) -> PathBuf {
     codex_home.join("config.toml")
 }
@@ -286,7 +371,16 @@ fn load_provider_settings(codex_home: &Path) -> Result<ProviderSettings> {
 
 fn ensure_provider_config(codex_home: &Path) -> Result<()> {
     let settings = load_provider_settings(codex_home).unwrap_or_default();
-    persist_provider_settings(codex_home, &settings)
+    persist_provider_settings(codex_home, &settings)?;
+    let catalog = load_provider_catalog(codex_home).unwrap_or_else(|_| {
+        ProviderCatalog {
+            version: 1,
+            active_provider_id: "live-provider".to_string(),
+            providers: vec![catalog_record_from_settings("live-provider", "当前 Live Provider", &settings, true)],
+            updated_at: current_timestamp_string(),
+        }
+    });
+    persist_provider_catalog(codex_home, &catalog)
 }
 
 fn persist_provider_settings(codex_home: &Path, settings: &ProviderSettings) -> Result<()> {
@@ -302,6 +396,48 @@ fn persist_provider_settings(codex_home: &Path, settings: &ProviderSettings) -> 
     std::fs::write(&config_path, config_toml)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
 
+    Ok(())
+}
+
+fn load_provider_catalog(codex_home: &Path) -> Result<ProviderCatalog> {
+    let path = provider_catalog_path(codex_home);
+    if !path.exists() {
+        let settings = load_provider_settings(codex_home).unwrap_or_default();
+        return Ok(ProviderCatalog {
+            version: 1,
+            active_provider_id: "live-provider".to_string(),
+            providers: vec![catalog_record_from_settings("live-provider", "当前 Live Provider", &settings, true)],
+            updated_at: current_timestamp_string(),
+        });
+    }
+
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let catalog: ProviderCatalog = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(normalize_catalog(catalog))
+}
+
+fn persist_provider_catalog(codex_home: &Path, catalog: &ProviderCatalog) -> Result<()> {
+    std::fs::create_dir_all(codex_home)?;
+    let normalized = normalize_catalog(catalog.clone());
+    let catalog_path = provider_catalog_path(codex_home);
+    let catalog_json = serde_json::to_string_pretty(&normalized)?;
+    std::fs::write(&catalog_path, catalog_json)
+        .with_context(|| format!("failed to write {}", catalog_path.display()))?;
+
+    if let Some(active) = normalized
+        .providers
+        .iter()
+        .find(|provider| provider.id == normalized.active_provider_id || provider.is_active)
+    {
+        let settings = ProviderSettings {
+            base_url: active.base_url.clone(),
+            api_key: active.api_key.clone(),
+            model: active.model.clone(),
+        };
+        persist_provider_settings(codex_home, &settings)?;
+    }
     Ok(())
 }
 
@@ -329,6 +465,78 @@ fn render_config_toml(settings: &ProviderSettings) -> String {
     }
 
     lines.join("\n") + "\n"
+}
+
+fn catalog_record_from_settings(
+    id: &str,
+    name: &str,
+    settings: &ProviderSettings,
+    is_active: bool,
+) -> ProviderCatalogRecord {
+    ProviderCatalogRecord {
+        id: id.to_string(),
+        name: name.to_string(),
+        app_type: "codex".to_string(),
+        mode: DEFAULT_PROVIDER_MODE.to_string(),
+        base_url: settings.base_url.clone(),
+        api_key: settings.api_key.clone(),
+        model: settings.model.clone(),
+        is_active,
+        sync_status: DEFAULT_PROVIDER_SYNC_STATUS.to_string(),
+        updated_at: current_timestamp_string(),
+    }
+}
+
+fn normalize_catalog(mut catalog: ProviderCatalog) -> ProviderCatalog {
+    if catalog.version == 0 {
+        catalog.version = 1;
+    }
+    if catalog.updated_at.trim().is_empty() {
+        catalog.updated_at = current_timestamp_string();
+    }
+    if catalog.providers.is_empty() {
+        catalog.active_provider_id.clear();
+        return catalog;
+    }
+
+    if catalog.active_provider_id.trim().is_empty() {
+        catalog.active_provider_id = catalog.providers[0].id.clone();
+    }
+
+    let active_id = catalog.active_provider_id.clone();
+    for (index, provider) in catalog.providers.iter_mut().enumerate() {
+        if provider.app_type.trim().is_empty() {
+            provider.app_type = "codex".to_string();
+        }
+        if provider.mode.trim().is_empty() {
+            provider.mode = DEFAULT_PROVIDER_MODE.to_string();
+        }
+        if provider.base_url.trim().is_empty() {
+            provider.base_url = DEFAULT_PROVIDER_BASE_URL.to_string();
+        }
+        if provider.sync_status.trim().is_empty() {
+            provider.sync_status = DEFAULT_PROVIDER_SYNC_STATUS.to_string();
+        }
+        if provider.updated_at.trim().is_empty() {
+            provider.updated_at = catalog.updated_at.clone();
+        }
+        provider.is_active = provider.id == active_id || (index == 0 && active_id.is_empty());
+    }
+
+    if !catalog.providers.iter().any(|provider| provider.id == active_id) {
+        catalog.active_provider_id = catalog.providers[0].id.clone();
+        if let Some(first) = catalog.providers.first_mut() {
+            first.is_active = true;
+        }
+    }
+    catalog
+}
+
+fn current_timestamp_string() -> String {
+    format!("{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0))
 }
 
 fn toml_string(value: &str) -> String {
