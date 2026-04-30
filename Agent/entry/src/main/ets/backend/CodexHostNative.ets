@@ -201,3 +201,151 @@ export function saveEmbeddedCodexProviderCatalog(catalog: ProviderCatalog): Prov
     return new ProviderCatalog(1, '', [], '');
   }
 }
+
+// ========== Skills Management ==========
+
+export function getSkillsRegistry(codexHome: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"version":1,"skills":[],"updatedAt":"0"}';
+  }
+  try {
+    const result = codexHost.getSkillsRegistry(codexHome);
+    return (result !== undefined && result !== null && result.length > 0) ? result : '{"version":1,"skills":[],"updatedAt":"0"}';
+  } catch (_err) {
+    return '{"version":1,"skills":[],"updatedAt":"0"}';
+  }
+}
+
+export function saveSkillsRegistry(codexHome: string, registryJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    const code = codexHost.saveSkillsRegistry(codexHome, registryJson);
+    return code === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function getSkillsRepos(codexHome: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"version":1,"repos":[]}';
+  }
+  try {
+    const result = codexHost.getSkillsRepos(codexHome);
+    return (result !== undefined && result !== null && result.length > 0) ? result : '{"version":1,"repos":[]}';
+  } catch (_err) {
+    return '{"version":1,"repos":[]}';
+  }
+}
+
+export function saveSkillsRepos(codexHome: string, reposJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    const code = codexHost.saveSkillsRepos(codexHome, reposJson);
+    return code === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function computeDirHash(dirPath: string): string {
+  if (nativeModuleUnavailable()) {
+    return '';
+  }
+  try {
+    const result = codexHost.computeDirHash(dirPath);
+    return (result !== undefined && result !== null) ? result : '';
+  } catch (_err) {
+    return '';
+  }
+}
+
+export function getSkillsBackups(codexHome: string): string {
+  if (nativeModuleUnavailable()) {
+    return '[]';
+  }
+  try {
+    const result = codexHost.getSkillsBackups(codexHome);
+    return (result !== undefined && result !== null && result.length > 0) ? result : '[]';
+  } catch (_err) {
+    return '[]';
+  }
+}
+
+export function createSkillBackup(codexHome: string, skillDir: string, skillJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return 'error:native module unavailable';
+  }
+  try {
+    const result = codexHost.createSkillBackup(codexHome, skillDir, skillJson);
+    return (result !== undefined && result !== null) ? result : 'error:empty result';
+  } catch (_err) {
+    return 'error:exception';
+  }
+}
+
+export function deleteSkillBackup(codexHome: string, backupId: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    const code = codexHost.deleteSkillBackup(codexHome, backupId);
+    return code === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+// ========== Prompts Management ==========
+
+export function getPromptsRegistry(codexHome: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"version":1,"prompts":[],"updatedAt":"0"}';
+  }
+  try {
+    const result = codexHost.getPromptsRegistry(codexHome);
+    return (result !== undefined && result !== null && result.length > 0) ? result : '{"version":1,"prompts":[],"updatedAt":"0"}';
+  } catch (_err) {
+    return '{"version":1,"prompts":[],"updatedAt":"0"}';
+  }
+}
+
+export function savePromptsRegistry(codexHome: string, registryJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    const code = codexHost.savePromptsRegistry(codexHome, registryJson);
+    return code === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function readAgentsMd(codexHome: string): string {
+  if (nativeModuleUnavailable()) {
+    return '';
+  }
+  try {
+    const result = codexHost.readAgentsMd(codexHome);
+    return (result !== undefined && result !== null) ? result : '';
+  } catch (_err) {
+    return '';
+  }
+}
+
+export function writeAgentsMd(codexHome: string, content: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    const code = codexHost.writeAgentsMd(codexHome, content);
+    return code === 0;
+  } catch (_err) {
+    return false;
+  }
+}

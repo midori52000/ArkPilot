@@ -14,6 +14,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexHostNative';
 import { SidebarView } from '../backend/ConsoleModels';
+import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
 
 class WorkspaceItem {
@@ -106,7 +107,8 @@ struct Index {
   private readonly sidebarItems: SidebarItem[] = [
     new SidebarItem('chat', 'Chat', '继续与内置 Codex 协作'),
     new SidebarItem('sessions', 'Sessions', '查看与切换项目会话'),
-    new SidebarItem('usage', 'Usage', '查看当前工作台统计')
+    new SidebarItem('usage', 'Usage', '查看当前工作台统计'),
+    new SidebarItem('prompts', 'Prompts', '自定义指令管理')
   ];
   private backendSubscriptionId: number = -1;
   private reconnectTimerId: number = -1;
@@ -127,7 +129,7 @@ struct Index {
   @State private isSavingProvider: boolean = false;
   @State private apiKey: string = '';
   @State private isAuthenticating: boolean = false;
-  @State private authStatusText: string = 'æœªç™»å½•';
+  @State private authStatusText: string = '未登录';
   @State private connectionState: CodexConnectionState = 'disconnected';
   @State private connectionText: string = '未连接';
   @State private summaryTitle: string = '等待连接真实 app-server';
@@ -139,6 +141,13 @@ struct Index {
   @State private changedFiles: string = '尚未产生文件改动';
   @State private diffStat: string = '+0 -0';
   @State private isRunning: boolean = false;
+  @State private leftPanelWidth: number = 240;
+  @State private rightPanelWidth: number = 330;
+  private rowContainerWidth: number = 1000;
+  private readonly panelMinWidth: number = 120;
+  private readonly splitterBarWidth: number = 8;
+  private dragStartLeftW: number = 0;
+  private dragStartRightW: number = 0;
   @State private draft: string = '检查当前工作目录，并说明需要我批准的操作。';
   @State private pendingApproval: CodexApprovalRequest | null = null;
   @State private messages: ChatMessage[] = [
@@ -375,7 +384,7 @@ struct Index {
       this.summaryPoints = [
         hostStatus.message.length > 0 ? hostStatus.message : 'embedded host status unavailable',
         this.describeError(err),
-        `ç³»ç»Ÿå°†åœ¨ ${retryDelayMs} ms åŽè‡ªåŠ¨é‡è¯•è¿žæŽ¥ã€‚`,
+        `系统将在 ${retryDelayMs} ms 后自动重试连接。`,
         '可以点击连接按钮重试，或者检查 native 日志。'
       ];
       this.scheduleEmbeddedHostReconnect(retryDelayMs);
@@ -389,22 +398,22 @@ struct Index {
 
     const apiKey: string = this.apiKey.trim();
     if (apiKey.length === 0) {
-      this.summaryTitle = 'ç™»å½•å¤±è´¥';
-      this.summaryPoints = ['è¯·å…ˆè¾“å…¥ OpenAI API Keyã€‚'];
+      this.summaryTitle = '登录失败';
+      this.summaryPoints = ['请先输入 OpenAI API Key。'];
       return;
     }
 
     this.isAuthenticating = true;
     try {
       await codexBackend.loginWithApiKey(apiKey);
-      this.summaryTitle = 'OpenAI è®¤è¯å·²å°±ç»ª';
+      this.summaryTitle = 'OpenAI 认证已就绪';
       this.summaryPoints = [
-        'å·²ç»é€šè¿‡ account/login/start å®Œæˆ API Key ç™»å½•ã€‚',
-        'çŽ°åœ¨å¯ä»¥é‡æ–°å‘é€ä½ çš„é—®é¢˜ã€‚',
+        '已经通过 account/login/start 完成 API Key 登录。',
+        '现在可以重新发送你的问题。',
         this.authStatusText
       ];
     } catch (err) {
-      this.summaryTitle = 'ç™»å½•å¤±è´¥';
+      this.summaryTitle = '登录失败';
       this.summaryPoints = [this.describeError(err)];
     } finally {
       this.isAuthenticating = false;
@@ -586,6 +595,13 @@ struct Index {
 
   private isSidebarActive(view: SidebarView): boolean {
     return this.activeSidebarView === view;
+  }
+
+  private computeCenterWidth(): number {
+    const totalSplitterW = this.splitterBarWidth * 2;
+    const available = this.rowContainerWidth - 20 - totalSplitterW;
+    const centerW = available - this.leftPanelWidth - this.rightPanelWidth;
+    return Math.max(this.panelMinWidth, centerW);
   }
 
   private describeError(err: Object): string {
@@ -869,6 +885,47 @@ struct Index {
       .onClick(() => {
         this.draft = label;
       })
+  }
+
+  @Builder
+  private splitterBar(isLeft: boolean) {
+    Column() {
+      Column()
+        .width(2)
+        .height('60%')
+        .backgroundColor('#CBD5E1')
+        .borderRadius(1)
+    }
+    .width(this.splitterBarWidth)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#F1F5F9')
+    .borderRadius(4)
+    .hitTestBehavior(HitTestMode.Block)
+    .gesture(
+      PanGesture({ direction: PanDirection.Horizontal })
+        .onActionStart(() => {
+          this.dragStartLeftW = this.leftPanelWidth;
+          this.dragStartRightW = this.rightPanelWidth;
+        })
+        .onActionUpdate((event: GestureEvent) => {
+          const totalSplit = this.splitterBarWidth * 2;
+          const available = this.rowContainerWidth - 20 - totalSplit;
+          if (isLeft) {
+            const newLeft = this.dragStartLeftW + event.offsetX;
+            const centerW = available - newLeft - this.rightPanelWidth;
+            if (newLeft >= this.panelMinWidth && centerW >= this.panelMinWidth) {
+              this.leftPanelWidth = newLeft;
+            }
+          } else {
+            const newRight = this.dragStartRightW - event.offsetX;
+            const centerW = available - this.leftPanelWidth - newRight;
+            if (newRight >= this.panelMinWidth && centerW >= this.panelMinWidth) {
+              this.rightPanelWidth = newRight;
+            }
+          }
+        })
+    )
   }
 
   @Builder
@@ -1200,7 +1257,7 @@ struct Index {
       })
     }
     .height('100%')
-    .layoutWeight(24)
+    .width(this.leftPanelWidth)
     .padding(12)
     .backgroundColor('#F8FAFC')
     .border({ width: 1, color: '#E2E8F0' })
@@ -1366,23 +1423,29 @@ struct Index {
   }
 
   @Builder
+  private promptsCenterView() {
+    PromptsPage({ codexHome: '' })
+  }
+
+  @Builder
   private centerPanel() {
     Column() {
       if (this.activeSidebarView === 'chat') {
         this.chatCenterView()
       } else if (this.activeSidebarView === 'sessions') {
         this.sessionsCenterView()
+      } else if (this.activeSidebarView === 'prompts') {
+        this.promptsCenterView()
       } else {
         this.usageCenterView()
       }
     }
     .height('100%')
-    .layoutWeight(43)
+    .width(this.computeCenterWidth())
     .padding(12)
     .backgroundColor('#F8FAFC')
     .border({ width: 1, color: '#E2E8F0' })
     .borderRadius(20)
-    .margin({ left: 8, right: 8 })
   }
 
   @Builder
@@ -1437,6 +1500,16 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .height('100%')
         .width('100%')
+      } else if (this.activeSidebarView === 'prompts') {
+        Column() {
+          this.panelTitle('Prompts 上下文', '管理自定义指令（AGENTS.md）')
+          this.infoRow('说明', '创建和切换 Prompt 版本，启用后写入 AGENTS.md')
+          this.infoRow('生效方式', '切换 Prompt 后需新建会话')
+          this.infoRow('连接状态', this.connectionText)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .height('100%')
+        .width('100%')
       } else {
         Column() {
           this.panelTitle('Usage 上下文', '当前统计口径与最近状态')
@@ -1452,7 +1525,7 @@ struct Index {
       }
     }
     .height('100%')
-    .layoutWeight(33)
+    .width(this.rightPanelWidth)
     .padding(12)
     .backgroundColor('#F8FAFC')
     .border({ width: 1, color: '#E2E8F0' })
@@ -1468,12 +1541,25 @@ struct Index {
 
       Row() {
         this.leftPanel()
+        this.splitterBar(true)
         this.centerPanel()
+        this.splitterBar(false)
         this.rightPanel()
       }
       .width('100%')
       .height('100%')
       .padding(10)
+      .onAreaChange((oldValue: Area, newValue: Area) => {
+        const newW = newValue.width as number;
+        if (newW > 0 && this.rowContainerWidth !== newW) {
+          if (this.rowContainerWidth > 0) {
+            const scale = newW / this.rowContainerWidth;
+            this.leftPanelWidth = Math.max(this.panelMinWidth, this.leftPanelWidth * scale);
+            this.rightPanelWidth = Math.max(this.panelMinWidth, this.rightPanelWidth * scale);
+          }
+          this.rowContainerWidth = newW;
+        }
+      })
     }
     .width('100%')
     .height('100%')

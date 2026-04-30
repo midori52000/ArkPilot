@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { startEmbeddedCodexHost } from '../backend/CodexHostNative';
+import { PromptsBackendService } from '../prompts/PromptsBackendService';
 
 const DOMAIN = 0x0000;
 const TAG = 'CodexHost';
@@ -27,6 +28,10 @@ export default class EntryAbility extends UIAbility {
         status.serverUrl,
         status.message
       );
+
+      // 首次启动自动导入已有 AGENTS.md
+      const promptsService = new PromptsBackendService(codexHome);
+      promptsService.autoImportOnFirstLaunch();
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
     }
