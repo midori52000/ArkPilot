@@ -6,6 +6,7 @@
 Thumbs.db
 *.swp
 *.swo
+/.claude/
 
 # DevEco / HarmonyOS generated outputs
 /.hvigor/
@@ -41,6 +42,9 @@ Thumbs.db
 /codex-main/result
 
 # Local logs and generated diagnostics
+/Agent/.build-logs/
+/Agent/script/helpsetup/.hvigor/
+/codex-main/codex-main/
 /Agent/build_codex_ohos_host_full.log
 /libcodexhost-builder/out/
 /libcodexhost-builder/*.log

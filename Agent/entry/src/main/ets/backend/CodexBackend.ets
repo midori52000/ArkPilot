@@ -1,5 +1,6 @@
 import webSocket from '@ohos.net.webSocket';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { McpAuthStatus, McpHealthStatus, McpServerRecord, McpSyncStatus, SessionSummary, UsageSummary } from './ConsoleModels';
 
 export type CodexMessageRole = 'user' | 'assistant' | 'system';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
@@ -83,7 +84,7 @@ class InitializeClientInfo {
 }
 
 class InitializeCapabilities {
-  experimentalApi: boolean = false;
+  experimentalApi: boolean = true;
 }
 
 class InitializeRequestParams {
@@ -128,6 +129,81 @@ class AccountLoginCompletedParams {
   loginId?: string;
   success: boolean = false;
   error?: string;
+}
+
+class McpConfigReadParams {
+  includeLayers: boolean = false;
+}
+
+class McpConfigBatchEdit {
+  keyPath: string = '';
+  value: Object | string | number | boolean | null = null;
+  mergeStrategy: string = 'replace';
+
+  constructor(keyPath: string, value: Object | string | number | boolean | null, mergeStrategy: string = 'replace') {
+    this.keyPath = keyPath;
+    this.value = value;
+    this.mergeStrategy = mergeStrategy;
+  }
+}
+
+class McpConfigBatchWriteParams {
+  edits: McpConfigBatchEdit[] = [];
+  reloadUserConfig: boolean = false;
+}
+
+class McpConfigValueWriteParams {
+  keyPath: string = '';
+  value: Object | string | number | boolean | null = null;
+  mergeStrategy: string = 'replace';
+
+  constructor(keyPath: string, value: Object | string | number | boolean | null, mergeStrategy: string = 'replace') {
+    this.keyPath = keyPath;
+    this.value = value;
+    this.mergeStrategy = mergeStrategy;
+  }
+}
+
+class McpStatusListParams {
+  cursor?: string;
+  limit?: number;
+}
+
+class McpToolPayload {}
+
+class McpResourcePayload {}
+
+class McpServerStatusPayload {
+  name: string = '';
+  tools: Record<string, McpToolPayload> = {};
+  resources: McpResourcePayload[] = [];
+  resourceTemplates: Object[] = [];
+  authStatus: string = 'unsupported';
+}
+
+class McpStatusListResponsePayload {
+  data: McpServerStatusPayload[] = [];
+  nextCursor: string | null = null;
+}
+
+class McpOauthLoginRequestParams {
+  name: string = '';
+
+  constructor(serverName: string) {
+    this.name = serverName;
+  }
+}
+
+class McpOauthLoginCompletedParams {
+  name: string = '';
+  success: boolean = false;
+  error?: string;
+}
+
+class McpServerStatusUpdatedParams {
+  name: string = '';
+  status: string = 'starting';
+  error: string | null = null;
 }
 
 class ThreadPayload {
@@ -463,6 +539,9 @@ export class CodexBackendSnapshot {
   requiresOpenAIAuth: boolean;
   authStatusText: string;
   planTypeText: string;
+  mcpStatusText: string;
+  mcpServerCount: number;
+  mcpErrorText: string;
 
   constructor(
     serverUrl: string,
@@ -472,7 +551,10 @@ export class CodexBackendSnapshot {
     authMode: CodexAuthMode,
     requiresOpenAIAuth: boolean,
     authStatusText: string,
-    planTypeText: string
+    planTypeText: string,
+    mcpStatusText: string,
+    mcpServerCount: number,
+    mcpErrorText: string
   ) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
@@ -482,6 +564,9 @@ export class CodexBackendSnapshot {
     this.requiresOpenAIAuth = requiresOpenAIAuth;
     this.authStatusText = authStatusText;
     this.planTypeText = planTypeText;
+    this.mcpStatusText = mcpStatusText;
+    this.mcpServerCount = mcpServerCount;
+    this.mcpErrorText = mcpErrorText;
   }
 }
 
@@ -524,10 +609,22 @@ class CodexThreadRecord {
   changedFiles: string = '尚未产生文件改动';
   diffStat: string = '+0 -0';
   activeTurn: PendingTurnState | null = null;
+  turnCount: number = 0;
+  diffUpdateCount: number = 0;
+  lastTurnStatus: CodexTurnStatus = 'inProgress';
+  updatedAt: string = '';
 
   constructor(localKey: string, title: string) {
     this.localKey = localKey;
     this.title = title;
+    this.updatedAt = this.currentTimestamp();
+  }
+
+  private currentTimestamp(): string {
+    const now: Date = new Date();
+    const hours: string = now.getHours().toString().padStart(2, '0');
+    const minutes: string = now.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
   }
 }
 
@@ -549,6 +646,12 @@ export class CodexBackend {
   private requiresOpenAIAuth: boolean = true;
   private authStatusText: string = '未登录';
   private planTypeText: string = '';
+  private mcpServersCache: McpServerRecord[] = [];
+  private readonly mcpConfigByName: Map<string, Object> = new Map();
+  private readonly mcpStartupStateByName: Map<string, string> = new Map();
+  private readonly mcpStartupErrorByName: Map<string, string> = new Map();
+  private mcpStatusText: string = '尚未加载 MCP 状态';
+  private mcpErrorText: string = '';
 
   private logInfo(message: string): void {
     hilog.info(BACKEND_LOG_DOMAIN, BACKEND_LOG_TAG, '%{public}s', message);
@@ -582,8 +685,172 @@ export class CodexBackend {
       this.authMode,
       this.requiresOpenAIAuth,
       this.authStatusText,
-      this.planTypeText
+      this.planTypeText,
+      this.mcpStatusText,
+      this.mcpServersCache.length,
+      this.mcpErrorText
     );
+  }
+
+  sessionSummaries(): SessionSummary[] {
+    const sessions: SessionSummary[] = [];
+    this.threads.forEach((thread: CodexThreadRecord) => {
+      const lastMessageTimestamp: string = thread.messages.length > 0
+        ? thread.messages[thread.messages.length - 1].timestamp
+        : thread.updatedAt;
+      sessions.push(
+        new SessionSummary(
+          thread.localKey,
+          thread.title,
+          thread.cwd,
+          thread.messages.length,
+          lastMessageTimestamp,
+          thread.summaryTitle,
+          thread.lastTurnStatus,
+          thread.changedFiles
+        )
+      );
+    });
+    return sessions.sort((left: SessionSummary, right: SessionSummary) => {
+      if (left.lastUpdatedAt === right.lastUpdatedAt) {
+        return left.title.localeCompare(right.title);
+      }
+      return left.lastUpdatedAt < right.lastUpdatedAt ? 1 : -1;
+    });
+  }
+
+  usageSummary(): UsageSummary {
+    let activeTurnCount: number = 0;
+    let turnCount: number = 0;
+    let messageCount: number = 0;
+    let diffLineCount: number = 0;
+    let diffUpdateCount: number = 0;
+    let lastTurnStatus: string = '尚无会话';
+    this.threads.forEach((thread: CodexThreadRecord) => {
+      if (thread.activeTurn !== null) {
+        activeTurnCount += 1;
+      }
+      turnCount += thread.turnCount;
+      messageCount += thread.messages.length;
+      diffLineCount += thread.diffLines.length;
+      diffUpdateCount += thread.diffUpdateCount;
+      lastTurnStatus = thread.lastTurnStatus;
+    });
+    return new UsageSummary(
+      this.threads.size,
+      activeTurnCount,
+      turnCount,
+      messageCount,
+      diffLineCount,
+      diffUpdateCount,
+      lastTurnStatus
+    );
+  }
+
+  resultForThreadKey(threadKey: string): CodexTurnResult | null {
+    const thread: CodexThreadRecord | undefined = this.threads.get(threadKey);
+    if (thread === undefined) {
+      return null;
+    }
+    return this.snapshotForThread(thread, thread.lastTurnStatus);
+  }
+
+  mcpServers(): McpServerRecord[] {
+    return this.mcpServersCache.map((server: McpServerRecord) => this.cloneMcpServer(server));
+  }
+
+  mcpConfig(serverName: string): Object | null {
+    return this.mcpConfigByName.get(serverName) ?? null;
+  }
+
+  async refreshMcpServers(): Promise<McpServerRecord[]> {
+    await this.ensureConnected();
+    await this.readMcpConfig();
+    const params: McpStatusListParams = new McpStatusListParams();
+    params.limit = 100;
+    const payload: Object = await this.sendRpcRequest(
+      new RpcRequestEnvelope(this.nextRequestId(), 'mcpServerStatus/list', params)
+    );
+    const response: McpStatusListResponsePayload = payload as McpStatusListResponsePayload;
+    this.mcpServersCache = response.data.map((item: McpServerStatusPayload) => this.buildMcpServerRecord(item));
+    this.mcpStatusText = this.mcpServersCache.length > 0
+      ? `已加载 ${this.mcpServersCache.length} 个 MCP server`
+      : '当前没有已配置的 MCP server';
+    this.mcpErrorText = '';
+    this.notifyListeners();
+    return this.mcpServers();
+  }
+
+  async reloadMcpServers(): Promise<void> {
+    await this.ensureConnected();
+    await this.sendRpcRequest(new RpcRequestEnvelope(this.nextRequestId(), 'config/mcpServer/reload', new EmptyPayload()));
+    this.mcpStatusText = 'MCP 配置已重载';
+    this.mcpErrorText = '';
+    await this.refreshMcpServers();
+  }
+
+  async writeMcpConfigValue(keyPath: string, value: Object | string | number | boolean | null): Promise<void> {
+    await this.ensureConnected();
+    await this.sendRpcRequest(
+      new RpcRequestEnvelope(this.nextRequestId(), 'config/value/write', new McpConfigValueWriteParams(keyPath, value))
+    );
+    this.mcpStatusText = `已更新 ${keyPath}`;
+    this.mcpErrorText = '';
+    this.notifyListeners();
+  }
+
+  async batchWriteMcpConfig(edits: McpConfigBatchEdit[]): Promise<void> {
+    await this.ensureConnected();
+    const params: McpConfigBatchWriteParams = new McpConfigBatchWriteParams();
+    params.edits = edits;
+    params.reloadUserConfig = true;
+    await this.sendRpcRequest(new RpcRequestEnvelope(this.nextRequestId(), 'config/batchWrite', params));
+    this.mcpStatusText = 'MCP 配置已保存';
+    this.mcpErrorText = '';
+    this.notifyListeners();
+  }
+
+  async saveMcpServerConfig(
+    serverName: string,
+    enabled: boolean,
+    transportType: string,
+    command: string,
+    argsText: string,
+    url: string,
+    envText: string
+  ): Promise<void> {
+    await this.ensureConnected();
+    await this.readMcpConfig();
+    const existingConfig: Record<string, Object> = this.copyConfigObject(
+      (this.mcpConfigByName.get(serverName) as Record<string, Object> | undefined) ?? {}
+    );
+    const nextConfig: Record<string, Object> = this.copyConfigObject(existingConfig);
+    nextConfig['enabled'] = enabled;
+    const parsedArgs: Object = this.parseJsonText(argsText, JSON.parse('[]') as Object);
+    const parsedEnv: Object = this.parseJsonText(envText, JSON.parse('{}') as Object);
+    nextConfig['args'] = parsedArgs;
+    nextConfig['env'] = parsedEnv;
+    if (transportType === 'http') {
+      nextConfig['url'] = url.trim();
+      nextConfig['command'] = '';
+    } else {
+      nextConfig['command'] = command.trim();
+      nextConfig['url'] = '';
+    }
+    await this.batchWriteMcpConfig([
+      new McpConfigBatchEdit(`mcp_servers.${serverName}`, nextConfig)
+    ]);
+    await this.reloadMcpServers();
+  }
+
+  async startMcpOAuthLogin(serverName: string): Promise<void> {
+    await this.ensureConnected();
+    await this.sendRpcRequest(
+      new RpcRequestEnvelope(this.nextRequestId(), 'mcpServer/oauth/login', new McpOauthLoginRequestParams(serverName))
+    );
+    this.mcpStatusText = `已为 ${serverName} 发起 OAuth 登录`;
+    this.mcpErrorText = '';
+    this.notifyListeners();
   }
 
   configureServerUrl(serverUrl: string): void {
@@ -738,7 +1005,7 @@ export class CodexBackend {
       initializeParams.clientInfo.name = 'codex_harmony_agent';
       initializeParams.clientInfo.title = 'Codex Harmony Agent';
       initializeParams.clientInfo.version = '0.1.0';
-      initializeParams.capabilities.experimentalApi = false;
+      initializeParams.capabilities.experimentalApi = true;
       const initializeResultObject: Object = await this.sendRpcRequest(
         new RpcRequestEnvelope(this.nextRequestId(), 'initialize', initializeParams)
       );
@@ -888,6 +1155,16 @@ export class CodexBackend {
       return;
     }
 
+    if (method === 'mcpServer/startupStatus/updated') {
+      this.handleMcpServerStatusUpdated(paramsObject as McpServerStatusUpdatedParams);
+      return;
+    }
+
+    if (method === 'mcpServer/oauthLogin/completed') {
+      this.handleMcpOauthLoginCompleted(paramsObject as McpOauthLoginCompletedParams);
+      return;
+    }
+
     if (method === 'serverRequest/resolved') {
       this.pendingApproval = null;
       this.notifyListeners();
@@ -921,6 +1198,57 @@ export class CodexBackend {
       this.authStatusText = params.error ?? 'ç™»å½•å¤±è´¥';
       this.notifyListeners();
     }
+  }
+
+  private handleMcpServerStatusUpdated(params?: McpServerStatusUpdatedParams): void {
+    if (params === undefined || params.name.trim().length === 0) {
+      return;
+    }
+    this.mcpStartupStateByName.set(params.name, params.status);
+    if (params.error !== null && params.error.trim().length > 0) {
+      this.mcpStartupErrorByName.set(params.name, params.error);
+      this.mcpErrorText = params.error;
+    } else {
+      this.mcpStartupErrorByName.delete(params.name);
+    }
+    this.mcpStatusText = `${params.name} · ${params.status}`;
+    this.mcpServersCache = this.mcpServersCache.map((server: McpServerRecord) => {
+      if (server.name !== params.name) {
+        return server;
+      }
+      return new McpServerRecord(
+        server.id,
+        server.name,
+        server.enabled,
+        server.transportType,
+        server.command,
+        server.argsText,
+        server.url,
+        server.envText,
+        server.toolCount,
+        server.resourceCount,
+        this.normalizeMcpHealthStatus(params.status, params.error),
+        server.authStatus,
+        params.error ?? '',
+        params.error !== null && params.error.trim().length > 0 ? 'error' : server.syncStatus,
+        this.currentTimestamp()
+      );
+    });
+    this.notifyListeners();
+  }
+
+  private handleMcpOauthLoginCompleted(params?: McpOauthLoginCompletedParams): void {
+    if (params === undefined) {
+      return;
+    }
+    if (params.success) {
+      this.mcpStatusText = `${params.name} OAuth 登录已完成`;
+      this.mcpErrorText = '';
+    } else {
+      this.mcpStatusText = `${params.name} OAuth 登录失败`;
+      this.mcpErrorText = params.error ?? 'OAuth 登录失败';
+    }
+    this.notifyListeners();
   }
 
   private applyAccountState(payload: GetAccountResponsePayload): void {
@@ -1142,6 +1470,8 @@ export class CodexBackend {
     thread.diffLines = parsed.lines;
     thread.diffStat = parsed.diffStat;
     thread.changedFiles = parsed.changedFiles;
+    thread.diffUpdateCount += 1;
+    thread.updatedAt = this.currentTimestamp();
     this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
   }
 
@@ -1168,6 +1498,8 @@ export class CodexBackend {
     }
 
     const status: CodexTurnStatus = this.mapTurnStatus(params.turn.status);
+    thread.lastTurnStatus = status;
+    thread.updatedAt = this.currentTimestamp();
     if (status === 'failed') {
       const message: string = params.turn.error?.message ?? '未知错误';
       this.upsertMessage(
@@ -1226,6 +1558,9 @@ export class CodexBackend {
 
   private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
     this.upsertMessage(thread, `user-${Date.now()}`, '你', 'user', prompt, this.currentTimestamp());
+    thread.turnCount += 1;
+    thread.lastTurnStatus = 'inProgress';
+    thread.updatedAt = this.currentTimestamp();
     thread.summaryTitle = '正在等待 Codex 响应';
     thread.summaryPoints = ['已发送请求，等待 app-server 返回 streaming 结果。'];
     return this.snapshotForThread(thread, 'inProgress');
@@ -1240,6 +1575,8 @@ export class CodexBackend {
       `调用 app-server 失败：${message}`,
       this.currentTimestamp()
     );
+    thread.lastTurnStatus = 'failed';
+    thread.updatedAt = this.currentTimestamp();
     thread.summaryTitle = '调用失败';
     thread.summaryPoints = [message];
     const failed: CodexTurnResult = this.snapshotForThread(thread, 'failed');
@@ -1604,6 +1941,158 @@ export class CodexBackend {
     );
   }
 
+  private cloneMcpServer(server: McpServerRecord): McpServerRecord {
+    return new McpServerRecord(
+      server.id,
+      server.name,
+      server.enabled,
+      server.transportType,
+      server.command,
+      server.argsText,
+      server.url,
+      server.envText,
+      server.toolCount,
+      server.resourceCount,
+      server.healthStatus,
+      server.authStatus,
+      server.lastError,
+      server.syncStatus,
+      server.updatedAt
+    );
+  }
+
+  private async readMcpConfig(): Promise<void> {
+    const payload: Object = await this.sendRpcRequest(
+      new RpcRequestEnvelope(this.nextRequestId(), 'config/read', new McpConfigReadParams())
+    );
+    const rawResponse: Record<string, Object> = payload as Record<string, Object>;
+    const configObject: Record<string, Object> | undefined = rawResponse['config'] as Record<string, Object> | undefined;
+    this.mcpConfigByName.clear();
+    if (configObject === undefined) {
+      return;
+    }
+    const mcpServers: Record<string, Object> | undefined = configObject['mcp_servers'] as Record<string, Object> | undefined;
+    if (mcpServers === undefined) {
+      return;
+    }
+    const names: string[] = Object.keys(mcpServers);
+    for (let index: number = 0; index < names.length; index += 1) {
+      const name: string = names[index];
+      const value: Object | undefined = mcpServers[name] as Object | undefined;
+      if (value !== undefined) {
+        this.mcpConfigByName.set(name, value);
+      }
+    }
+  }
+
+  private buildMcpServerRecord(status: McpServerStatusPayload): McpServerRecord {
+    const config: Record<string, Object> = (this.mcpConfigByName.get(status.name) as Record<string, Object> | undefined) ?? {};
+    const command: string = this.readStringField(config, 'command');
+    const url: string = this.readStringField(config, 'url');
+    const argsText: string = this.stringifyJsonField(config['args']);
+    const envText: string = this.stringifyJsonField(config['env']);
+    const enabled: boolean = this.readBooleanField(config, 'enabled', true);
+    const transportType: string = url.trim().length > 0 ? 'http' : (command.trim().length > 0 ? 'stdio' : 'unknown');
+    const tools: Record<string, Object> = status.tools as Record<string, Object>;
+    const toolCount: number = Object.keys(tools).length;
+    const resourceCount: number = status.resources.length + status.resourceTemplates.length;
+    const startupState: string = this.mcpStartupStateByName.get(status.name) ?? 'ready';
+    const startupError: string = this.mcpStartupErrorByName.get(status.name) ?? '';
+    return new McpServerRecord(
+      status.name,
+      status.name,
+      enabled,
+      transportType,
+      command,
+      argsText,
+      url,
+      envText,
+      toolCount,
+      resourceCount,
+      this.normalizeMcpHealthStatus(startupState, startupError),
+      this.normalizeMcpAuthStatus(status.authStatus),
+      startupError,
+      startupError.length > 0 ? 'error' : 'synced',
+      this.currentTimestamp()
+    );
+  }
+
+  private normalizeMcpAuthStatus(rawStatus: string): McpAuthStatus {
+    if (rawStatus === 'oAuth' || rawStatus === 'bearerToken') {
+      return 'authenticated';
+    }
+    if (rawStatus === 'notLoggedIn') {
+      return 'required';
+    }
+    return 'notRequired';
+  }
+
+  private normalizeMcpHealthStatus(rawStatus: string, error: string | null): McpHealthStatus {
+    if (error !== null && error.trim().length > 0) {
+      return 'error';
+    }
+    if (rawStatus === 'ready') {
+      return 'ok';
+    }
+    if (rawStatus === 'starting') {
+      return 'degraded';
+    }
+    if (rawStatus === 'failed' || rawStatus === 'cancelled') {
+      return 'error';
+    }
+    return 'unknown';
+  }
+
+  private readStringField(source: Record<string, Object>, fieldName: string): string {
+    const value: Object | undefined = source[fieldName];
+    return typeof value === 'string' ? value : '';
+  }
+
+  private readBooleanField(source: Record<string, Object>, fieldName: string, defaultValue: boolean): boolean {
+    const value: Object | undefined = source[fieldName];
+    return typeof value === 'boolean' ? value : defaultValue;
+  }
+
+  private stringifyJsonField(value: Object | undefined): string {
+    if (value === undefined) {
+      return '';
+    }
+    try {
+      return JSON.stringify(value);
+    } catch (_err) {
+      return '';
+    }
+  }
+
+  private parseJsonText(rawText: string, fallbackValue: Object): Object {
+    const trimmed: string = rawText.trim();
+    if (trimmed.length === 0) {
+      return fallbackValue;
+    }
+    try {
+      return JSON.parse(trimmed) as Object;
+    } catch (_err) {
+      return fallbackValue;
+    }
+  }
+
+  private copyConfigObject(source: Record<string, Object>): Record<string, Object> {
+    const target: Record<string, Object> = {};
+    const keys: string[] = Object.keys(source);
+    for (let index: number = 0; index < keys.length; index += 1) {
+      const key: string = keys[index];
+      target[key] = source[key];
+    }
+    return target;
+  }
+
+  private currentTimestamp(): string {
+    const now: Date = new Date();
+    const hours: string = now.getHours().toString().padStart(2, '0');
+    const minutes: string = now.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  }
+
   private parseEnvelope(text: string): RpcEnvelope | null {
     try {
       return JSON.parse(text) as RpcEnvelope;
@@ -1639,13 +2128,6 @@ export class CodexBackend {
     const requestId: string = `req-${this.requestSequence}`;
     this.requestSequence += 1;
     return requestId;
-  }
-
-  private currentTimestamp(): string {
-    const now: Date = new Date();
-    const hours: string = now.getHours().toString().padStart(2, '0');
-    const minutes: string = now.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
   }
 
   private truncate(value: string, maxLength: number): string {
