@@ -1,0 +1,32 @@
+[2026-04-29T22:51:01.153] [DEBUG] debug-file - env: nodejsVersion=v24.14.1
+[2026-04-29T22:51:01.216] [DEBUG] debug-file - env: daemon=true
+[2026-04-29T22:51:01.154] [DEBUG] debug-file - env: hvigor-config.json5 content = {
+  properties: { 'hvigor.dependency.useNpm': true },
+  modelVersion: '',
+  dependencies: {}
+}
+[2026-04-29T22:51:02.024] [DEBUG] debug-file - java daemon tryConnect success
+[2026-04-29T23:59:54.758] [DEBUG] debug-file - env: nodejsVersion=v24.14.1
+[2026-04-29T23:59:54.848] [DEBUG] debug-file - env: daemon=true
+[2026-04-29T23:59:54.759] [DEBUG] debug-file - env: hvigor-config.json5 content = {
+  properties: { 'hvigor.dependency.useNpm': true },
+  modelVersion: '',
+  dependencies: {}
+}
+[2026-04-29T23:59:55.657] [DEBUG] debug-file - java daemon tryConnect success
+[2026-04-30T00:10:11.145] [DEBUG] debug-file - env: nodejsVersion=v24.14.1
+[2026-04-30T00:10:11.209] [DEBUG] debug-file - env: daemon=true
+[2026-04-30T00:10:11.146] [DEBUG] debug-file - env: hvigor-config.json5 content = {
+  properties: { 'hvigor.dependency.useNpm': true },
+  modelVersion: '',
+  dependencies: {}
+}
+[2026-04-30T00:10:11.941] [DEBUG] debug-file - java daemon tryConnect success
+[2026-04-30T00:22:20.595] [DEBUG] debug-file - env: nodejsVersion=v24.14.1
+[2026-04-30T00:22:20.671] [DEBUG] debug-file - env: daemon=true
+[2026-04-30T00:22:20.595] [DEBUG] debug-file - env: hvigor-config.json5 content = {
+  properties: { 'hvigor.dependency.useNpm': true },
+  modelVersion: '',
+  dependencies: {}
+}
+[2026-04-30T00:22:21.528] [DEBUG] debug-file - java daemon tryConnect success

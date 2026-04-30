@@ -13,6 +13,8 @@ import {
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexHostNative';
+import { SidebarView } from '../backend/ConsoleModels';
+import router from '@ohos.router';
 
 class WorkspaceItem {
   id: number;
@@ -33,6 +35,18 @@ class SelectorOption {
   constructor(label: string, value: string) {
     this.label = label;
     this.value = value;
+  }
+}
+
+class SidebarItem {
+  view: SidebarView;
+  label: string;
+  description: string;
+
+  constructor(view: SidebarView, label: string, description: string) {
+    this.view = view;
+    this.label = label;
+    this.description = description;
   }
 }
 
@@ -89,12 +103,18 @@ struct Index {
     new SelectorOption('high', 'high'),
     new SelectorOption('xhigh', 'xhigh')
   ];
+  private readonly sidebarItems: SidebarItem[] = [
+    new SidebarItem('chat', 'Chat', '继续与内置 Codex 协作'),
+    new SidebarItem('sessions', 'Sessions', '查看与切换项目会话'),
+    new SidebarItem('usage', 'Usage', '查看当前工作台统计')
+  ];
   private backendSubscriptionId: number = -1;
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
   private readonly workspaceRoots: Map<number, string> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
 
+  @State private activeSidebarView: SidebarView = 'chat';
   @State private activeWorkspaceId: number = 1;
   @State private selectedEffortIndex: number = 0;
   @State private showEffortOptions: boolean = false;
@@ -440,7 +460,20 @@ struct Index {
   private selectWorkspace(item: WorkspaceItem): void {
     this.activeWorkspaceId = item.id;
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
-    this.draft = `继续处理“${item.title}”，重点关注当前工作目录。`;
+    this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
+    this.activeSidebarView = 'chat';
+  }
+
+  private createWorkspace(): void {
+    let nextId: number = 1;
+    for (let index: number = 0; index < this.workspaces.length; index += 1) {
+      if (this.workspaces[index].id >= nextId) {
+        nextId = this.workspaces[index].id + 1;
+      }
+    }
+    const workspace: WorkspaceItem = new WorkspaceItem(nextId, `新会话 ${nextId}`, '从侧边栏创建的新线程');
+    this.workspaces.push(workspace);
+    this.selectWorkspace(workspace);
   }
 
   private connectionButtonLabel(): string {
@@ -551,6 +584,10 @@ struct Index {
     return this.activeWorkspaceId === item.id;
   }
 
+  private isSidebarActive(view: SidebarView): boolean {
+    return this.activeSidebarView === view;
+  }
+
   private describeError(err: Object): string {
     if (err instanceof Error) {
       return err.message;
@@ -655,6 +692,88 @@ struct Index {
     .onClick(() => {
       this.selectWorkspace(item);
     })
+  }
+
+  @Builder
+  private sidebarRow(item: SidebarItem) {
+    Column() {
+      Row() {
+        Text(item.label)
+          .fontSize(12)
+          .fontWeight(this.isSidebarActive(item.view) ? FontWeight.Medium : FontWeight.Regular)
+          .fontColor('#0F172A')
+
+        Blank()
+          .layoutWeight(1)
+      }
+      .width('100%')
+
+      Text(item.description)
+        .fontSize(10)
+        .fontColor('#64748B')
+        .margin({ top: 4 })
+        .lineHeight(16)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(10)
+    .backgroundColor(this.isSidebarActive(item.view) ? '#EEF4FF' : '#FFFFFF')
+    .border({ width: 1, color: this.isSidebarActive(item.view) ? '#BFDBFE' : '#E5E7EB' })
+    .borderRadius(14)
+    .margin({ bottom: 6 })
+    .onClick(() => {
+      this.activeSidebarView = item.view;
+    })
+  }
+
+  @Builder
+  private infoRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .fontSize(10)
+        .fontColor('#94A3B8')
+        .width(78)
+
+      Text(value)
+        .fontSize(11)
+        .fontColor('#334155')
+        .layoutWeight(1)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .margin({ top: 8 })
+  }
+
+  @Builder
+  private metricCard(title: string, value: string, hint: string) {
+    Column() {
+      Text(title)
+        .fontSize(10)
+        .fontColor('#94A3B8')
+
+      Text(value)
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#0F172A')
+        .margin({ top: 8 })
+
+      Text(hint)
+        .fontSize(10)
+        .fontColor('#64748B')
+        .margin({ top: 6 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('48%')
+    .padding(12)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E2E8F0' })
+    .borderRadius(16)
+    .margin({ bottom: 8 })
   }
 
   @Builder
@@ -808,16 +927,91 @@ struct Index {
   }
 
   @Builder
+  private sessionsCenterView() {
+    Column() {
+      Row() {
+        this.panelTitle('Sessions', '将当前 ArkPilot 线程状态可视化为会话面板')
+
+        Blank()
+          .layoutWeight(1)
+
+        Button('新建会话')
+          .height(34)
+          .fontSize(12)
+          .backgroundColor('#111827')
+          .fontColor('#FFFFFF')
+          .borderRadius(16)
+          .onClick(() => {
+            this.createWorkspace();
+          })
+      }
+      .width('100%')
+
+      List({ space: 0 }) {
+        ForEach(this.workspaces, (item: WorkspaceItem) => {
+          ListItem() {
+            this.workspaceRow(item)
+          }
+        }, (item: WorkspaceItem) => item.id.toString())
+      }
+      .layoutWeight(1)
+      .width('100%')
+      .margin({ top: 10 })
+      .scrollBar(BarState.Off)
+    }
+    .height('100%')
+    .width('100%')
+  }
+
+  @Builder
+  private usageCenterView() {
+    Column() {
+      Row() {
+        this.panelTitle('Usage', '基于当前对话线程派生的基础统计')
+
+        Blank()
+          .layoutWeight(1)
+
+        this.chip(this.connectionText, '#F8FAFC', '#64748B')
+      }
+      .width('100%')
+
+      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+        this.metricCard('会话数', this.workspaces.length.toString(), '当前工作台中已创建的线程数')
+        this.metricCard('消息总数', this.messages.length.toString(), '当前线程缓存的消息条数')
+        this.metricCard('Diff 行数', this.codeLines.length.toString(), '右栏当前缓存的 diff 行')
+        this.metricCard('连接状态', this.connectionText, '当前 WebSocket 连接状态')
+      }
+      .width('100%')
+      .margin({ top: 12 })
+
+      Column() {
+        this.panelTitle('说明', '第一阶段先做本地派生统计，不做精确 token/cost 账单')
+        this.summaryBullet('统计来自 CodexBackend 内部线程快照，不修改现有 JSON-RPC 主链路。')
+        this.summaryBullet('Provider / MCP / Skills 管理请通过左下角 Settings 按钮进入。')
+      }
+      .width('100%')
+      .padding(14)
+      .margin({ top: 6 })
+      .backgroundColor('#FFFFFF')
+      .border({ width: 1, color: '#E2E8F0' })
+      .borderRadius(18)
+    }
+    .height('100%')
+    .width('100%')
+  }
+
+  @Builder
   private leftPanel() {
     Column() {
       Row() {
         Column() {
-          Text('Codex')
+          Text('ArkPilot')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor('#0F172A')
 
-          Text('Harmony app-server client')
+          Text('项目侧边栏控制台')
             .fontSize(10)
             .fontColor('#94A3B8')
             .margin({ top: 4 })
@@ -832,30 +1026,19 @@ struct Index {
       .width('100%')
 
       Column() {
-        this.panelTitle('连接', '配置真实 codex app-server 的 WebSocket 地址')
+        this.panelTitle('导航', '通过项目侧边栏切换控制台子面板')
 
-        TextInput({ text: this.serverUrl, placeholder: 'ws://127.0.0.1:7456' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.serverUrl = value;
-          })
-
-        Button(this.connectionButtonLabel())
-          .height(34)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(16)
-          .onClick(() => {
-            void this.connectOrDisconnect();
-          })
+        List({ space: 0 }) {
+          ForEach(this.sidebarItems, (item: SidebarItem) => {
+            ListItem() {
+              this.sidebarRow(item)
+            }
+          }, (item: SidebarItem) => item.view)
+        }
+        .width('100%')
+        .width('100%')
+        .scrollBar(BarState.Off)
+        .margin({ top: 10 })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
@@ -865,118 +1048,156 @@ struct Index {
       .border({ width: 1, color: '#E2E8F0' })
       .borderRadius(18)
 
-      Row() {
-        Text('会话')
-          .fontSize(10)
-          .fontColor('#94A3B8')
+      if (this.activeSidebarView === 'chat') {
+        Column() {
+          this.panelTitle('Chat 上下文', '保留连接、当前会话与工作目录')
 
-        Blank()
-          .layoutWeight(1)
+          TextInput({ text: this.serverUrl, placeholder: 'ws://127.0.0.1:7456' })
+            .width('100%')
+            .height(38)
+            .margin({ top: 10 })
+            .fontSize(12)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12 })
+            .onChange((value: string) => {
+              this.serverUrl = value;
+            })
 
-        Text(this.workspaces.length.toString())
-          .fontSize(10)
-          .fontColor('#94A3B8')
-      }
-      .width('100%')
-      .margin({ top: 14, bottom: 8 })
+          Button(this.connectionButtonLabel())
+            .height(34)
+            .margin({ top: 10 })
+            .fontSize(12)
+            .backgroundColor('#111827')
+            .fontColor('#FFFFFF')
+            .borderRadius(16)
+            .onClick(() => {
+              void this.connectOrDisconnect();
+            })
 
-      Column() {
-        this.panelTitle('Provider', 'Configure base_url, api_key, and the default model used by the embedded backend')
+          this.infoRow('认证', this.authStatusText)
+          this.infoRow('Provider', this.providerStatusText)
 
-        Text(this.providerStatusText)
-          .fontSize(11)
-          .fontColor('#334155')
-          .margin({ top: 10 })
+          Row() {
+            Text('会话')
+              .fontSize(10)
+              .fontColor('#94A3B8')
 
-        TextInput({ text: this.providerBaseUrl, placeholder: 'https://api.openai.com/v1' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.providerBaseUrl = value;
-          })
+            Blank()
+              .layoutWeight(1)
 
-        TextInput({ text: this.providerApiKey, placeholder: 'sk-...' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.providerApiKey = value;
-          })
-
-        TextInput({ text: this.manualModel, placeholder: 'gpt-5.5 or a custom model id' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.manualModel = value;
-          })
-
-        Button(this.providerButtonLabel())
-          .height(34)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(16)
-          .onClick(() => {
-            void this.saveProviderConfig();
-          })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-      .padding(12)
-      .margin({ bottom: 10 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
-
-      List({ space: 6 }) {
-        ForEach(this.workspaces, (item: WorkspaceItem) => {
-          ListItem() {
-            this.workspaceRow(item)
+            Text(this.workspaces.length.toString())
+              .fontSize(10)
+              .fontColor('#94A3B8')
           }
-        }, (item: WorkspaceItem) => item.id.toString())
-      }
-      .layoutWeight(1)
-      .width('100%')
-      .scrollBar(BarState.Off)
-
-      Column() {
-        this.panelTitle('工作目录', '为空时由 app-server 使用自己的默认 cwd')
-
-        TextInput({ text: this.workspaceRoot, placeholder: '例如 /data/storage/el2/base/files/project' })
           .width('100%')
-          .height(38)
+          .margin({ top: 12, bottom: 8 })
+
+          List({ space: 6 }) {
+            ForEach(this.workspaces, (item: WorkspaceItem) => {
+              ListItem() {
+                this.workspaceRow(item)
+              }
+            }, (item: WorkspaceItem) => item.id.toString())
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .scrollBar(BarState.Off)
+
+          Column() {
+            this.panelTitle('工作目录', '为空时由 app-server 使用自己的默认 cwd')
+
+            TextInput({ text: this.workspaceRoot, placeholder: '例如 /data/storage/el2/base/files/project' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.workspaceRoot = value;
+                this.workspaceRoots.set(this.activeWorkspaceId, value);
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(12)
           .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.workspaceRoot = value;
-            this.workspaceRoots.set(this.activeWorkspaceId, value);
-          })
+          .backgroundColor('#F8FAFC')
+          .border({ width: 1, color: '#E2E8F0' })
+          .borderRadius(16)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .layoutWeight(1)
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2E8F0' })
+        .borderRadius(18)
+      } else if (this.activeSidebarView === 'sessions') {
+        Column() {
+          this.panelTitle('会话概览', '查看当前项目线程与消息状态')
+          this.infoRow('会话数', this.workspaces.length.toString())
+          this.infoRow('当前会话', this.activeWorkspace().title)
+          Button('新建会话')
+            .height(34)
+            .margin({ top: 12 })
+            .fontSize(12)
+            .backgroundColor('#111827')
+            .fontColor('#FFFFFF')
+            .borderRadius(16)
+            .onClick(() => {
+              this.createWorkspace();
+            })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .layoutWeight(1)
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2E8F0' })
+        .borderRadius(18)
+      } else {
+        Column() {
+          this.panelTitle('Usage 概览', '基于当前 ArkPilot 线程状态派生')
+          this.infoRow('会话', this.workspaces.length.toString())
+          this.infoRow('状态', this.connectionText)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .layoutWeight(1)
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2E8F0' })
+        .borderRadius(18)
       }
-      .alignItems(HorizontalAlign.Start)
+
+      // Settings button
+      Button() {
+        Row() {
+          Text('⚙')
+            .fontSize(14)
+            .fontColor('#64748B')
+
+          Text('Settings')
+            .fontSize(12)
+            .fontColor('#64748B')
+            .margin({ left: 6 })
+        }
+      }
+      .height(38)
       .width('100%')
-      .padding(12)
-      .margin({ top: 10 })
+      .margin({ top: 8 })
       .backgroundColor('#FFFFFF')
+      .borderRadius(16)
       .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .onClick(() => {
+        router.pushUrl({ url: 'pages/SettingsPage' });
+      })
     }
     .height('100%')
     .layoutWeight(24)
@@ -987,7 +1208,7 @@ struct Index {
   }
 
   @Builder
-  private centerPanel() {
+  private chatCenterView() {
     Column() {
       Row() {
         this.panelTitle(this.activeWorkspace().title, this.activeWorkspace().description)
@@ -1141,6 +1362,21 @@ struct Index {
       .borderRadius(18)
     }
     .height('100%')
+    .width('100%')
+  }
+
+  @Builder
+  private centerPanel() {
+    Column() {
+      if (this.activeSidebarView === 'chat') {
+        this.chatCenterView()
+      } else if (this.activeSidebarView === 'sessions') {
+        this.sessionsCenterView()
+      } else {
+        this.usageCenterView()
+      }
+    }
+    .height('100%')
     .layoutWeight(43)
     .padding(12)
     .backgroundColor('#F8FAFC')
@@ -1150,7 +1386,7 @@ struct Index {
   }
 
   @Builder
-  private rightPanel() {
+  private chatContextPanel() {
     Column() {
       Row() {
         this.panelTitle('统一 diff', 'turn/diff/updated 会实时刷新这里')
@@ -1180,6 +1416,40 @@ struct Index {
       .width('100%')
       .margin({ top: 10 })
       .scrollBar(BarState.Off)
+    }
+    .height('100%')
+    .width('100%')
+  }
+
+  @Builder
+  private rightPanel() {
+    Column() {
+      if (this.activeSidebarView === 'chat') {
+        this.chatContextPanel()
+      } else if (this.activeSidebarView === 'sessions') {
+        Column() {
+          this.panelTitle('会话上下文', '显示当前选中会话的摘要与工作目录')
+          this.infoRow('当前会话', this.activeWorkspace().title)
+          this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
+          this.infoRow('消息数', this.messages.length.toString())
+          this.infoRow('连接状态', this.connectionText)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .height('100%')
+        .width('100%')
+      } else {
+        Column() {
+          this.panelTitle('Usage 上下文', '当前统计口径与最近状态')
+          this.infoRow('会话数', this.workspaces.length.toString())
+          this.infoRow('消息总数', this.messages.length.toString())
+          this.infoRow('Diff 行数', this.codeLines.length.toString())
+          this.infoRow('连接状态', this.connectionText)
+          this.infoRow('当前 Provider', this.providerStatusText)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .height('100%')
+        .width('100%')
+      }
     }
     .height('100%')
     .layoutWeight(33)

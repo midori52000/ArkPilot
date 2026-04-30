@@ -16,6 +16,8 @@ int32_t codex_ohos_host_save_provider_config(
     const char* api_key,
     const char* model
 );
+const char* codex_ohos_host_provider_catalog_json(const char* codex_home);
+int32_t codex_ohos_host_save_provider_catalog(const char* codex_home, const char* catalog_json);
 }
 
 namespace {
@@ -23,6 +25,7 @@ constexpr size_t MAX_HOME_ARG_LEN = 4096;
 constexpr size_t MAX_URL_ARG_LEN = 1024;
 constexpr size_t MAX_MODEL_ARG_LEN = 512;
 constexpr size_t MAX_API_KEY_ARG_LEN = 8192;
+constexpr size_t MAX_CATALOG_JSON_ARG_LEN = 65536;
 
 bool ReadOptionalUtf8(
     napi_env env,
@@ -198,6 +201,49 @@ napi_value SaveProviderConfig(napi_env env, napi_callback_info info) {
 
     return CreateUtf8String(env, codex_ohos_host_provider_config_json(codex_home_ptr));
 }
+
+napi_value GetProviderCatalog(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    char codex_home[MAX_HOME_ARG_LEN];
+    codex_home[0] = '\0';
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) {
+        return nullptr;
+    }
+
+    const char* codex_home_ptr = codex_home[0] == '\0' ? nullptr : codex_home;
+    return CreateUtf8String(env, codex_ohos_host_provider_catalog_json(codex_home_ptr));
+}
+
+napi_value SaveProviderCatalog(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    char codex_home[MAX_HOME_ARG_LEN];
+    char catalog_json[MAX_CATALOG_JSON_ARG_LEN];
+    codex_home[0] = '\0';
+    catalog_json[0] = '\0';
+
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) {
+        return nullptr;
+    }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], catalog_json, sizeof(catalog_json))) {
+        return nullptr;
+    }
+
+    const char* codex_home_ptr = codex_home[0] == '\0' ? nullptr : codex_home;
+    const char* catalog_json_ptr = catalog_json[0] == '\0' ? nullptr : catalog_json;
+    int32_t code = codex_ohos_host_save_provider_catalog(codex_home_ptr, catalog_json_ptr);
+    if (code != 0) {
+        napi_throw_error(env, nullptr, "Failed to save provider catalog.");
+        return nullptr;
+    }
+
+    return CreateUtf8String(env, codex_ohos_host_provider_catalog_json(codex_home_ptr));
+}
 }  // namespace
 
 EXTERN_C_START
@@ -210,6 +256,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getServerUrl", nullptr, GetServerUrl, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getProviderConfig", nullptr, GetProviderConfig, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"saveProviderConfig", nullptr, SaveProviderConfig, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getProviderCatalog", nullptr, GetProviderCatalog, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"saveProviderCatalog", nullptr, SaveProviderCatalog, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
