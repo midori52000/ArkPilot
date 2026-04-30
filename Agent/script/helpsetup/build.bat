@@ -28,10 +28,10 @@ set "SDK_ROOT=%DEVECO_SDK_HOME%"
 set "DEVECO_NODE_HOME=%DEVECO_NODE_HOME%"
 set "HVIGOR_CMD=%DEVECO_HVIGOR_CMD%"
 set "OHOS_NATIVE=%SDK_ROOT%\default\openharmony\native"
-set "RUST_WORKSPACE=%REPO_ROOT%\codex-main\codex-rs"
 set "OUTPUT_FILE=%PROJECT_DIR%\entry\build\default\outputs\default\entry-default-unsigned.hap"
-
-for %%I in ("%RUST_WORKSPACE%") do set "RUST_WORKSPACE=%%~fI"
+set "PREBUILT_LIB_DIR=%PROJECT_DIR%\entry\src\main\libs\x86_64"
+set "PREBUILT_LIB=%PREBUILT_LIB_DIR%\libcodexhost.so"
+set "REPACK_SCRIPT=%PROJECT_DIR%\script\helpsetup\repack_hap_with_native.js"
 
 if not defined SDK_ROOT (
   echo [ERROR] DEVECO_SDK_HOME is not set after setup.
@@ -50,10 +50,11 @@ if not exist "%HVIGOR_CMD%" (
   exit /b 1
 )
 
-if not exist "%RUST_WORKSPACE%\Cargo.toml" (
-  echo [ERROR] Rust workspace not found:
-  echo         %RUST_WORKSPACE%
-  echo         Expected sibling directory: ..\codex-main\codex-rs
+if not exist "%PREBUILT_LIB%" (
+  echo [ERROR] Prebuilt native library not found:
+  echo         %PREBUILT_LIB%
+  echo         Build it first with:
+  echo         ..\libcodexhost-builder\build.bat debug x86_64 --install
   exit /b 1
 )
 
@@ -70,7 +71,7 @@ echo ArkPilot Agent Debug HAP Build
 echo ========================================
 echo Project: %PROJECT_DIR%
 echo DevEco SDK: %SDK_ROOT%
-echo Rust workspace: %RUST_WORKSPACE%
+echo Native library: %PREBUILT_LIB%
 echo Output: %OUTPUT_FILE%
 echo.
 
@@ -86,6 +87,13 @@ if not "%BUILD_EXIT_CODE%"=="0" (
   echo.
   echo [ERROR] Build failed.
   exit /b %BUILD_EXIT_CODE%
+)
+
+call "%DEVECO_NODE_HOME%\node.exe" "%REPACK_SCRIPT%" "%PROJECT_DIR%"
+if errorlevel 1 (
+  echo.
+  echo [ERROR] HAP repack with native library failed.
+  exit /b 1
 )
 
 echo.

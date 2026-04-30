@@ -21,6 +21,9 @@ Thumbs.db
 # Rust cross-compilation cache for the embedded OHOS host
 /Agent/.cargo-target/
 
+# Prebuilt native libraries kept locally for runtime verification
+/Agent/entry/src/main/libs/x86_64/*.so
+
 # Upstream codex-main generated outputs and caches
 /codex-main/codex-rs/target/
 /codex-main/codex-rs/.cargo-target/
@@ -39,6 +42,8 @@ Thumbs.db
 
 # Local logs and generated diagnostics
 /Agent/build_codex_ohos_host_full.log
+/libcodexhost-builder/out/
+/libcodexhost-builder/*.log
 
 # Local signing materials
 /Agent/signing/

@@ -25,6 +25,8 @@ use serde::Serialize;
 
 const DEFAULT_LISTEN_URL: &str = "ws://127.0.0.1:7456";
 const DEFAULT_PROVIDER_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_APPROVAL_POLICY: &str = "on-request";
+const DEFAULT_SANDBOX_MODE: &str = "workspace-write";
 const CUSTOM_PROVIDER_ID: &str = "harmony-openai-compatible";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -307,6 +309,9 @@ fn persist_provider_settings(codex_home: &Path, settings: &ProviderSettings) -> 
 
 fn render_config_toml(settings: &ProviderSettings) -> String {
     let mut lines = vec![
+        format!("approval_policy = {}", toml_string(DEFAULT_APPROVAL_POLICY)),
+        format!("sandbox_mode = {}", toml_string(DEFAULT_SANDBOX_MODE)),
+        String::new(),
         format!("model_provider = {}", toml_string(CUSTOM_PROVIDER_ID)),
         String::new(),
         format!("[model_providers.{CUSTOM_PROVIDER_ID}]"),
@@ -433,4 +438,24 @@ fn write_cstring(target: &Mutex<CString>, value: &str) -> *const c_char {
     let mut slot = target.lock().expect("cstring lock");
     *slot = CString::new(sanitized).expect("sanitized cstring");
     slot.as_ptr()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_config_toml_includes_workspace_write_defaults() {
+        let config = render_config_toml(&ProviderSettings {
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "secret".to_string(),
+            model: "test-model".to_string(),
+        });
+
+        assert!(config.contains("approval_policy = \"on-request\""));
+        assert!(config.contains("sandbox_mode = \"workspace-write\""));
+        assert!(config.contains("model = \"test-model\""));
+        assert!(config.contains("base_url = \"https://example.com/v1\""));
+        assert!(config.contains("experimental_bearer_token = \"secret\""));
+    }
 }

@@ -26,6 +26,19 @@ export class CodexProviderConfig {
   }
 }
 
+function missingNativeModuleStatus(): CodexHostStatus {
+  return new CodexHostStatus(
+    1,
+    false,
+    '',
+    'libcodexhost.so failed to load. Check whether the native library was packaged into the HAP.'
+  );
+}
+
+function nativeModuleUnavailable(): boolean {
+  return codexHost === undefined || codexHost === null;
+}
+
 function normalizeStatus(rawStatus: NativeCodexHostStatus | undefined): CodexHostStatus {
   if (rawStatus === undefined) {
     return new CodexHostStatus(1, false, '', 'native codex host returned no status');
@@ -65,17 +78,49 @@ function parseProviderConfig(rawValue: string): CodexProviderConfig {
 }
 
 export function startEmbeddedCodexHost(codexHome: string, serverUrl: string): CodexHostStatus {
-  return normalizeStatus(codexHost.startHost(codexHome, serverUrl));
+  if (nativeModuleUnavailable()) {
+    return missingNativeModuleStatus();
+  }
+
+  try {
+    return normalizeStatus(codexHost.startHost(codexHome, serverUrl));
+  } catch (_err) {
+    return missingNativeModuleStatus();
+  }
 }
 
 export function getEmbeddedCodexHostStatus(): CodexHostStatus {
-  return normalizeStatus(codexHost.getStatus());
+  if (nativeModuleUnavailable()) {
+    return missingNativeModuleStatus();
+  }
+
+  try {
+    return normalizeStatus(codexHost.getStatus());
+  } catch (_err) {
+    return missingNativeModuleStatus();
+  }
 }
 
 export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
-  return parseProviderConfig(codexHost.getProviderConfig(''));
+  if (nativeModuleUnavailable()) {
+    return new CodexProviderConfig('', '', '');
+  }
+
+  try {
+    return parseProviderConfig(codexHost.getProviderConfig(''));
+  } catch (_err) {
+    return new CodexProviderConfig('', '', '');
+  }
 }
 
 export function saveEmbeddedCodexProviderConfig(baseUrl: string, apiKey: string, model: string): CodexProviderConfig {
-  return parseProviderConfig(codexHost.saveProviderConfig('', baseUrl, apiKey, model));
+  if (nativeModuleUnavailable()) {
+    return new CodexProviderConfig('', '', '');
+  }
+
+  try {
+    return parseProviderConfig(codexHost.saveProviderConfig('', baseUrl, apiKey, model));
+  } catch (_err) {
+    return new CodexProviderConfig('', '', '');
+  }
 }

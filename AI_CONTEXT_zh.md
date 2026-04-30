@@ -190,8 +190,8 @@ UI 目前是三栏 Codex 风格窗口布局：
 
 最近一轮相关修改集中在：
 
-- `C:\Users\asus\Desktop\OpenHarmony\Agent\entry\src\main\cpp\napi_init.cpp`
-- `C:\Users\asus\Desktop\OpenHarmony\Agent\entry\src\main\cpp\types\libcodexhost\index.d.ts`
+- `C:\Users\asus\Desktop\OpenHarmony\libcodexhost-builder\native\bridge\napi_init.cpp`
+- `C:\Users\asus\Desktop\OpenHarmony\Agent\entry\src\main\types\libcodexhost\index.d.ts`
 - `C:\Users\asus\Desktop\OpenHarmony\Agent\entry\src\main\ets\backend\CodexHostNative.ets`
 - `C:\Users\asus\Desktop\OpenHarmony\Agent\entry\src\main\ets\backend\CodexBackend.ets`
 - `C:\Users\asus\Desktop\OpenHarmony\Agent\entry\src\main\ets\pages\Index.ets`
@@ -258,8 +258,8 @@ Relevant files:
 - Agent\entry\src\main\ets\pages\Index.ets
 - Agent\entry\src\main\ets\backend\CodexBackend.ets
 - Agent\entry\src\main\ets\backend\CodexHostNative.ets
-- Agent\entry\src\main\cpp\napi_init.cpp
-- Agent\entry\src\main\cpp\types\libcodexhost\index.d.ts
+- libcodexhost-builder\native\bridge\napi_init.cpp
+- Agent\entry\src\main\types\libcodexhost\index.d.ts
 - codex-main\codex-rs\ohos-host\src\lib.rs
 
 Current open issue:

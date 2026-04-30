@@ -2,23 +2,17 @@
 members = [
     "analytics",
     "backend-client",
-    "ansi-escape",
     "async-utils",
     "app-server",
-    "app-server-client",
     "app-server-protocol",
-    "app-server-test-client",
-    "debug-client",
     "apply-patch",
     "arg0",
     "feedback",
     "features",
     "codex-backend-openapi-models",
     "code-mode",
+    "chatgpt",
     "cloud-requirements",
-    "cloud-tasks",
-    "cloud-tasks-client",
-    "cli",
     "connectors",
     "config",
     "shell-command",
@@ -29,30 +23,19 @@ members = [
     "hooks",
     "instructions",
     "secrets",
-    "exec",
     "exec-server",
     "execpolicy",
-    "execpolicy-legacy",
     "keyring-store",
     "file-search",
-    "linux-sandbox",
-    "lmstudio",
     "login",
-    "mcp-server",
     "network-proxy",
     "ohos-host",
-    "ollama",
-    "process-hardening",
     "protocol",
     "rollout",
     "rmcp-client",
-    "responses-api-proxy",
     "sandboxing",
-    "stdio-to-uds",
     "otel",
-    "tui",
     "tools",
-    "v8-poc",
     "utils/absolute-path",
     "utils/cargo-bin",
     "git-utils",
@@ -65,15 +48,9 @@ members = [
     "utils/rustls-provider",
     "utils/string",
     "utils/cli",
-    "utils/elapsed",
-    "utils/sandbox-summary",
-    "utils/sleep-inhibitor",
-    "utils/approval-presets",
-    "utils/oss",
     "utils/output-truncation",
     "utils/path-utils",
     "utils/plugins",
-    "utils/fuzzy-match",
     "utils/stream-parser",
     "utils/template",
     "codex-client",
@@ -82,6 +59,7 @@ members = [
     "terminal-detection",
     "codex-experimental-api-macros",
     "plugin",
+    "windows-sandbox-rs",
 ]
 resolver = "2"
 
@@ -97,27 +75,22 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # Internal
 app_test_support = { path = "app-server/tests/common" }
-codex-ansi-escape = { path = "ansi-escape" }
 codex-analytics = { path = "analytics" }
 codex-api = { path = "codex-api" }
 codex-code-mode = { path = "code-mode" }
 codex-app-server = { path = "app-server" }
-codex-app-server-client = { path = "app-server-client" }
 codex-app-server-protocol = { path = "app-server-protocol" }
-codex-app-server-test-client = { path = "app-server-test-client" }
 codex-apply-patch = { path = "apply-patch" }
 codex-arg0 = { path = "arg0" }
 codex-async-utils = { path = "async-utils" }
 codex-backend-client = { path = "backend-client" }
 codex-chatgpt = { path = "chatgpt" }
-codex-cli = { path = "cli" }
 codex-client = { path = "codex-client" }
 codex-cloud-requirements = { path = "cloud-requirements" }
 codex-connectors = { path = "connectors" }
 codex-config = { path = "config" }
 codex-core = { path = "core" }
 codex-core-skills = { path = "core-skills" }
-codex-exec = { path = "exec" }
 codex-exec-server = { path = "exec-server" }
 codex-execpolicy = { path = "execpolicy" }
 codex-experimental-api-macros = { path = "codex-experimental-api-macros" }
@@ -129,18 +102,13 @@ codex-hooks = { path = "hooks" }
 codex-instructions = { path = "instructions" }
 codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
-codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
-codex-mcp-server = { path = "mcp-server" }
 codex-network-proxy = { path = "network-proxy" }
 codex-ohos-host = { path = "ohos-host" }
-codex-ollama = { path = "ollama" }
 codex-otel = { path = "otel" }
 codex-plugin = { path = "plugin" }
-codex-process-hardening = { path = "process-hardening" }
 codex-protocol = { path = "protocol" }
 codex-rollout = { path = "rollout" }
-codex-responses-api-proxy = { path = "responses-api-proxy" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-sandboxing = { path = "sandboxing" }
 codex-secrets = { path = "secrets" }
@@ -148,36 +116,26 @@ codex-shell-command = { path = "shell-command" }
 codex-shell-escalation = { path = "shell-escalation" }
 codex-skills = { path = "skills" }
 codex-state = { path = "state" }
-codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-terminal-detection = { path = "terminal-detection" }
 codex-tools = { path = "tools" }
-codex-tui = { path = "tui" }
-codex-v8-poc = { path = "v8-poc" }
 codex-utils-absolute-path = { path = "utils/absolute-path" }
-codex-utils-approval-presets = { path = "utils/approval-presets" }
 codex-utils-cache = { path = "utils/cache" }
 codex-utils-cargo-bin = { path = "utils/cargo-bin" }
 codex-utils-cli = { path = "utils/cli" }
-codex-utils-elapsed = { path = "utils/elapsed" }
-codex-utils-fuzzy-match = { path = "utils/fuzzy-match" }
 codex-utils-home-dir = { path = "utils/home-dir" }
 codex-utils-image = { path = "utils/image" }
 codex-utils-json-to-toml = { path = "utils/json-to-toml" }
-codex-utils-oss = { path = "utils/oss" }
 codex-utils-output-truncation = { path = "utils/output-truncation" }
 codex-utils-path = { path = "utils/path-utils" }
 codex-utils-plugins = { path = "utils/plugins" }
 codex-utils-pty = { path = "utils/pty" }
 codex-utils-readiness = { path = "utils/readiness" }
 codex-utils-rustls-provider = { path = "utils/rustls-provider" }
-codex-utils-sandbox-summary = { path = "utils/sandbox-summary" }
-codex-utils-sleep-inhibitor = { path = "utils/sleep-inhibitor" }
 codex-utils-stream-parser = { path = "utils/stream-parser" }
 codex-utils-template = { path = "utils/template" }
 codex-utils-string = { path = "utils/string" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
 core_test_support = { path = "core/tests/common" }
-mcp_test_support = { path = "mcp-server/tests/common" }
 
 # External
 age = "0.11.1"

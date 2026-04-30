@@ -14,6 +14,7 @@ These scripts are the supported Windows bootstrap path for a fresh clone.
 
 - `build.bat`
   - Calls `setup_env.bat`
+  - Verifies a prebuilt `libcodexhost.so` is already installed
   - Builds an unsigned debug HAP
   - Cleans project-local build artifacts with `build.bat clean`
 
@@ -25,15 +26,22 @@ OpenHarmony/
 |   |-- oh-package.json5
 |   |-- entry/
 |   `-- script/helpsetup/
+|-- libcodexhost-builder/
+|   `-- build.bat
 `-- codex-main/
     `-- codex-rs/
 ```
+
+Only `codex-main/codex-rs` is required for the current native build flow. The
+other upstream top-level folders are not needed by `Agent` or
+`libcodexhost-builder`.
 
 ## Usage
 
 From anywhere:
 
 ```bat
+libcodexhost-builder\build.bat debug x86_64 --install
 Agent\script\helpsetup\build.bat debug
 ```
 
@@ -57,3 +65,4 @@ Agent\entry\build\default\outputs\default\entry-default-unsigned.hap
 - Signed packages still require local signing material on each machine.
 - If DevEco Studio is installed in a non-default location, set `DEVECO_SDK_HOME` first and rerun `build.bat debug`.
 - The scripts call DevEco's `hvigorw.bat` wrapper instead of invoking the internal `hvigor.js` entry directly.
+- `Agent` no longer builds `libcodexhost.so` itself; the standalone `libcodexhost-builder` project owns that step.

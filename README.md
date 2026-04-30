@@ -1,5 +1,12 @@
 # OpenHarmony Codex Agent Workspace
 
+- `ARCHITECTURE_zh.md`
+  - detailed software architecture and build pipeline for this workspace
+
+> Current workspace note: for the HarmonyOS build flow, the required upstream
+> source is `codex-main/codex-rs/`. The rest of the original `codex-main`
+> top-level tree has been trimmed away.
+
 这个仓库的目标不是单独发布上游 `codex-main`，而是把真实的 `codex-rs app-server` 嵌入到鸿蒙桌面应用里。
 
 仓库包含两部分：
@@ -120,7 +127,7 @@ Agent\script\helpsetup\build.bat debug
 
 已修正：
 
-- `Agent/entry/src/main/cpp/build_codex_ohos_host.cmd`
+- `libcodexhost-builder/native/build_codex_ohos_host.cmd`
 
 现在它会：
 
@@ -229,6 +236,6 @@ Agent\script\helpsetup\build.bat clean
 ## 相关文件
 
 - `Agent/script/helpsetup/README.md`
-- `Agent/entry/src/main/cpp/build_codex_ohos_host.cmd`
+- `libcodexhost-builder/native/build_codex_ohos_host.cmd`
 - `Agent/build-profile.json5`
 - `codex-main/codex-rs/toolchains/`
