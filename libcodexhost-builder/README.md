@@ -18,16 +18,16 @@ OpenHarmony/
 
 ## Usage
 
-Build only:
+Build and install into `Agent` by default:
 
 ```bat
 build.bat debug x86_64
 ```
 
-Build and install into `Agent`:
+Build only without copying into `Agent`:
 
 ```bat
-build.bat debug x86_64 --install
+build.bat debug x86_64 --no-install
 ```
 
 If you already have a compiled Rust static library and only want to link the
@@ -35,7 +35,7 @@ final `.so`, set `PREBUILT_RUST_STATIC_LIB` first:
 
 ```bat
 set PREBUILT_RUST_STATIC_LIB=C:\path\to\libcodex_ohos_host.a
-build.bat debug x86_64 --install
+build.bat debug x86_64
 ```
 
 The installed target path is:
@@ -50,6 +50,7 @@ Agent\entry\src\main\libs\x86_64\libcodexhost.so
 - Rebuild and reinstall this library whenever `codex-main/codex-rs/ohos-host` or the bridge code changes.
 - The builder supports `x86_64` and `arm64-v8a`.
 - `PREBUILT_RUST_STATIC_LIB` lets you skip the Rust compile step and only link the final `libcodexhost.so`.
+- The builder now copies the resulting `.so` into `Agent\entry\src\main\libs\<abi>\` by default.
 - `codex-rs` itself is still a large Rust workspace. Do not delete crates from
   inside `codex-rs` unless you also update the Rust workspace and dependency
   graph for `codex-ohos-host`.

@@ -276,7 +276,7 @@ provider 配置由 Rust host 维护，而不是 ArkTS 自己拼接请求直接�
 命令：
 
 ```bat
-libcodexhost-builder\build.bat debug x86_64 --install
+libcodexhost-builder\build.bat debug x86_64
 ```
 
 这一步内部做的事情：
@@ -299,7 +299,7 @@ Agent\entry\src\main\libs\x86_64\libcodexhost.so
 
 ```bat
 set PREBUILT_RUST_STATIC_LIB=C:\path\to\libcodex_ohos_host.a
-libcodexhost-builder\build.bat debug x86_64 --install
+libcodexhost-builder\build.bat debug x86_64
 ```
 
 ### 7.2 阶段二：构建 HAP
@@ -505,7 +505,7 @@ libs/x86_64/libc++_shared.so
 如果你改的是 Rust / native：
 
 ```bat
-libcodexhost-builder\build.bat debug x86_64 --install
+libcodexhost-builder\build.bat debug x86_64
 Agent\script\helpsetup\build.bat debug
 ```
 

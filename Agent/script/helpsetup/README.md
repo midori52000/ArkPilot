@@ -41,7 +41,7 @@ other upstream top-level folders are not needed by `Agent` or
 From anywhere:
 
 ```bat
-libcodexhost-builder\build.bat debug x86_64 --install
+libcodexhost-builder\build.bat debug x86_64
 Agent\script\helpsetup\build.bat debug
 ```
 
@@ -66,3 +66,4 @@ Agent\entry\build\default\outputs\default\entry-default-unsigned.hap
 - If DevEco Studio is installed in a non-default location, set `DEVECO_SDK_HOME` first and rerun `build.bat debug`.
 - The scripts call DevEco's `hvigorw.bat` wrapper instead of invoking the internal `hvigor.js` entry directly.
 - `Agent` no longer builds `libcodexhost.so` itself; the standalone `libcodexhost-builder` project owns that step.
+- `libcodexhost-builder\build.bat` now installs the built `.so` into `Agent` by default.

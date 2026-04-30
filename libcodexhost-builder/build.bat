@@ -10,12 +10,14 @@ set "MODE=%~1"
 set "ABI=%~2"
 set "INSTALL_FLAG=%~3"
 set "PREBUILT_STATIC_LIB=%PREBUILT_RUST_STATIC_LIB%"
+set "AUTO_INSTALL=1"
 
 if not defined MODE set "MODE=debug"
 if not defined ABI set "ABI=x86_64"
 
 if /I "%MODE%"=="--help" goto :help
 if /I "%MODE%"=="-h" goto :help
+if /I "%INSTALL_FLAG%"=="--no-install" set "AUTO_INSTALL=0"
 
 if /I "%ABI%"=="arm64-v8a" (
   set "RUST_TARGET_TRIPLE=aarch64-unknown-linux-ohos"
@@ -67,6 +69,11 @@ echo Rust workspace: %RUST_WORKSPACE%
 echo ABI: %ABI%
 echo Mode: %MODE%
 if defined PREBUILT_STATIC_LIB echo Prebuilt Rust static lib: %PREBUILT_STATIC_LIB%
+if "%AUTO_INSTALL%"=="1" (
+  echo Install target: %INSTALL_FILE%
+) else (
+  echo Install target: disabled
+)
 echo Output: %OUTPUT_FILE%
 echo.
 
@@ -90,7 +97,7 @@ set "BUILD_EXIT_CODE=%ERRORLEVEL%"
 popd >nul
 if not "%BUILD_EXIT_CODE%"=="0" exit /b %BUILD_EXIT_CODE%
 
-if /I "%INSTALL_FLAG%"=="--install" (
+if "%AUTO_INSTALL%"=="1" (
   if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%" >nul 2>&1
   copy /Y "%OUTPUT_FILE%" "%INSTALL_FILE%" >nul
   if errorlevel 1 exit /b 1
@@ -126,10 +133,10 @@ exit /b 0
 
 :help
 echo Usage:
-echo   build.bat [debug^|release] [x86_64^|arm64-v8a] [--install]
+echo   build.bat [debug^|release] [x86_64^|arm64-v8a] [--no-install]
 echo.
 echo Examples:
 echo   build.bat debug x86_64
-echo   build.bat debug x86_64 --install
-echo   build.bat release arm64-v8a --install
+echo   build.bat debug x86_64 --no-install
+echo   build.bat release arm64-v8a
 exit /b 1
