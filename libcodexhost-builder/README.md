@@ -1,56 +1,121 @@
 # libcodexhost-builder
 
-This standalone project builds the OpenHarmony native bridge library `libcodexhost.so` from `codex-main/codex-rs` without involving the `Agent` HAP build.
+ArkPilot 项目的独立构建模块，负责将 Rust 编写的 `codex-ohos-host` 编译为 OpenHarmony 原生共享库 `libcodex_ohos_host.so`，供 Agent 应用通过 N-API 桥接层调用。
 
-For the current OpenHarmony flow, only `codex-main/codex-rs` is required. The
-other top-level upstream folders are not needed for packaging or rebuilding
-`libcodexhost.so`.
-
-## Expected Layout
+## 项目结构
 
 ```text
-OpenHarmony/
-|-- Agent/
-|-- codex-main/
-|   `-- codex-rs/
-`-- libcodexhost-builder/
+libcodexhost-builder/
+├── build.bat                       # cmd/批处理构建脚本
+├── build.ps1                       # PowerShell 构建脚本
+└── README.md
 ```
 
-## Usage
+## 构建产物
 
-Build and install into `Agent` by default:
+构建输出 `libcodex_ohos_host.so`，包含以下 C FFI 接口：
+
+| 分类 | 接口 |
+|------|------|
+| 服务管理 | `start`, `is_running`, `last_message`, `server_url` |
+| Provider 配置 | `provider_config_json`, `save_provider_config`, `provider_catalog_json`, `save_provider_catalog` |
+| Skills 管理 | `skills_registry_json`, `save_skills_registry`, `skills_repos_json`, `save_skills_repos`, `skills_backups_json`, `create_skill_backup`, `delete_skill_backup` |
+| Prompts 管理 | `prompts_registry_json`, `save_prompts_registry`, `read_agents_md`, `write_agents_md` |
+| 对话引擎 | `initialize`, `thread_start`, `turn_start`, `turn_events`, `turn_poll` |
+| 审批流程 | `approval_poll`, `approval_approve`, `approval_decline` |
+| MCP 服务 | `mcp_status_list`, `mcp_config_read`, `mcp_config_write`, `mcp_config_batch_write`, `mcp_reload`, `mcp_oauth_start` |
+| 账户管理 | `account_login`, `account_read` |
+
+## 环境依赖
+
+- **DevEco Studio** 及其 OpenHarmony Native SDK
+- **Rust 工具链**（含 `cargo`），需添加 `aarch64-unknown-linux-ohos` 和/或 `x86_64-unknown-linux-ohos` target
+- **CMake**（随 DevEco SDK 自带）
+- **Ninja**（随 DevEco SDK 自带）
+
+## 构建流程说明
+
+当前推荐使用 `build.bat` 或 `build.ps1` 作为唯一入口。
+
+外层脚本会直接完成：
+
+1. 调用 `cargo` 交叉编译 `codex-ohos-host`
+2. 将生成的 `.so` 复制到 Agent 工程
+
+如果已经有预构建的 `.so`，也可以通过 `PREBUILT_RUST_SHARED_LIB` 跳过 Rust 编译。
+
+## SDK 路径发现
+
+`build.bat` 和 `build.ps1` 都会按以下顺序查找 DevEco SDK：
+
+1. 环境变量 `DEVECO_SDK_HOME`
+2. `C:\Program Files\Huawei\DevEco Studio\sdk`
+3. `D:\develop\deveco\DevEco Studio\sdk`
+4. `D:\DevEco Studio\sdk`
+
+如路径不在上述列表中，请显式设置 `DEVECO_SDK_HOME`。
+
+## 使用方式
+
+### 快速构建（cmd/批处理）
 
 ```bat
 build.bat debug x86_64
-```
-
-Build only without copying into `Agent`:
-
-```bat
+build.bat release arm64-v8a
 build.bat debug x86_64 --no-install
 ```
 
-If you already have a compiled Rust static library and only want to link the
-final `.so`, set `PREBUILT_RUST_STATIC_LIB` first:
+### 快速构建（PowerShell）
+
+```powershell
+.\build.ps1 debug x86_64
+.\build.ps1 release arm64-v8a
+.\build.ps1 debug x86_64 -NoInstall
+```
+
+构建产物默认安装到：
+
+- `../Agent/entry/libs/<ABI>/libcodex_ohos_host.so`
+
+### 使用预构建的 Rust 库
+
+PowerShell：
+
+```powershell
+$env:PREBUILT_RUST_SHARED_LIB = "E:\path\to\libcodex_ohos_host.so"
+.\build.ps1 release x86_64
+```
+
+cmd：
 
 ```bat
-set PREBUILT_RUST_STATIC_LIB=C:\path\to\libcodex_ohos_host.a
-build.bat debug x86_64
+set PREBUILT_RUST_SHARED_LIB=E:\path\to\libcodex_ohos_host.so
+build.bat release x86_64
 ```
 
-The installed target path is:
+## 支持的架构
+
+| ABI | Rust Target Triple | 用途 |
+|-----|-------------------|------|
+| `arm64-v8a` | `aarch64-unknown-linux-ohos` | 真机 |
+| `x86_64` | `x86_64-unknown-linux-ohos` | 模拟器 |
+
+## 与 Agent 项目的关系
 
 ```text
-Agent\entry\src\main\libs\x86_64\libcodexhost.so
+codex-main/codex-rs/          Rust 源码（ohos-host crate）
+        │
+        ▼
+libcodexhost-builder/         外层脚本编译 Rust
+        │
+        ▼
+Agent/entry/libs/             安装目标目录
+        │
+        ▼
+Agent/entry/src/main/cpp/     N-API 桥接层（dlopen + dlsym 加载 .so）
+        │
+        ▼
+Agent/entry/src/main/ets/     ArkTS 业务层调用
 ```
 
-## Notes
-
-- `Agent` now treats `libcodexhost.so` as a prebuilt native dependency.
-- Rebuild and reinstall this library whenever `codex-main/codex-rs/ohos-host` or the bridge code changes.
-- The builder supports `x86_64` and `arm64-v8a`.
-- `PREBUILT_RUST_STATIC_LIB` lets you skip the Rust compile step and only link the final `libcodexhost.so`.
-- The builder now copies the resulting `.so` into `Agent\entry\src\main\libs\<abi>\` by default.
-- `codex-rs` itself is still a large Rust workspace. Do not delete crates from
-  inside `codex-rs` unless you also update the Rust workspace and dependency
-  graph for `codex-ohos-host`.
+构建脚本在编译完成后会自动将 `.so` 复制到 Agent 项目的 `libs` 目录，确保 DevEco Studio 打包时能包含该原生库。

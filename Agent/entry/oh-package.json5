@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "description": "Codex Harmony entry module.",
   "dependencies": {
-    "libcodexhost.so": "file:./src/main/types/libcodexhost"
+    "libentry.so": "file:./src/main/types/libentry"
   }
 }

@@ -14,12 +14,10 @@ rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]
 linker = "toolchains/ohos-aarch64-clang.cmd"
 rustflags = [
     "-Clink-arg=--target=aarch64-linux-ohos",
-    "-Clink-arg=--sysroot=C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native/sysroot",
 ]
 
 [target.x86_64-unknown-linux-ohos]
 linker = "toolchains/ohos-x86_64-clang.cmd"
 rustflags = [
     "-Clink-arg=--target=x86_64-linux-ohos",
-    "-Clink-arg=--sysroot=C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native/sysroot",
 ]

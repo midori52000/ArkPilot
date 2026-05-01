@@ -4,7 +4,7 @@ import {
   saveEmbeddedCodexProviderCatalog,
   saveEmbeddedCodexProviderConfig,
   CodexProviderConfig
-} from '../backend/CodexHostNative';
+} from '../backend/CodexNative';
 import {
   ProviderRecord, EndpointEntry, CustomHeadersEntry, ProviderCatalog
 } from '../backend/ConsoleModels';

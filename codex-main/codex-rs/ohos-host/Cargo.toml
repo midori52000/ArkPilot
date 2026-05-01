@@ -6,7 +6,7 @@ license.workspace = true
 
 [lib]
 name = "codex_ohos_host"
-crate-type = ["staticlib"]
+crate-type = ["cdylib"]
 
 [lints]
 workspace = true
@@ -15,6 +15,7 @@ workspace = true
 anyhow = { workspace = true }
 chrono = { workspace = true }
 codex-app-server = { workspace = true }
+codex-app-server-client = { path = "../app-server-client" }
 codex-arg0 = { workspace = true }
 codex-core = { workspace = true }
 codex-protocol = { workspace = true }

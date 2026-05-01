@@ -1,53 +1,5 @@
-# Upstream source archive kept outside this workspace repo
-/codex-main.zip
-
-# OS / editor noise
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-/.claude/
-
-# DevEco / HarmonyOS generated outputs
-/.hvigor/
-/Agent/.hvigor/
-/Agent/.idea/
-/Agent/oh_modules/
-/Agent/node_modules/
-/Agent/build/
-/Agent/entry/build/
-/Agent/entry/.cxx/
-/Agent/local.properties
-
-# Rust cross-compilation cache for the embedded OHOS host
-/Agent/.cargo-target/
-
-# Prebuilt native libraries kept locally for runtime verification
-/Agent/entry/src/main/libs/x86_64/*.so
-
-# Upstream codex-main generated outputs and caches
-/codex-main/codex-rs/target/
-/codex-main/codex-rs/.cargo-target/
-/codex-main/node_modules/
-/codex-main/oh_modules/
-/codex-main/.pnpm-store/
-/codex-main/.turbo/
-/codex-main/.cache/
-/codex-main/.parcel-cache/
-/codex-main/coverage/
-/codex-main/dist/
-/codex-main/out/
-/codex-main/storybook-static/
-/codex-main/bazel-*/
-/codex-main/result
-
 # Local logs and generated diagnostics
-/Agent/.build-logs/
-/Agent/script/helpsetup/.hvigor/
-/codex-main/codex-main/
-/Agent/build_codex_ohos_host_full.log
 /libcodexhost-builder/out/
-/libcodexhost-builder/*.log
 
 # Local signing materials
 /Agent/signing/

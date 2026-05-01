@@ -1,164 +1,171 @@
-# OpenHarmony ArkPilot
+# ArkPilot
 
-这个仓库不是上游 `codex-main` 的完整分发，而是一个把 `codex-rs app-server`
-嵌入到 OpenHarmony 图形应用里的工作区。当前工程已经稳定到下面这条链路：
+ArkPilot 是一个面向 HarmonyOS / OpenHarmony 的 AI Agent 实验仓库，用来把 `codex host` 能力接入鸿蒙应用。当前仓库由三个部分组成：鸿蒙前端应用、Rust 原生 Host，以及用于产出 `.so` 的独立构建模块。
 
-- `Agent/`
-  - 鸿蒙应用本体，负责 ArkTS UI、HAP 构建和最终打包
-- `libcodexhost-builder/`
-  - 独立 native builder，负责生成 `libcodexhost.so`
-- `codex-main/codex-rs/`
-  - 上游 Rust 工作区，提供真实的 `codex-ohos-host` 和 `app-server`
+如果你想快速了解应用侧能力，请先看 `Agent/README.md`；如果你要编译原生库，请看 `libcodexhost-builder/README.md`。
 
-当前架构的关键点是：
-
-- 主应用 `Agent` 不再内联编译 Rust/CMake
-- `libcodexhost.so` 由 `libcodexhost-builder` 单独产出
-- 第一阶段构建完成后会默认把 `.so` 自动拷贝到 `Agent`
-- HAP 构建结束后会二次打包，把 `libcodexhost.so` 和 `libc++_shared.so` 注入最终包
-
-## 当前目录边界
-
-仓库里真正需要关注的是：
-
-- `Agent/`
-- `libcodexhost-builder/`
-- `codex-main/codex-rs/`
-
-目前已经明确不再依赖：
-
-- `Agent/entry/src/main/cpp/` 旧的内联 Rust/CMake 构建链
-- 上游 `codex-main` 顶层那些和鸿蒙构建无关的外围目录
-
-## 现在的完整构建流程
-
-### 1. 构建并安装 native so
-
-```bat
-libcodexhost-builder\build.bat debug x86_64
-```
-
-这一步会做这些事：
-
-- 定位 `codex-main/codex-rs`
-- 调用 CMake 配置 OHOS 工具链
-- 调用 Cargo 交叉编译 `codex-ohos-host`
-- 链接生成 `libcodexhost.so`
-- 默认自动拷贝到：
+## 仓库组成
 
 ```text
-Agent\entry\src\main\libs\x86_64\libcodexhost.so
+ArkPilot/
+├─ Agent/                  # HarmonyOS 应用，ArkTS UI + NAPI 桥接
+├─ codex-main/             # Rust 侧源码，其中包含 ohos-host crate
+└─ libcodexhost-builder/   # 独立 CMake 构建模块，产出 libcodex_ohos_host.so
 ```
 
-如果你只想构建、不想自动拷贝：
+### 1. Agent
 
-```bat
-libcodexhost-builder\build.bat debug x86_64 --no-install
-```
+`Agent/` 是鸿蒙端应用工程，负责：
 
-### 2. 构建 HAP
+- 提供 Chat 工作台与会话界面
+- 管理 Provider、MCP、Prompts、Skills
+- 通过 `libentry.so` 调用原生桥接层
+- 在应用启动时拉起内置 `codex host`
 
-```bat
-Agent\script\helpsetup\build.bat debug
-```
+入口与关键代码主要在：
 
-这一步会做这些事：
+- `Agent/entry/src/main/ets/entryability/EntryAbility.ets`
+- `Agent/entry/src/main/ets/pages/Index.ets`
+- `Agent/entry/src/main/ets/backend/CodexBackend.ets`
+- `Agent/entry/src/main/ets/backend/CodexNative.ets`
+- `Agent/entry/src/main/cpp/napi_init.cpp`
 
-- 自动定位 `Agent` 工程根目录
-- 自动定位 DevEco SDK
-- 自动生成 `Agent\local.properties`
-- 缺依赖时执行 `ohpm install --all`
-- 检查 `libcodexhost.so` 是否已经安装到 `Agent`
-- 调用 `hvigor assembleHap`
-- 构建结束后通过二次打包把 native 库重新注入 HAP
+更完整说明见 `Agent/README.md`。
 
-默认输出：
+### 2. codex-main
 
-```text
-Agent\entry\build\default\outputs\default\entry-default-unsigned.hap
-```
+`codex-main/` 存放 Rust 侧源码，其中 `codex-main/codex-rs/ohos-host` 会编译出：
 
-## 运行时架构
+- `libcodex_ohos_host.so`
 
-应用启动后，链路是：
+这个动态库为鸿蒙应用提供宿主能力，包括：
 
-1. `EntryAbility.ets` 启动 embedded host
-2. ArkTS 通过 `CodexHostNative.ets` 调 `libcodexhost.so`
-3. `libcodexhost.so` 里的 NAPI bridge 调 Rust `codex-ohos-host`
-4. Rust host 在应用内拉起 `codex-rs app-server`
-5. 前端通过本地 WebSocket 连接：
+- host 启停与状态查询
+- thread / turn / poll 对话接口
+- approval 审批接口
+- provider / prompts / skills / MCP 配置读写
+- account 登录状态读取
 
-```text
-ws://127.0.0.1:7456
-```
+关键 crate 配置位于：
 
-也就是说：
+- `codex-main/codex-rs/ohos-host/Cargo.toml`
 
-- native 层负责“把后端拉起来”
-- 对话、plan、diff、approval 等真实协议走的是 WebSocket JSON-RPC
+### 3. libcodexhost-builder
 
-## 工作区权限
+`libcodexhost-builder/` 是独立的原生构建模块，负责把 Rust host 交叉编译为 OpenHarmony 可加载的共享库，并安装到 Agent 工程中。
 
-当前默认配置不是只读，而是：
+它主要负责：
 
-- `approval_policy = "on-request"`
-- `sandbox_mode = "workspace-write"`
+- 调用 DevEco / OpenHarmony Native SDK 工具链
+- 编译 `codex-ohos-host`
+- 生成 `libcodex_ohos_host.so`
+- 将产物复制到 `Agent/entry/libs/<ABI>/`
 
-但这里有一个容易混淆的点：
+详细说明见：
 
-- 这个“workspace-write”写的是**设备内工作区**
-- 不是你 Windows 主机上的 `C:\...` 仓库目录
-
-如果你在鸿蒙虚拟机里看到“工作区只读”，通常是因为：
-
-- 当前 `workspaceRoot` 为空
-- 或者填了一个虚拟机里不存在/不可写的路径
-
-比较稳妥的工作区路径应该放在应用沙箱里，例如：
-
-```text
-/data/storage/el2/base/files/project
-```
-
-## 清理构建产物
-
-主项目清理：
-
-```bat
-Agent\script\helpsetup\build.bat clean
-```
-
-这会清掉：
-
-- `Agent\.hvigor`
-- `Agent\entry\build`
-- `Agent\entry\.cxx`
-- `Agent\.cargo-target`
-
-独立 native builder 的缓存可以直接删除：
-
-```text
-libcodexhost-builder\out
-```
-
-影响是：
-
-- 下次 HAP 构建会重新打包
-- 下次 `.so` 构建会重新编 Rust，速度会明显变慢
-
-## 在 DevEco 里怎么打开
-
-应该打开：
-
-- `OpenHarmony\Agent`
-
-不要把整个 `OpenHarmony` 根目录直接当成 DevEco 工程打开。
-
-## 当前保留的专项文档
-
-如果你只想看更具体的脚本说明，保留这两份：
-
-- `Agent/script/helpsetup/README.md`
 - `libcodexhost-builder/README.md`
 
-除此之外，根 README 已经覆盖了这个仓库当前有效的架构、构建流程和运行边界。
+## 整体架构
+
+```text
+ArkTS UI
+  ↓
+CodexBackend.ets
+  ↓
+CodexNative.ets
+  ↓
+libentry.so (NAPI)
+  ↓
+dlopen("libcodex_ohos_host.so")
+  ↓
+Rust codex-ohos-host
+```
+
+应用启动后，`EntryAbility.ets` 会调用 `startEmbeddedCodexHost()`，默认以 `ws://127.0.0.1:7456` 作为本地服务地址启动 embedded host，并在首次启动时自动导入已有 `AGENTS.md`。
+
+## 当前状态
+
+仓库目前明显处于开发中，至少可以从现有代码看出以下事实：
+
+- 根目录 `README.md` 曾被删除，当前这份文档用于补充整体说明
+- `Agent/README.md` 已经包含较完整的应用侧能力介绍
+- `Agent` 已接入 external native build，CMake 配置位于 `Agent/entry/src/main/cpp/CMakeLists.txt`
+- 原生桥接文件已迁移到 `Agent/entry/src/main/cpp/`
+- 仓库依赖 `libcodex_ohos_host.so` 才能完整跑通应用内 host 能力
+
+## 快速上手
+
+### 只看应用能力
+
+直接阅读：
+
+- `Agent/README.md`
+
+它更适合了解页面、功能和模块边界。
+
+### 编译原生库
+
+优先阅读：
+
+- `libcodexhost-builder/README.md`
+
+常见构建方式示例：
+
+```bat
+build.bat debug x86_64
+build.bat release arm64-v8a
+```
+
+构建成功后，产物会安装到：
+
+- `Agent/entry/libs/<ABI>/libcodex_ohos_host.so`
+
+### 打开鸿蒙应用工程
+
+在 DevEco Studio 中打开：
+
+- `Agent/`
+
+当前 `entry` 模块已经声明 external native build：
+
+- `Agent/entry/build-profile.json5`
+
+依赖的本地类型包配置位于：
+
+- `Agent/entry/oh-package.json5`
+
+## 运行前提
+
+要跑通完整链路，至少需要：
+
+- DevEco Studio / HarmonyOS 构建环境
+- OpenHarmony Native SDK
+- Rust 工具链与对应 Ohos target
+- 成功编译并打包进应用的 `libcodex_ohos_host.so`
+
+如果缺少原生库，ArkTS 页面可能可以编译，但 embedded host、Provider、Prompts、Skills、MCP 等能力无法完整工作。
+
+## 建议阅读顺序
+
+如果你是第一次进入这个仓库，推荐按下面顺序阅读：
+
+1. `README.md`
+2. `Agent/README.md`
+3. `libcodexhost-builder/README.md`
+4. `Agent/entry/src/main/ets/entryability/EntryAbility.ets`
+5. `Agent/entry/src/main/ets/pages/Index.ets`
+6. `Agent/entry/src/main/cpp/napi_init.cpp`
+7. `codex-main/codex-rs/ohos-host/Cargo.toml`
+
+## 适合的使用场景
+
+这个仓库更适合：
+
+- 研究 AI Agent 在 HarmonyOS 上的接入方式
+- 验证 ArkTS + NAPI + Rust host 的跨层桥接方案
+- 继续完善鸿蒙端的 Provider / MCP / Prompts / Skills 一体化管理
+- 做 embedded host 方案的真机或模拟器实验
+
+## 说明
+
+当前根 README 的目标是补齐仓库级导航，而不是替代各子项目文档。具体实现细节、构建命令和限制说明，请分别以 `Agent/README.md` 与 `libcodexhost-builder/README.md` 为准。

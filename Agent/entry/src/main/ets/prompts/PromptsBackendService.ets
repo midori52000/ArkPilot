@@ -1,4 +1,4 @@
-import { getPromptsRegistry, savePromptsRegistry, readAgentsMd, writeAgentsMd } from '../backend/CodexHostNative';
+import { getPromptsRegistry, savePromptsRegistry, readAgentsMd, writeAgentsMd } from '../backend/CodexNative';
 import { PromptRecord, PromptImportResult } from './PromptTypes';
 
 const MAX_NAME_LEN = 100;

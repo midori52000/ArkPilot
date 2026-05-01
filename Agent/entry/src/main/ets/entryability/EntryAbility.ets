@@ -1,7 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
-import { startEmbeddedCodexHost } from '../backend/CodexHostNative';
+import { startEmbeddedCodexHost } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
 
 const DOMAIN = 0x0000;

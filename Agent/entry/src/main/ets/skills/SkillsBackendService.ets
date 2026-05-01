@@ -1,7 +1,7 @@
 import {
   getSkillsRegistry, saveSkillsRegistry, getSkillsRepos, saveSkillsRepos,
   computeDirHash, getSkillsBackups, createSkillBackup, deleteSkillBackup
-} from '../backend/CodexHostNative';
+} from '../backend/CodexNative';
 import {
   InstalledSkill, DiscoverableSkill, UnmanagedSkill, SkillRepo,
   SkillUpdateInfo, SkillBackupEntry, SkillsShSearchResult, SkillsShItem,

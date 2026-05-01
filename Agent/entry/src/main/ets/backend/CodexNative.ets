@@ -1,10 +1,13 @@
-import codexHost, {
+import entry, {
+  EntryBridgeModule,
   NativeCodexHostStatus,
   NativeCodexProviderCatalog,
   NativeCodexProviderConfig,
   NativeCodexProviderRecord
-} from 'libcodexhost.so';
+} from 'libentry.so';
 import { ProviderCatalog, ProviderRecord } from './ConsoleModels';
+
+const nativeBridge: EntryBridgeModule | null = entry ?? null;
 
 export class CodexHostStatus {
   code: number;
@@ -32,17 +35,12 @@ export class CodexProviderConfig {
   }
 }
 
-function missingNativeModuleStatus(): CodexHostStatus {
-  return new CodexHostStatus(
-    1,
-    false,
-    '',
-    'libcodexhost.so failed to load. Check whether the native library was packaged into the HAP.'
-  );
+function nativeModuleUnavailable(): boolean {
+  return nativeBridge === null || nativeBridge === undefined;
 }
 
-function nativeModuleUnavailable(): boolean {
-  return codexHost === undefined || codexHost === null;
+function missingNativeModuleStatus(): CodexHostStatus {
+  return new CodexHostStatus(1, false, '', 'libentry.so failed to load.');
 }
 
 function normalizeProviderRecord(rawRecord: NativeCodexProviderRecord | undefined): ProviderRecord {
@@ -81,9 +79,8 @@ function normalizeProviderCatalog(rawCatalog: NativeCodexProviderCatalog | undef
 
 function normalizeStatus(rawStatus: NativeCodexHostStatus | undefined): CodexHostStatus {
   if (rawStatus === undefined) {
-    return new CodexHostStatus(1, false, '', 'native codex host returned no status');
+    return new CodexHostStatus(1, false, '', 'native bridge returned no status');
   }
-
   return new CodexHostStatus(
     rawStatus.code ?? 0,
     rawStatus.running === true,
@@ -96,7 +93,6 @@ function normalizeProviderConfig(rawConfig: NativeCodexProviderConfig | undefine
   if (rawConfig === undefined) {
     return new CodexProviderConfig('', '', '');
   }
-
   return new CodexProviderConfig(
     rawConfig.baseUrl ?? rawConfig.base_url ?? '',
     rawConfig.apiKey ?? rawConfig.api_key ?? '',
@@ -108,7 +104,6 @@ function parseProviderConfig(rawValue: string): CodexProviderConfig {
   if (rawValue.trim().length === 0) {
     return new CodexProviderConfig('', '', '');
   }
-
   try {
     const rawConfig: NativeCodexProviderConfig = JSON.parse(rawValue) as NativeCodexProviderConfig;
     return normalizeProviderConfig(rawConfig);
@@ -121,7 +116,6 @@ function parseProviderCatalog(rawValue: string): ProviderCatalog {
   if (rawValue.trim().length === 0) {
     return new ProviderCatalog(1, '', [], '');
   }
-
   try {
     const rawCatalog: NativeCodexProviderCatalog = JSON.parse(rawValue) as NativeCodexProviderCatalog;
     return normalizeProviderCatalog(rawCatalog);
@@ -134,9 +128,8 @@ export function startEmbeddedCodexHost(codexHome: string, serverUrl: string): Co
   if (nativeModuleUnavailable()) {
     return missingNativeModuleStatus();
   }
-
   try {
-    return normalizeStatus(codexHost.startHost(codexHome, serverUrl));
+    return normalizeStatus(nativeBridge!.startHost(codexHome, serverUrl));
   } catch (_err) {
     return missingNativeModuleStatus();
   }
@@ -146,9 +139,8 @@ export function getEmbeddedCodexHostStatus(): CodexHostStatus {
   if (nativeModuleUnavailable()) {
     return missingNativeModuleStatus();
   }
-
   try {
-    return normalizeStatus(codexHost.getStatus());
+    return normalizeStatus(nativeBridge!.getStatus());
   } catch (_err) {
     return missingNativeModuleStatus();
   }
@@ -158,9 +150,8 @@ export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
   if (nativeModuleUnavailable()) {
     return new CodexProviderConfig('', '', '');
   }
-
   try {
-    return parseProviderConfig(codexHost.getProviderConfig(''));
+    return parseProviderConfig(nativeBridge!.getProviderConfig(''));
   } catch (_err) {
     return new CodexProviderConfig('', '', '');
   }
@@ -170,9 +161,8 @@ export function saveEmbeddedCodexProviderConfig(baseUrl: string, apiKey: string,
   if (nativeModuleUnavailable()) {
     return new CodexProviderConfig('', '', '');
   }
-
   try {
-    return parseProviderConfig(codexHost.saveProviderConfig('', baseUrl, apiKey, model));
+    return parseProviderConfig(nativeBridge!.saveProviderConfig('', baseUrl, apiKey, model));
   } catch (_err) {
     return new CodexProviderConfig('', '', '');
   }
@@ -182,9 +172,8 @@ export function getEmbeddedCodexProviderCatalog(): ProviderCatalog {
   if (nativeModuleUnavailable()) {
     return new ProviderCatalog(1, '', [], '');
   }
-
   try {
-    return parseProviderCatalog(codexHost.getProviderCatalog(''));
+    return parseProviderCatalog(nativeBridge!.getProviderCatalog(''));
   } catch (_err) {
     return new ProviderCatalog(1, '', [], '');
   }
@@ -194,23 +183,20 @@ export function saveEmbeddedCodexProviderCatalog(catalog: ProviderCatalog): Prov
   if (nativeModuleUnavailable()) {
     return new ProviderCatalog(1, '', [], '');
   }
-
   try {
-    return parseProviderCatalog(codexHost.saveProviderCatalog('', JSON.stringify(catalog)));
+    return parseProviderCatalog(nativeBridge!.saveProviderCatalog('', JSON.stringify(catalog)));
   } catch (_err) {
     return new ProviderCatalog(1, '', [], '');
   }
 }
-
-// ========== Skills Management ==========
 
 export function getSkillsRegistry(codexHome: string): string {
   if (nativeModuleUnavailable()) {
     return '{"version":1,"skills":[],"updatedAt":"0"}';
   }
   try {
-    const result = codexHost.getSkillsRegistry(codexHome);
-    return (result !== undefined && result !== null && result.length > 0) ? result : '{"version":1,"skills":[],"updatedAt":"0"}';
+    const result = nativeBridge!.getSkillsRegistry(codexHome);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{"version":1,"skills":[],"updatedAt":"0"}';
   } catch (_err) {
     return '{"version":1,"skills":[],"updatedAt":"0"}';
   }
@@ -221,8 +207,7 @@ export function saveSkillsRegistry(codexHome: string, registryJson: string): boo
     return false;
   }
   try {
-    const code = codexHost.saveSkillsRegistry(codexHome, registryJson);
-    return code === 0;
+    return nativeBridge!.saveSkillsRegistry(codexHome, registryJson) === 0;
   } catch (_err) {
     return false;
   }
@@ -233,8 +218,8 @@ export function getSkillsRepos(codexHome: string): string {
     return '{"version":1,"repos":[]}';
   }
   try {
-    const result = codexHost.getSkillsRepos(codexHome);
-    return (result !== undefined && result !== null && result.length > 0) ? result : '{"version":1,"repos":[]}';
+    const result = nativeBridge!.getSkillsRepos(codexHome);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{"version":1,"repos":[]}';
   } catch (_err) {
     return '{"version":1,"repos":[]}';
   }
@@ -245,8 +230,7 @@ export function saveSkillsRepos(codexHome: string, reposJson: string): boolean {
     return false;
   }
   try {
-    const code = codexHost.saveSkillsRepos(codexHome, reposJson);
-    return code === 0;
+    return nativeBridge!.saveSkillsRepos(codexHome, reposJson) === 0;
   } catch (_err) {
     return false;
   }
@@ -257,8 +241,7 @@ export function computeDirHash(dirPath: string): string {
     return '';
   }
   try {
-    const result = codexHost.computeDirHash(dirPath);
-    return (result !== undefined && result !== null) ? result : '';
+    return nativeBridge!.computeDirHash(dirPath) ?? '';
   } catch (_err) {
     return '';
   }
@@ -269,8 +252,8 @@ export function getSkillsBackups(codexHome: string): string {
     return '[]';
   }
   try {
-    const result = codexHost.getSkillsBackups(codexHome);
-    return (result !== undefined && result !== null && result.length > 0) ? result : '[]';
+    const result = nativeBridge!.getSkillsBackups(codexHome);
+    return result !== undefined && result !== null && result.length > 0 ? result : '[]';
   } catch (_err) {
     return '[]';
   }
@@ -281,8 +264,7 @@ export function createSkillBackup(codexHome: string, skillDir: string, skillJson
     return 'error:native module unavailable';
   }
   try {
-    const result = codexHost.createSkillBackup(codexHome, skillDir, skillJson);
-    return (result !== undefined && result !== null) ? result : 'error:empty result';
+    return nativeBridge!.createSkillBackup(codexHome, skillDir, skillJson) ?? 'error:empty result';
   } catch (_err) {
     return 'error:exception';
   }
@@ -293,22 +275,19 @@ export function deleteSkillBackup(codexHome: string, backupId: string): boolean 
     return false;
   }
   try {
-    const code = codexHost.deleteSkillBackup(codexHome, backupId);
-    return code === 0;
+    return nativeBridge!.deleteSkillBackup(codexHome, backupId) === 0;
   } catch (_err) {
     return false;
   }
 }
-
-// ========== Prompts Management ==========
 
 export function getPromptsRegistry(codexHome: string): string {
   if (nativeModuleUnavailable()) {
     return '{"version":1,"prompts":[],"updatedAt":"0"}';
   }
   try {
-    const result = codexHost.getPromptsRegistry(codexHome);
-    return (result !== undefined && result !== null && result.length > 0) ? result : '{"version":1,"prompts":[],"updatedAt":"0"}';
+    const result = nativeBridge!.getPromptsRegistry(codexHome);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{"version":1,"prompts":[],"updatedAt":"0"}';
   } catch (_err) {
     return '{"version":1,"prompts":[],"updatedAt":"0"}';
   }
@@ -319,8 +298,7 @@ export function savePromptsRegistry(codexHome: string, registryJson: string): bo
     return false;
   }
   try {
-    const code = codexHost.savePromptsRegistry(codexHome, registryJson);
-    return code === 0;
+    return nativeBridge!.savePromptsRegistry(codexHome, registryJson) === 0;
   } catch (_err) {
     return false;
   }
@@ -331,8 +309,7 @@ export function readAgentsMd(codexHome: string): string {
     return '';
   }
   try {
-    const result = codexHost.readAgentsMd(codexHome);
-    return (result !== undefined && result !== null) ? result : '';
+    return nativeBridge!.readAgentsMd(codexHome) ?? '';
   } catch (_err) {
     return '';
   }
@@ -343,9 +320,184 @@ export function writeAgentsMd(codexHome: string, content: string): boolean {
     return false;
   }
   try {
-    const code = codexHost.writeAgentsMd(codexHome, content);
-    return code === 0;
+    return nativeBridge!.writeAgentsMd(codexHome, content) === 0;
   } catch (_err) {
     return false;
+  }
+}
+
+export function initializeNative(configJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.initialize(configJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function threadStartNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.threadStart(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function turnStartNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.turnStart(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function turnEventsNative(threadId: string, turnId: string): string {
+  if (nativeModuleUnavailable()) {
+    return '[]';
+  }
+  try {
+    return nativeBridge!.turnEvents(threadId, turnId);
+  } catch (_err) {
+    return '[]';
+  }
+}
+
+export function turnPollNative(threadId: string, turnId: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.turnPoll(threadId, turnId);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function approvalPollNative(): string {
+  if (nativeModuleUnavailable()) {
+    return 'null';
+  }
+  try {
+    return nativeBridge!.approvalPoll();
+  } catch (_err) {
+    return 'null';
+  }
+}
+
+export function approvalApproveNative(paramsJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.approvalApprove(paramsJson) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function approvalDeclineNative(paramsJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.approvalDecline(paramsJson) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function mcpStatusListNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"data":[],"nextCursor":null}';
+  }
+  try {
+    return nativeBridge!.mcpStatusList(paramsJson);
+  } catch (_err) {
+    return '{"data":[],"nextCursor":null}';
+  }
+}
+
+export function mcpConfigReadNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"config":{}}';
+  }
+  try {
+    return nativeBridge!.mcpConfigRead(paramsJson);
+  } catch (_err) {
+    return '{"config":{}}';
+  }
+}
+
+export function mcpConfigWriteNative(paramsJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.mcpConfigWrite(paramsJson) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function mcpConfigBatchWriteNative(paramsJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.mcpConfigBatchWrite(paramsJson) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function mcpReloadNative(): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.mcpReload() === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function mcpOauthStartNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.mcpOauthStart(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function accountLoginNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.accountLogin(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function accountReadNative(): string {
+  if (nativeModuleUnavailable()) {
+    return '{"account":null,"requiresOpenaiAuth":false}';
+  }
+  try {
+    return nativeBridge!.accountRead();
+  } catch (_err) {
+    return '{"account":null,"requiresOpenaiAuth":false}';
   }
 }

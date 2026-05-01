@@ -1,6 +1,6 @@
 import router from '@ohos.router';
 import { codexBackend } from '../backend/CodexBackend';
-import { getSkillsRegistry, saveSkillsRegistry, getSkillsRepos, saveSkillsRepos, getSkillsBackups, deleteSkillBackup } from '../backend/CodexHostNative';
+import { getSkillsRegistry, saveSkillsRegistry, getSkillsRepos, saveSkillsRepos, getSkillsBackups, deleteSkillBackup } from '../backend/CodexNative';
 import { McpServerRecord, SettingsTab } from '../backend/ConsoleModels';
 import { InstalledSkill, SkillRepo, SkillBackupEntry, SkillsRegistryJson, SkillEntryJson, SkillsRepoListJson, SkillRepoEntryJson, SkillBackupJson } from '../skills/SkillTypes';
 import { PromptsPage } from './PromptsPage';

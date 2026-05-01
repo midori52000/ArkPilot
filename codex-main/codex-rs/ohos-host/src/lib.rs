@@ -133,6 +133,36 @@ static LAST_PROMPTS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 static LAST_AGENTS_MD_CONTENT: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("").expect("empty cstring"))
 });
+static LAST_INIT_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_THREAD_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_TURN_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_TURN_EVENTS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("[]").expect("empty cstring"))
+});
+static LAST_TURN_POLL_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_APPROVAL_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("null").expect("empty cstring"))
+});
+static LAST_MCP_STATUS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"data\":[],\"nextCursor\":null}").expect("empty cstring"))
+});
+static LAST_MCP_CONFIG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"config\":{}}") .expect("empty cstring"))
+});
+static LAST_MCP_OAUTH_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"authorizationUrl\":\"\"}").expect("empty cstring"))
+});
+static LAST_ACCOUNT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"account\":null,\"requiresOpenaiAuth\":false}").expect("empty cstring"))
+});
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_start(
@@ -847,6 +877,120 @@ fn write_cstring(target: &Mutex<CString>, value: &str) -> *const c_char {
     let mut slot = target.lock().expect("cstring lock");
     *slot = CString::new(sanitized).expect("sanitized cstring");
     slot.as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_initialize(config_json: *const c_char) -> *const c_char {
+    let config_text = ffi_string(config_json).unwrap_or_else(|| "{}".to_string());
+    let json = format!("{{\"ok\":true,\"config\":{}}}", config_text);
+    write_cstring(&LAST_INIT_RESULT_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let json = format!(
+        "{{\"thread\":{{\"id\":\"native-thread\"}},\"params\":{}}}",
+        params_text
+    );
+    write_cstring(&LAST_THREAD_RESULT_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let json = format!(
+        "{{\"turn\":{{\"id\":\"native-turn\",\"status\":\"completed\"}},\"params\":{}}}",
+        params_text
+    );
+    write_cstring(&LAST_TURN_RESULT_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_turn_events(
+    _thread_id: *const c_char,
+    _turn_id: *const c_char,
+) -> *const c_char {
+    write_cstring(&LAST_TURN_EVENTS_JSON, "[]")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_turn_poll(
+    thread_id: *const c_char,
+    turn_id: *const c_char,
+) -> *const c_char {
+    let thread_id = ffi_string(thread_id).unwrap_or_default();
+    let turn_id = ffi_string(turn_id).unwrap_or_default();
+    let json = format!(
+        "{{\"threadId\":\"{}\",\"turnId\":\"{}\",\"status\":\"completed\",\"messages\":[],\"summary\":[]}}",
+        escape_json_string(&thread_id),
+        escape_json_string(&turn_id)
+    );
+    write_cstring(&LAST_TURN_POLL_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_approval_poll() -> *const c_char {
+    write_cstring(&LAST_APPROVAL_JSON, "null")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_approval_approve(_params_json: *const c_char) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_approval_decline(_params_json: *const c_char) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_status_list(_params_json: *const c_char) -> *const c_char {
+    write_cstring(&LAST_MCP_STATUS_JSON, "{\"data\":[],\"nextCursor\":null}")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_config_read(_params_json: *const c_char) -> *const c_char {
+    write_cstring(&LAST_MCP_CONFIG_JSON, "{\"config\":{}}")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_config_write(_params_json: *const c_char) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_config_batch_write(_params_json: *const c_char) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_reload() -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_oauth_start(_params_json: *const c_char) -> *const c_char {
+    write_cstring(&LAST_MCP_OAUTH_JSON, "{\"authorizationUrl\":\"\"}")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_account_login(_params_json: *const c_char) -> *const c_char {
+    write_cstring(&LAST_ACCOUNT_JSON, "{\"ok\":true}")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_account_read() -> *const c_char {
+    write_cstring(&LAST_ACCOUNT_JSON, "{\"account\":null,\"requiresOpenaiAuth\":false}")
+}
+
+fn escape_json_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 #[cfg(test)]

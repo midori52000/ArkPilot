@@ -4,7 +4,7 @@ import {
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderCatalog,
   saveEmbeddedCodexProviderConfig
-} from './CodexHostNative';
+} from './CodexNative';
 import { ProviderCatalog, ProviderRecord, EndpointEntry, CustomHeadersEntry } from './ConsoleModels';
 
 function currentTimestamp(): string {

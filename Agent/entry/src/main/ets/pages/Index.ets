@@ -12,7 +12,7 @@ import {
   getEmbeddedCodexHostStatus,
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
-} from '../backend/CodexHostNative';
+} from '../backend/CodexNative';
 import { SidebarView } from '../backend/ConsoleModels';
 import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
@@ -132,11 +132,11 @@ struct Index {
   @State private authStatusText: string = '未登录';
   @State private connectionState: CodexConnectionState = 'disconnected';
   @State private connectionText: string = '未连接';
-  @State private summaryTitle: string = '等待连接真实 app-server';
+  @State private summaryTitle: string = '等待连接原生桥接后端';
   @State private summaryPoints: string[] = [
-    '应用启动时会自动拉起内置 Rust codex app-server。',
-    '这里通过本机 WebSocket JSON-RPC 连接进程内后端，而不是本地 mock。',
-    '发送消息后会流式刷新对话、计划和 diff。'
+    '应用启动时会自动拉起内置 Rust codex host。',
+    '这里通过 libentry.so 同步调用原生桥接层，而不是本地 mock。',
+    '发送消息后会刷新对话、计划和 diff。'
   ];
   @State private changedFiles: string = '尚未产生文件改动';
   @State private diffStat: string = '+0 -0';
@@ -198,7 +198,7 @@ struct Index {
       this.summaryTitle = '应用内后端已启动';
       this.summaryPoints = [
         hostStatus.message,
-        '页面会自动尝试连接本地 WebSocket 服务。',
+        '页面会自动尝试连接本地 原生桥接 服务。',
         '如果需要调试，也可以手动断开后重新连接。'
       ];
       return;
@@ -1037,14 +1037,14 @@ struct Index {
         this.metricCard('会话数', this.workspaces.length.toString(), '当前工作台中已创建的线程数')
         this.metricCard('消息总数', this.messages.length.toString(), '当前线程缓存的消息条数')
         this.metricCard('Diff 行数', this.codeLines.length.toString(), '右栏当前缓存的 diff 行')
-        this.metricCard('连接状态', this.connectionText, '当前 WebSocket 连接状态')
+        this.metricCard('连接状态', this.connectionText, '当前 原生桥接 连接状态')
       }
       .width('100%')
       .margin({ top: 12 })
 
       Column() {
         this.panelTitle('说明', '第一阶段先做本地派生统计，不做精确 token/cost 账单')
-        this.summaryBullet('统计来自 CodexBackend 内部线程快照，不修改现有 JSON-RPC 主链路。')
+        this.summaryBullet('统计来自 CodexBackend 内部线程快照，后续会继续收敛到原生桥接主链路。')
         this.summaryBullet('Provider / MCP / Skills 管理请通过左下角 Settings 按钮进入。')
       }
       .width('100%')

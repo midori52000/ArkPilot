@@ -1,6 +1,21 @@
-import webSocket from '@ohos.net.webSocket';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { McpAuthStatus, McpHealthStatus, McpServerRecord, McpSyncStatus, SessionSummary, UsageSummary } from './ConsoleModels';
+import {
+  accountLoginNative,
+  accountReadNative,
+  approvalApproveNative,
+  approvalDeclineNative,
+  approvalPollNative,
+  initializeNative,
+  mcpConfigBatchWriteNative,
+  mcpConfigReadNative,
+  mcpOauthStartNative,
+  mcpReloadNative,
+  mcpStatusListNative,
+  threadStartNative,
+  turnPollNative,
+  turnStartNative
+} from './CodexNative';
+import { McpAuthStatus, McpHealthStatus, McpServerRecord, SessionSummary, UsageSummary } from './ConsoleModels';
 
 export type CodexMessageRole = 'user' | 'assistant' | 'system';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
@@ -11,200 +26,11 @@ export type CodexAuthMode = 'none' | 'apiKey' | 'chatgpt' | 'chatgptAuthTokens' 
 export type CodexTurnUpdateHandler = (result: CodexTurnResult) => void;
 type BackendListener = (snapshot: CodexBackendSnapshot) => void;
 
-const DEFAULT_SERVER_URL: string = 'ws://127.0.0.1:7456';
+const DEFAULT_SERVER_URL: string = 'native://entry';
 const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
-
-class EmptyPayload {}
-
-class RpcErrorPayload {
-  code: number = 0;
-  message: string = '';
-
-  constructor(code: number = 0, message: string = '') {
-    this.code = code;
-    this.message = message;
-  }
-}
-
-class RpcEnvelope {
-  id?: string | number;
-  method?: string;
-  params?: Object;
-  result?: Object;
-  error?: RpcErrorPayload;
-}
-
-class RpcRequestEnvelope {
-  id: string | number;
-  method: string;
-  params?: Object;
-
-  constructor(id: string | number, method: string, params?: Object) {
-    this.id = id;
-    this.method = method;
-    this.params = params;
-  }
-}
-
-class RpcNotificationEnvelope {
-  method: string;
-  params?: Object;
-
-  constructor(method: string, params?: Object) {
-    this.method = method;
-    this.params = params;
-  }
-}
-
-class RpcResultEnvelope {
-  id: string | number;
-  result: Object;
-
-  constructor(id: string | number, result: Object) {
-    this.id = id;
-    this.result = result;
-  }
-}
-
-class RpcErrorEnvelope {
-  id: string | number;
-  error: RpcErrorPayload;
-
-  constructor(id: string | number, error: RpcErrorPayload) {
-    this.id = id;
-    this.error = error;
-  }
-}
-
-class InitializeClientInfo {
-  name: string = '';
-  title: string = '';
-  version: string = '';
-}
-
-class InitializeCapabilities {
-  experimentalApi: boolean = true;
-}
-
-class InitializeRequestParams {
-  clientInfo: InitializeClientInfo = new InitializeClientInfo();
-  capabilities: InitializeCapabilities = new InitializeCapabilities();
-}
-
-class InitializeResultPayload {
-  platformOs?: string;
-}
-
-class LoginApiKeyRequestParams {
-  type: string = 'apiKey';
-  apiKey: string = '';
-
-  constructor(apiKey: string) {
-    this.apiKey = apiKey;
-  }
-}
-
-class AccountPayload {
-  type?: string;
-  email?: string;
-  planType?: string;
-}
-
-class GetAccountRequestParams {
-  refreshToken: boolean = false;
-}
-
-class GetAccountResponsePayload {
-  account?: AccountPayload;
-  requiresOpenaiAuth: boolean = true;
-}
-
-class AccountUpdatedParams {
-  authMode?: string;
-  planType?: string;
-}
-
-class AccountLoginCompletedParams {
-  loginId?: string;
-  success: boolean = false;
-  error?: string;
-}
-
-class McpConfigReadParams {
-  includeLayers: boolean = false;
-}
-
-class McpConfigBatchEdit {
-  keyPath: string = '';
-  value: Object | string | number | boolean | null = null;
-  mergeStrategy: string = 'replace';
-
-  constructor(keyPath: string, value: Object | string | number | boolean | null, mergeStrategy: string = 'replace') {
-    this.keyPath = keyPath;
-    this.value = value;
-    this.mergeStrategy = mergeStrategy;
-  }
-}
-
-class McpConfigBatchWriteParams {
-  edits: McpConfigBatchEdit[] = [];
-  reloadUserConfig: boolean = false;
-}
-
-class McpConfigValueWriteParams {
-  keyPath: string = '';
-  value: Object | string | number | boolean | null = null;
-  mergeStrategy: string = 'replace';
-
-  constructor(keyPath: string, value: Object | string | number | boolean | null, mergeStrategy: string = 'replace') {
-    this.keyPath = keyPath;
-    this.value = value;
-    this.mergeStrategy = mergeStrategy;
-  }
-}
-
-class McpStatusListParams {
-  cursor?: string;
-  limit?: number;
-}
-
-class McpToolPayload {}
-
-class McpResourcePayload {}
-
-class McpServerStatusPayload {
-  name: string = '';
-  tools: Record<string, McpToolPayload> = {};
-  resources: McpResourcePayload[] = [];
-  resourceTemplates: Object[] = [];
-  authStatus: string = 'unsupported';
-}
-
-class McpStatusListResponsePayload {
-  data: McpServerStatusPayload[] = [];
-  nextCursor: string | null = null;
-}
-
-class McpOauthLoginRequestParams {
-  name: string = '';
-
-  constructor(serverName: string) {
-    this.name = serverName;
-  }
-}
-
-class McpOauthLoginCompletedParams {
-  name: string = '';
-  success: boolean = false;
-  error?: string;
-}
-
-class McpServerStatusUpdatedParams {
-  name: string = '';
-  status: string = 'starting';
-  error: string | null = null;
-}
+const TURN_POLL_INTERVAL_MS: number = 800;
+const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 
 class ThreadPayload {
   id: string = '';
@@ -220,170 +46,112 @@ class TurnPayload {
   error?: TurnErrorPayload;
 }
 
-class ThreadStartRequestParams {
-  cwd?: string;
-  model?: string;
-}
-
 class ThreadStartResultPayload {
   thread: ThreadPayload = new ThreadPayload();
-}
-
-class TextInputPayload {
-  type: string = 'text';
-  text: string = '';
-
-  constructor(text: string) {
-    this.text = text;
-  }
-}
-
-class TurnStartRequestParams {
-  threadId: string = '';
-  input: TextInputPayload[] = [];
-  cwd?: string;
-  model?: string;
-  effort?: string;
 }
 
 class TurnStartResultPayload {
   turn: TurnPayload = new TurnPayload();
 }
 
-class PermissionNetworkPayload {
-  enabled?: boolean;
-
-  static cloneFrom(source?: PermissionNetworkPayload): PermissionNetworkPayload | undefined {
-    if (source === undefined) {
-      return undefined;
-    }
-    const target: PermissionNetworkPayload = new PermissionNetworkPayload();
-    target.enabled = source.enabled;
-    return target;
-  }
-}
-
-class PermissionFileSystemPayload {
-  read?: string[];
-  write?: string[];
-
-  static cloneFrom(source?: PermissionFileSystemPayload): PermissionFileSystemPayload | undefined {
-    if (source === undefined) {
-      return undefined;
-    }
-    const target: PermissionFileSystemPayload = new PermissionFileSystemPayload();
-    target.read = source.read === undefined ? undefined : [...source.read];
-    target.write = source.write === undefined ? undefined : [...source.write];
-    return target;
-  }
-}
-
-class PermissionsProfilePayload {
-  network?: PermissionNetworkPayload;
-  fileSystem?: PermissionFileSystemPayload;
-}
-
-class PermissionsResponsePayload {
-  permissions: PermissionsProfilePayload = new PermissionsProfilePayload();
-  scope: string = 'turn';
-}
-
-class DecisionResponsePayload {
-  decision: string = '';
-
-  constructor(decision: string) {
-    this.decision = decision;
-  }
-}
-
-class ItemPayload {
-  type: string = '';
-  id: string = '';
-  text?: string;
-  summary?: string[];
-  command?: string;
-  cwd?: string;
-  status?: string;
-  aggregatedOutput?: string;
-}
-
-class ItemNotificationParams {
-  item: ItemPayload = new ItemPayload();
-  threadId: string = '';
-  turnId: string = '';
-}
-
-class AgentMessageDeltaParams {
-  threadId: string = '';
-  turnId: string = '';
-  itemId: string = '';
-  delta: string = '';
-}
-
-class RawResponseContentPayload {
+class AccountPayload {
   type?: string;
-  text?: string;
+  email?: string;
+  planType?: string;
 }
 
-class RawResponseItemPayload {
-  type: string = '';
-  id?: string;
-  role?: string;
-  content?: RawResponseContentPayload[];
+class GetAccountResponsePayload {
+  account?: AccountPayload;
+  requiresOpenaiAuth: boolean = true;
 }
 
-class RawResponseItemCompletedParams {
-  threadId: string = '';
-  turnId: string = '';
-  item: RawResponseItemPayload = new RawResponseItemPayload();
+class McpServerStatusPayload {
+  name: string = '';
+  tools: Record<string, Object> = {};
+  resources: Object[] = [];
+  resourceTemplates: Object[] = [];
+  authStatus: string = 'unsupported';
 }
 
-class TurnDiffUpdatedParams {
-  threadId: string = '';
-  turnId: string = '';
-  diff: string = '';
+class McpStatusListResponsePayload {
+  data: McpServerStatusPayload[] = [];
+  nextCursor: string | null = null;
 }
 
-class PlanStepPayload {
-  step: string = '';
-  status: string = '';
+class InitializeClientInfoPayload {
+  name: string = 'codex_harmony_agent';
+  title: string = 'Codex Harmony Agent';
+  version: string = '0.1.0';
 }
 
-class TurnPlanUpdatedParams {
-  threadId: string = '';
-  turnId: string = '';
-  explanation?: string;
-  plan: PlanStepPayload[] = [];
+class InitializeCapabilitiesPayload {
+  experimentalApi: boolean = true;
 }
 
-class TurnCompletedParams {
-  threadId: string = '';
-  turn: TurnPayload = new TurnPayload();
+class InitializeRequestPayload {
+  clientInfo: InitializeClientInfoPayload = new InitializeClientInfoPayload();
+  capabilities: InitializeCapabilitiesPayload = new InitializeCapabilitiesPayload();
 }
 
-class CommandApprovalParams {
+class AccountLoginRequestPayload {
+  type: string = 'apiKey';
+  apiKey: string = '';
+}
+
+class ApprovalActionRequestPayload {
+  requestId: string | number = '';
   threadId: string = '';
   turnId: string = '';
   itemId: string = '';
-  reason?: string;
-  command?: string;
+  kind: CodexApprovalKind = 'command';
+}
+
+class TurnInputItemPayload {
+  type: string = 'text';
+  text: string = '';
+}
+
+class TurnStartRequestPayload {
+  threadId: string = '';
+  input: TurnInputItemPayload[] = [];
   cwd?: string;
+  model?: string;
+  effort?: string;
 }
 
-class FileChangeApprovalParams {
-  threadId: string = '';
-  turnId: string = '';
-  itemId: string = '';
-  reason?: string;
-  grantRoot?: string;
+class McpStatusListRequestPayload {
+  limit: number = 100;
 }
 
-class PermissionsApprovalParams {
-  threadId: string = '';
-  turnId: string = '';
-  itemId: string = '';
-  reason?: string;
-  permissions: PermissionsProfilePayload = new PermissionsProfilePayload();
+class McpConfigBatchEditPayload {
+  keyPath: string = '';
+  value: Object = new Object() as Object;
+  mergeStrategy: string = 'replace';
+}
+
+class McpConfigBatchWriteRequestPayload {
+  edits: McpConfigBatchEditPayload[] = [];
+  reloadUserConfig: boolean = true;
+}
+
+class McpOauthStartRequestPayload {
+  name: string = '';
+}
+
+class McpConfigReadRequestPayload {
+  includeLayers: boolean = false;
+}
+
+class ThreadStartRequestPayload {
+  cwd?: string;
+  model?: string;
+}
+
+class TurnPollResponsePayload {
+}
+
+class McpConfigReadResponsePayload {
+  config: Record<string, Object> = {};
 }
 
 class ParsedDiff {
@@ -400,14 +168,7 @@ export class CodexChatMessage {
   content: string;
   timestamp: string;
 
-  constructor(
-    messageId: string,
-    sequence: number,
-    author: string,
-    role: CodexMessageRole,
-    content: string,
-    timestamp: string
-  ) {
+  constructor(messageId: string, sequence: number, author: string, role: CodexMessageRole, content: string, timestamp: string) {
     this.messageId = messageId;
     this.sequence = sequence;
     this.author = author;
@@ -425,14 +186,7 @@ export class CodexDiffLine {
   content: string;
   kind: CodexDiffKind;
 
-  constructor(
-    lineId: string,
-    sequence: number,
-    lineNumber: string,
-    sign: string,
-    content: string,
-    kind: CodexDiffKind
-  ) {
+  constructor(lineId: string, sequence: number, lineNumber: string, sign: string, content: string, kind: CodexDiffKind) {
     this.lineId = lineId;
     this.sequence = sequence;
     this.lineNumber = lineNumber;
@@ -450,14 +204,7 @@ export class CodexTurnRequest {
   reasoningEffort: string;
   prompt: string;
 
-  constructor(
-    threadKey: string,
-    title: string,
-    workspaceRoot: string,
-    model: string,
-    reasoningEffort: string,
-    prompt: string
-  ) {
+  constructor(threadKey: string, title: string, workspaceRoot: string, model: string, reasoningEffort: string, prompt: string) {
     this.threadKey = threadKey;
     this.title = title;
     this.workspaceRoot = workspaceRoot;
@@ -478,17 +225,7 @@ export class CodexTurnResult {
   changedFiles: string;
   diffStat: string;
 
-  constructor(
-    threadId: string,
-    turnId: string,
-    status: CodexTurnStatus,
-    messages: CodexChatMessage[],
-    diffLines: CodexDiffLine[],
-    summaryTitle: string,
-    summaryPoints: string[],
-    changedFiles: string,
-    diffStat: string
-  ) {
+  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string) {
     this.threadId = threadId;
     this.turnId = turnId;
     this.status = status;
@@ -509,17 +246,9 @@ export class CodexApprovalRequest {
   threadId: string;
   turnId: string;
   itemId: string;
-  grantedPermissions?: PermissionsProfilePayload;
+  grantedPermissions?: Object;
 
-  constructor(
-    requestId: string | number,
-    kind: CodexApprovalKind,
-    title: string,
-    detail: string,
-    threadId: string,
-    turnId: string,
-    itemId: string
-  ) {
+  constructor(requestId: string | number, kind: CodexApprovalKind, title: string, detail: string, threadId: string, turnId: string, itemId: string) {
     this.requestId = requestId;
     this.kind = kind;
     this.title = title;
@@ -543,19 +272,7 @@ export class CodexBackendSnapshot {
   mcpServerCount: number;
   mcpErrorText: string;
 
-  constructor(
-    serverUrl: string,
-    connectionState: CodexConnectionState,
-    connectionText: string,
-    pendingApproval: CodexApprovalRequest | null,
-    authMode: CodexAuthMode,
-    requiresOpenAIAuth: boolean,
-    authStatusText: string,
-    planTypeText: string,
-    mcpStatusText: string,
-    mcpServerCount: number,
-    mcpErrorText: string
-  ) {
+  constructor(serverUrl: string, connectionState: CodexConnectionState, connectionText: string, pendingApproval: CodexApprovalRequest | null, authMode: CodexAuthMode, requiresOpenAIAuth: boolean, authStatusText: string, planTypeText: string, mcpStatusText: string, mcpServerCount: number, mcpErrorText: string) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
     this.connectionText = connectionText;
@@ -567,16 +284,6 @@ export class CodexBackendSnapshot {
     this.mcpStatusText = mcpStatusText;
     this.mcpServerCount = mcpServerCount;
     this.mcpErrorText = mcpErrorText;
-  }
-}
-
-class PendingRpcRequest {
-  resolve: (value: Object) => void;
-  reject: (reason: string) => void;
-
-  constructor(resolve: (value: Object) => void, reject: (reason: string) => void) {
-    this.resolve = resolve;
-    this.reject = reject;
   }
 }
 
@@ -605,7 +312,7 @@ class CodexThreadRecord {
   messages: CodexChatMessage[] = [];
   diffLines: CodexDiffLine[] = [];
   summaryTitle: string = '等待 Codex 响应';
-  summaryPoints: string[] = ['连接成功后会在这里显示计划、摘要和关键步骤。'];
+  summaryPoints: string[] = ['发送请求后会在这里显示计划、摘要和关键步骤。'];
   changedFiles: string = '尚未产生文件改动';
   diffStat: string = '+0 -0';
   activeTurn: PendingTurnState | null = null;
@@ -617,30 +324,39 @@ class CodexThreadRecord {
   constructor(localKey: string, title: string) {
     this.localKey = localKey;
     this.title = title;
-    this.updatedAt = this.currentTimestamp();
-  }
-
-  private currentTimestamp(): string {
-    const now: Date = new Date();
-    const hours: string = now.getHours().toString().padStart(2, '0');
-    const minutes: string = now.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
+    this.updatedAt = currentTimestamp();
   }
 }
 
+function currentTimestamp(): string {
+  const now: Date = new Date();
+  const hours: string = now.getHours().toString().padStart(2, '0');
+  const minutes: string = now.getMinutes().toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function safeJsonParse(rawText: string): Object | null {
+  try {
+    return JSON.parse(rawText) as Object;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function parseJsonText(rawText: string, fallbackValue: Object): Object {
+  const parsed: Object | null = safeJsonParse(rawText);
+  return parsed ?? fallbackValue;
+}
+
 export class CodexBackend {
-  private socket: webSocket.WebSocket | null = null;
   private initialized: boolean = false;
   private connectionState: CodexConnectionState = 'disconnected';
   private connectionText: string = '未连接';
-  private readonly pendingRequests: Map<string, PendingRpcRequest> = new Map();
   private readonly listeners: Map<number, BackendListener> = new Map();
   private readonly threads: Map<string, CodexThreadRecord> = new Map();
   private readonly threadKeysByRemoteId: Map<string, string> = new Map();
   private serverUrl: string = DEFAULT_SERVER_URL;
-  private requestSequence: number = 1;
   private listenerSequence: number = 1;
-  private connectPromise: Promise<void> | null = null;
   private pendingApproval: CodexApprovalRequest | null = null;
   private authMode: CodexAuthMode = 'none';
   private requiresOpenAIAuth: boolean = true;
@@ -648,21 +364,12 @@ export class CodexBackend {
   private planTypeText: string = '';
   private mcpServersCache: McpServerRecord[] = [];
   private readonly mcpConfigByName: Map<string, Object> = new Map();
-  private readonly mcpStartupStateByName: Map<string, string> = new Map();
-  private readonly mcpStartupErrorByName: Map<string, string> = new Map();
   private mcpStatusText: string = '尚未加载 MCP 状态';
   private mcpErrorText: string = '';
+  private approvalTimerId: number = -1;
 
   private logInfo(message: string): void {
     hilog.info(BACKEND_LOG_DOMAIN, BACKEND_LOG_TAG, '%{public}s', message);
-  }
-
-  private messagePreview(text: string, maxLength: number = 120): string {
-    const normalized: string = text.replace(/\s+/g, ' ').trim();
-    if (normalized.length <= maxLength) {
-      return normalized;
-    }
-    return `${normalized.slice(0, maxLength)}...`;
   }
 
   subscribe(listener: BackendListener): number {
@@ -695,21 +402,8 @@ export class CodexBackend {
   sessionSummaries(): SessionSummary[] {
     const sessions: SessionSummary[] = [];
     this.threads.forEach((thread: CodexThreadRecord) => {
-      const lastMessageTimestamp: string = thread.messages.length > 0
-        ? thread.messages[thread.messages.length - 1].timestamp
-        : thread.updatedAt;
-      sessions.push(
-        new SessionSummary(
-          thread.localKey,
-          thread.title,
-          thread.cwd,
-          thread.messages.length,
-          lastMessageTimestamp,
-          thread.summaryTitle,
-          thread.lastTurnStatus,
-          thread.changedFiles
-        )
-      );
+      const lastMessageTimestamp: string = thread.messages.length > 0 ? thread.messages[thread.messages.length - 1].timestamp : thread.updatedAt;
+      sessions.push(new SessionSummary(thread.localKey, thread.title, thread.cwd, thread.messages.length, lastMessageTimestamp, thread.summaryTitle, thread.lastTurnStatus, thread.changedFiles));
     });
     return sessions.sort((left: SessionSummary, right: SessionSummary) => {
       if (left.lastUpdatedAt === right.lastUpdatedAt) {
@@ -736,15 +430,7 @@ export class CodexBackend {
       diffUpdateCount += thread.diffUpdateCount;
       lastTurnStatus = thread.lastTurnStatus;
     });
-    return new UsageSummary(
-      this.threads.size,
-      activeTurnCount,
-      turnCount,
-      messageCount,
-      diffLineCount,
-      diffUpdateCount,
-      lastTurnStatus
-    );
+    return new UsageSummary(this.threads.size, activeTurnCount, turnCount, messageCount, diffLineCount, diffUpdateCount, lastTurnStatus);
   }
 
   resultForThreadKey(threadKey: string): CodexTurnResult | null {
@@ -763,96 +449,6 @@ export class CodexBackend {
     return this.mcpConfigByName.get(serverName) ?? null;
   }
 
-  async refreshMcpServers(): Promise<McpServerRecord[]> {
-    await this.ensureConnected();
-    await this.readMcpConfig();
-    const params: McpStatusListParams = new McpStatusListParams();
-    params.limit = 100;
-    const payload: Object = await this.sendRpcRequest(
-      new RpcRequestEnvelope(this.nextRequestId(), 'mcpServerStatus/list', params)
-    );
-    const response: McpStatusListResponsePayload = payload as McpStatusListResponsePayload;
-    this.mcpServersCache = response.data.map((item: McpServerStatusPayload) => this.buildMcpServerRecord(item));
-    this.mcpStatusText = this.mcpServersCache.length > 0
-      ? `已加载 ${this.mcpServersCache.length} 个 MCP server`
-      : '当前没有已配置的 MCP server';
-    this.mcpErrorText = '';
-    this.notifyListeners();
-    return this.mcpServers();
-  }
-
-  async reloadMcpServers(): Promise<void> {
-    await this.ensureConnected();
-    await this.sendRpcRequest(new RpcRequestEnvelope(this.nextRequestId(), 'config/mcpServer/reload', new EmptyPayload()));
-    this.mcpStatusText = 'MCP 配置已重载';
-    this.mcpErrorText = '';
-    await this.refreshMcpServers();
-  }
-
-  async writeMcpConfigValue(keyPath: string, value: Object | string | number | boolean | null): Promise<void> {
-    await this.ensureConnected();
-    await this.sendRpcRequest(
-      new RpcRequestEnvelope(this.nextRequestId(), 'config/value/write', new McpConfigValueWriteParams(keyPath, value))
-    );
-    this.mcpStatusText = `已更新 ${keyPath}`;
-    this.mcpErrorText = '';
-    this.notifyListeners();
-  }
-
-  async batchWriteMcpConfig(edits: McpConfigBatchEdit[]): Promise<void> {
-    await this.ensureConnected();
-    const params: McpConfigBatchWriteParams = new McpConfigBatchWriteParams();
-    params.edits = edits;
-    params.reloadUserConfig = true;
-    await this.sendRpcRequest(new RpcRequestEnvelope(this.nextRequestId(), 'config/batchWrite', params));
-    this.mcpStatusText = 'MCP 配置已保存';
-    this.mcpErrorText = '';
-    this.notifyListeners();
-  }
-
-  async saveMcpServerConfig(
-    serverName: string,
-    enabled: boolean,
-    transportType: string,
-    command: string,
-    argsText: string,
-    url: string,
-    envText: string
-  ): Promise<void> {
-    await this.ensureConnected();
-    await this.readMcpConfig();
-    const existingConfig: Record<string, Object> = this.copyConfigObject(
-      (this.mcpConfigByName.get(serverName) as Record<string, Object> | undefined) ?? {}
-    );
-    const nextConfig: Record<string, Object> = this.copyConfigObject(existingConfig);
-    nextConfig['enabled'] = enabled;
-    const parsedArgs: Object = this.parseJsonText(argsText, JSON.parse('[]') as Object);
-    const parsedEnv: Object = this.parseJsonText(envText, JSON.parse('{}') as Object);
-    nextConfig['args'] = parsedArgs;
-    nextConfig['env'] = parsedEnv;
-    if (transportType === 'http') {
-      nextConfig['url'] = url.trim();
-      nextConfig['command'] = '';
-    } else {
-      nextConfig['command'] = command.trim();
-      nextConfig['url'] = '';
-    }
-    await this.batchWriteMcpConfig([
-      new McpConfigBatchEdit(`mcp_servers.${serverName}`, nextConfig)
-    ]);
-    await this.reloadMcpServers();
-  }
-
-  async startMcpOAuthLogin(serverName: string): Promise<void> {
-    await this.ensureConnected();
-    await this.sendRpcRequest(
-      new RpcRequestEnvelope(this.nextRequestId(), 'mcpServer/oauth/login', new McpOauthLoginRequestParams(serverName))
-    );
-    this.mcpStatusText = `已为 ${serverName} 发起 OAuth 登录`;
-    this.mcpErrorText = '';
-    this.notifyListeners();
-  }
-
   configureServerUrl(serverUrl: string): void {
     const nextServerUrl: string = serverUrl.trim();
     this.serverUrl = nextServerUrl.length > 0 ? nextServerUrl : DEFAULT_SERVER_URL;
@@ -860,37 +456,37 @@ export class CodexBackend {
   }
 
   async connect(): Promise<void> {
-    await this.ensureConnected();
+    if (this.initialized) {
+      return;
+    }
+    this.updateConnectionState('connecting', '正在初始化原生桥接');
+    const initRequest: InitializeRequestPayload = new InitializeRequestPayload();
+    const initResult: Object = parseJsonText(initializeNative(JSON.stringify(initRequest)), new Object() as Object);
+    this.initialized = true;
+    await this.refreshAccountState();
+    const platformOs: string = typeof (initResult as Record<string, Object>)['platformOs'] === 'string'
+      ? ((initResult as Record<string, Object>)['platformOs'] as string)
+      : 'ohos';
+    this.updateConnectionState('connected', `已连接 · ${platformOs}`);
+    this.ensureApprovalPolling();
   }
 
   async disconnect(): Promise<void> {
-    this.connectPromise = null;
     this.initialized = false;
-    this.rejectAllPendingRequests('WebSocket 已断开。');
-    if (this.socket !== null) {
-      try {
-        await this.socket.close();
-      } catch (_err) {
-      }
-      this.socket = null;
-    }
+    this.stopApprovalPolling();
+    this.pendingApproval = null;
     this.updateConnectionState('disconnected', '已断开连接');
   }
 
   async loginWithApiKey(apiKey: string): Promise<void> {
     const trimmedApiKey: string = apiKey.trim();
     if (trimmedApiKey.length === 0) {
-      throw new Error('è¯·è¾“å…¥æœ‰æ•ˆçš„ OpenAI API Keyã€‚');
+      throw new Error('请输入有效的 OpenAI API Key。');
     }
-
     await this.ensureConnected();
-    await this.sendRpcRequest(
-      new RpcRequestEnvelope(
-        this.nextRequestId(),
-        'account/login/start',
-        new LoginApiKeyRequestParams(trimmedApiKey)
-      )
-    );
+    const loginRequest: AccountLoginRequestPayload = new AccountLoginRequestPayload();
+    loginRequest.apiKey = trimmedApiKey;
+    accountLoginNative(JSON.stringify(loginRequest));
     await this.refreshAccountState();
   }
 
@@ -898,48 +494,38 @@ export class CodexBackend {
     if (this.pendingApproval === null) {
       return;
     }
-
     const request: CodexApprovalRequest = this.pendingApproval;
     this.pendingApproval = null;
+    const approveRequest: ApprovalActionRequestPayload = new ApprovalActionRequestPayload();
+    approveRequest.requestId = request.requestId;
+    approveRequest.threadId = request.threadId;
+    approveRequest.turnId = request.turnId;
+    approveRequest.itemId = request.itemId;
+    approveRequest.kind = request.kind;
+    approvalApproveNative(JSON.stringify(approveRequest));
     this.notifyListeners();
-
-    if (request.kind === 'permissions') {
-      const response: PermissionsResponsePayload = new PermissionsResponsePayload();
-      response.permissions = request.grantedPermissions ?? new PermissionsProfilePayload();
-      await this.sendServerRequestResult(new RpcResultEnvelope(request.requestId, response));
-      return;
-    }
-
-    await this.sendServerRequestResult(
-      new RpcResultEnvelope(request.requestId, new DecisionResponsePayload('accept'))
-    );
   }
 
   async declinePendingRequest(): Promise<void> {
     if (this.pendingApproval === null) {
       return;
     }
-
     const request: CodexApprovalRequest = this.pendingApproval;
     this.pendingApproval = null;
+    const declineRequest: ApprovalActionRequestPayload = new ApprovalActionRequestPayload();
+    declineRequest.requestId = request.requestId;
+    declineRequest.threadId = request.threadId;
+    declineRequest.turnId = request.turnId;
+    declineRequest.itemId = request.itemId;
+    declineRequest.kind = request.kind;
+    approvalDeclineNative(JSON.stringify(declineRequest));
     this.notifyListeners();
-
-    if (request.kind === 'permissions') {
-      await this.sendServerRequestResult(
-        new RpcResultEnvelope(request.requestId, new PermissionsResponsePayload())
-      );
-      return;
-    }
-
-    await this.sendServerRequestResult(
-      new RpcResultEnvelope(request.requestId, new DecisionResponsePayload('decline'))
-    );
   }
 
   async startTurn(request: CodexTurnRequest, onUpdate?: CodexTurnUpdateHandler): Promise<CodexTurnResult> {
     await this.ensureConnected();
     if (this.requiresOpenAIAuth && this.authMode === 'none') {
-      throw new Error('å½“å‰åŽç«¯å°šæœªç™»å½• OpenAIã€‚è¯·å…ˆå¡«å†™ API Key å¹¶ç™»å½•ã€‚');
+      throw new Error('当前后端尚未登录 OpenAI。请先填写 API Key 并登录。');
     }
     const thread: CodexThreadRecord = await this.ensureRemoteThread(request);
     const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate);
@@ -951,332 +537,253 @@ export class CodexBackend {
     const startedSnapshot: CodexTurnResult = this.beginLocalTurn(thread, request.prompt);
     this.emitTurnUpdate(thread, pendingTurn, startedSnapshot);
 
-    const params: TurnStartRequestParams = new TurnStartRequestParams();
-    params.threadId = thread.remoteThreadId;
-    params.input = [new TextInputPayload(request.prompt)];
-    if (request.workspaceRoot.trim().length > 0) {
-      params.cwd = request.workspaceRoot.trim();
-    }
-    if (request.model !== 'default') {
-      params.model = request.model;
-    }
-    if (request.reasoningEffort !== 'default') {
-      params.effort = request.reasoningEffort;
-    }
+    const turnRequest: TurnStartRequestPayload = new TurnStartRequestPayload();
+    turnRequest.threadId = thread.remoteThreadId;
+    const inputItem: TurnInputItemPayload = new TurnInputItemPayload();
+    inputItem.text = request.prompt;
+    turnRequest.input = [inputItem];
+    turnRequest.cwd = request.workspaceRoot.trim().length > 0 ? request.workspaceRoot.trim() : undefined;
+    turnRequest.model = request.model !== 'default' ? request.model : undefined;
+    turnRequest.effort = request.reasoningEffort !== 'default' ? request.reasoningEffort : undefined;
+    const turnResult: Object = parseJsonText(turnStartNative(JSON.stringify(turnRequest)), new Object() as Object);
 
-    try {
-      const payload: Object = await this.sendRpcRequest(new RpcRequestEnvelope(this.nextRequestId(), 'turn/start', params));
-      const result: TurnStartResultPayload = payload as TurnStartResultPayload;
-      if (result.turn !== undefined && result.turn.id.length > 0) {
-        pendingTurn.turnId = result.turn.id;
-      }
-      return await pendingTurn.completion;
-    } catch (err) {
-      return this.failTurn(thread, pendingTurn, this.describeError(err));
+    const turnPayload: Record<string, Object> = ((turnResult as Record<string, Object>)['turn'] as Record<string, Object> | undefined) ?? {};
+    pendingTurn.turnId = typeof turnPayload['id'] === 'string' ? (turnPayload['id'] as string) : 'native-turn';
+
+    const result: CodexTurnResult = await this.pollTurnUntilCompleted(thread, pendingTurn);
+    return result;
+  }
+
+  async refreshMcpServers(): Promise<McpServerRecord[]> {
+    await this.ensureConnected();
+    this.readMcpConfig();
+    const statusListRequest: McpStatusListRequestPayload = new McpStatusListRequestPayload();
+    const response: McpStatusListResponsePayload = parseJsonText(mcpStatusListNative(JSON.stringify(statusListRequest)), new McpStatusListResponsePayload()) as McpStatusListResponsePayload;
+    this.mcpServersCache = response.data.map((item: McpServerStatusPayload) => this.buildMcpServerRecord(item));
+    this.mcpStatusText = this.mcpServersCache.length > 0 ? `已加载 ${this.mcpServersCache.length} 个 MCP server` : '当前没有已配置的 MCP server';
+    this.mcpErrorText = '';
+    this.notifyListeners();
+    return this.mcpServers();
+  }
+
+  async reloadMcpServers(): Promise<void> {
+    await this.ensureConnected();
+    mcpReloadNative();
+    this.mcpStatusText = 'MCP 配置已重载';
+    this.mcpErrorText = '';
+    await this.refreshMcpServers();
+  }
+
+  async batchWriteMcpConfig(edits: McpConfigBatchEditPayload[]): Promise<void> {
+    await this.ensureConnected();
+    const batchWriteRequest: McpConfigBatchWriteRequestPayload = new McpConfigBatchWriteRequestPayload();
+    batchWriteRequest.edits = edits;
+    mcpConfigBatchWriteNative(JSON.stringify(batchWriteRequest));
+    this.mcpStatusText = 'MCP 配置已保存';
+    this.mcpErrorText = '';
+    this.notifyListeners();
+  }
+
+  async saveMcpServerConfig(serverName: string, enabled: boolean, transportType: string, command: string, argsText: string, url: string, envText: string): Promise<void> {
+    await this.ensureConnected();
+    this.readMcpConfig();
+    const existingConfig: Record<string, Object> = this.copyConfigObject((this.mcpConfigByName.get(serverName) as Record<string, Object> | undefined) ?? {});
+    const nextConfig: Record<string, Object> = this.copyConfigObject(existingConfig);
+    nextConfig['enabled'] = enabled;
+    nextConfig['args'] = parseJsonText(argsText, new Array<Object>() as Object);
+    nextConfig['env'] = parseJsonText(envText, new Object() as Object);
+    if (transportType === 'http') {
+      nextConfig['url'] = url.trim();
+      nextConfig['command'] = '';
+    } else {
+      nextConfig['command'] = command.trim();
+      nextConfig['url'] = '';
     }
+    const edit: McpConfigBatchEditPayload = new McpConfigBatchEditPayload();
+    edit.keyPath = `mcp_servers.${serverName}`;
+    edit.value = nextConfig;
+    edit.mergeStrategy = 'replace';
+    await this.batchWriteMcpConfig([edit]);
+    await this.reloadMcpServers();
+  }
+
+  async startMcpOAuthLogin(serverName: string): Promise<void> {
+    await this.ensureConnected();
+    const oauthRequest: McpOauthStartRequestPayload = new McpOauthStartRequestPayload();
+    oauthRequest.name = serverName;
+    mcpOauthStartNative(JSON.stringify(oauthRequest));
+    this.mcpStatusText = `已为 ${serverName} 发起 OAuth 登录`;
+    this.mcpErrorText = '';
+    this.notifyListeners();
   }
 
   private async ensureConnected(): Promise<void> {
-    if (this.initialized && this.socket !== null) {
-      return;
-    }
-    if (this.connectPromise !== null) {
-      await this.connectPromise;
-      return;
-    }
-
-    this.connectPromise = this.openSocketAndInitialize();
-    try {
-      await this.connectPromise;
-    } finally {
-      this.connectPromise = null;
-    }
-  }
-
-  private async openSocketAndInitialize(): Promise<void> {
-    this.updateConnectionState('connecting', `连接中：${this.serverUrl}`);
-    const socket: webSocket.WebSocket = webSocket.createWebSocket();
-    this.bindSocket(socket);
-    this.socket = socket;
-
-    try {
-      await socket.connect(this.serverUrl);
-      const initializeParams: InitializeRequestParams = new InitializeRequestParams();
-      initializeParams.clientInfo.name = 'codex_harmony_agent';
-      initializeParams.clientInfo.title = 'Codex Harmony Agent';
-      initializeParams.clientInfo.version = '0.1.0';
-      initializeParams.capabilities.experimentalApi = true;
-      const initializeResultObject: Object = await this.sendRpcRequest(
-        new RpcRequestEnvelope(this.nextRequestId(), 'initialize', initializeParams)
-      );
-      await this.sendNotification(new RpcNotificationEnvelope('initialized'));
-      this.initialized = true;
-      await this.refreshAccountState();
-      const initializeResult: InitializeResultPayload = initializeResultObject as InitializeResultPayload;
-      const platformOs: string = initializeResult.platformOs ?? 'unknown';
-      this.updateConnectionState('connected', `已连接 · ${platformOs}`);
-    } catch (err) {
-      this.initialized = false;
-      this.updateConnectionState('error', `连接失败：${this.describeError(err)}`);
-      if (this.socket !== null) {
-        try {
-          await this.socket.close();
-        } catch (_closeErr) {
-        }
-      }
-      this.socket = null;
-      throw new Error(this.describeError(err));
-    }
-  }
-
-  private bindSocket(socket: webSocket.WebSocket): void {
-    socket.on('message', (_err, data) => {
-      if (typeof data !== 'string') {
-        return;
-      }
-      this.handleSocketMessage(data);
-    });
-    socket.on('close', (_err, result) => {
-      this.initialized = false;
-      this.socket = null;
-      this.rejectAllPendingRequests('WebSocket 连接已关闭。');
-      const closeReason: string = result !== undefined && result.reason.length > 0 ? result.reason : '连接关闭';
-      this.updateConnectionState('disconnected', closeReason);
-    });
-    socket.on('error', (err) => {
-      this.initialized = false;
-      this.rejectAllPendingRequests('WebSocket 出现错误。');
-      this.updateConnectionState('error', `连接异常：${this.describeError(err)}`);
-    });
-  }
-
-  private handleSocketMessage(text: string): void {
-    const envelope: RpcEnvelope | null = this.parseEnvelope(text);
-    if (envelope === null) {
-      return;
-    }
-
-    if (envelope.method === undefined && envelope.id !== undefined) {
-      const pendingRequest: PendingRpcRequest | undefined = this.pendingRequests.get(envelope.id.toString());
-      if (pendingRequest === undefined) {
-        return;
-      }
-      this.pendingRequests.delete(envelope.id.toString());
-      if (envelope.error !== undefined) {
-        pendingRequest.reject(envelope.error.message);
-        return;
-      }
-      pendingRequest.resolve(envelope.result ?? new EmptyPayload());
-      return;
-    }
-
-    if (envelope.method === undefined) {
-      return;
-    }
-
-    if (envelope.id !== undefined) {
-      void this.handleServerRequest(envelope.method, envelope.id, envelope.params);
-      return;
-    }
-
-    this.handleNotification(envelope.method, envelope.params);
-  }
-
-  private async handleServerRequest(method: string, requestId: string | number, paramsObject?: Object): Promise<void> {
-    if (method === 'item/commandExecution/requestApproval') {
-      const approval: CodexApprovalRequest = this.buildCommandApproval(requestId, paramsObject as CommandApprovalParams);
-      this.pendingApproval = approval;
-      this.notifyListeners();
-      return;
-    }
-
-    if (method === 'item/fileChange/requestApproval') {
-      const approval: CodexApprovalRequest = this.buildFileChangeApproval(requestId, paramsObject as FileChangeApprovalParams);
-      this.pendingApproval = approval;
-      this.notifyListeners();
-      return;
-    }
-
-    if (method === 'item/permissions/requestApproval') {
-      const approval: CodexApprovalRequest = this.buildPermissionsApproval(requestId, paramsObject as PermissionsApprovalParams);
-      this.pendingApproval = approval;
-      this.notifyListeners();
-      return;
-    }
-
-    await this.sendServerRequestError(
-      new RpcErrorEnvelope(requestId, new RpcErrorPayload(-32001, `Harmony 前端暂不支持 ${method}`))
-    );
-  }
-
-  private handleNotification(method: string, paramsObject?: Object): void {
-    if (method === 'account/updated') {
-      this.handleAccountUpdated(paramsObject as AccountUpdatedParams);
-      return;
-    }
-
-    if (method === 'account/login/completed') {
-      this.handleAccountLoginCompleted(paramsObject as AccountLoginCompletedParams);
-      return;
-    }
-
-    if (method === 'item/started') {
-      this.handleItemStarted(paramsObject as ItemNotificationParams);
-      return;
-    }
-
-    if (method === 'item/completed') {
-      this.handleItemCompleted(paramsObject as ItemNotificationParams);
-      return;
-    }
-
-    if (method === 'rawResponseItem/completed') {
-      this.handleRawResponseItemCompleted(paramsObject as RawResponseItemCompletedParams);
-      return;
-    }
-
-    if (method === 'item/agentMessage/delta') {
-      this.handleAgentMessageDelta(paramsObject as AgentMessageDeltaParams);
-      return;
-    }
-
-    if (method === 'turn/diff/updated') {
-      this.handleTurnDiffUpdated(paramsObject as TurnDiffUpdatedParams);
-      return;
-    }
-
-    if (method === 'turn/plan/updated') {
-      this.handleTurnPlanUpdated(paramsObject as TurnPlanUpdatedParams);
-      return;
-    }
-
-    if (method === 'turn/completed') {
-      this.handleTurnCompleted(paramsObject as TurnCompletedParams);
-      return;
-    }
-
-    if (method === 'mcpServer/startupStatus/updated') {
-      this.handleMcpServerStatusUpdated(paramsObject as McpServerStatusUpdatedParams);
-      return;
-    }
-
-    if (method === 'mcpServer/oauthLogin/completed') {
-      this.handleMcpOauthLoginCompleted(paramsObject as McpOauthLoginCompletedParams);
-      return;
-    }
-
-    if (method === 'serverRequest/resolved') {
-      this.pendingApproval = null;
-      this.notifyListeners();
+    if (!this.initialized) {
+      await this.connect();
     }
   }
 
   private async refreshAccountState(): Promise<void> {
-    const payload: Object = await this.sendRpcRequest(
-      new RpcRequestEnvelope(this.nextRequestId(), 'account/read', new GetAccountRequestParams())
-    );
-    this.applyAccountState(payload as GetAccountResponsePayload);
+    const payload: GetAccountResponsePayload = parseJsonText(accountReadNative(), new GetAccountResponsePayload()) as GetAccountResponsePayload;
+    this.applyAccountState(payload);
   }
 
-  private handleAccountUpdated(params?: AccountUpdatedParams): void {
-    if (params === undefined) {
+  private ensureApprovalPolling(): void {
+    if (this.approvalTimerId >= 0) {
       return;
     }
+    this.approvalTimerId = setInterval(() => {
+      this.pollPendingApproval();
+    }, APPROVAL_POLL_INTERVAL_MS);
+  }
 
-    this.authMode = this.normalizeAuthMode(params.authMode);
-    this.planTypeText = params.planType ?? '';
-    this.authStatusText = this.authStatusFromMode(this.authMode);
+  private stopApprovalPolling(): void {
+    if (this.approvalTimerId >= 0) {
+      clearInterval(this.approvalTimerId);
+      this.approvalTimerId = -1;
+    }
+  }
+
+  private pollPendingApproval(): void {
+    if (!this.initialized) {
+      return;
+    }
+    const parsed: Object | null = safeJsonParse(approvalPollNative());
+    if (parsed === null) {
+      return;
+    }
+    if (parsed === null || parsed === undefined) {
+      return;
+    }
+    const approval = this.buildApprovalFromNative(parsed as Record<string, Object>);
+    this.pendingApproval = approval;
     this.notifyListeners();
   }
 
-  private handleAccountLoginCompleted(params?: AccountLoginCompletedParams): void {
-    if (params === undefined) {
-      return;
+  private async ensureRemoteThread(request: CodexTurnRequest): Promise<CodexThreadRecord> {
+    const existing: CodexThreadRecord | undefined = this.threads.get(request.threadKey);
+    if (existing !== undefined && existing.remoteThreadId.length > 0) {
+      existing.title = request.title;
+      return existing;
     }
-
-    if (!params.success) {
-      this.authStatusText = params.error ?? 'ç™»å½•å¤±è´¥';
-      this.notifyListeners();
+    const thread: CodexThreadRecord = existing ?? new CodexThreadRecord(request.threadKey, request.title);
+    const threadStartRequest: ThreadStartRequestPayload = new ThreadStartRequestPayload();
+    threadStartRequest.cwd = request.workspaceRoot.trim().length > 0 ? request.workspaceRoot.trim() : undefined;
+    threadStartRequest.model = request.model !== 'default' ? request.model : undefined;
+    const payload: ThreadStartResultPayload = parseJsonText(threadStartNative(JSON.stringify(threadStartRequest)), new ThreadStartResultPayload()) as ThreadStartResultPayload;
+    if (payload.thread === undefined || payload.thread.id.length === 0) {
+      payload.thread = new ThreadPayload();
+      payload.thread.id = `native-thread-${request.threadKey}`;
     }
+    thread.remoteThreadId = payload.thread.id;
+    thread.cwd = request.workspaceRoot.trim();
+    this.threads.set(request.threadKey, thread);
+    this.threadKeysByRemoteId.set(payload.thread.id, request.threadKey);
+    return thread;
   }
 
-  private handleMcpServerStatusUpdated(params?: McpServerStatusUpdatedParams): void {
-    if (params === undefined || params.name.trim().length === 0) {
-      return;
-    }
-    this.mcpStartupStateByName.set(params.name, params.status);
-    if (params.error !== null && params.error.trim().length > 0) {
-      this.mcpStartupErrorByName.set(params.name, params.error);
-      this.mcpErrorText = params.error;
-    } else {
-      this.mcpStartupErrorByName.delete(params.name);
-    }
-    this.mcpStatusText = `${params.name} · ${params.status}`;
-    this.mcpServersCache = this.mcpServersCache.map((server: McpServerRecord) => {
-      if (server.name !== params.name) {
-        return server;
+  private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
+    this.upsertMessage(thread, `user-${Date.now()}`, '你', 'user', prompt, currentTimestamp());
+    thread.turnCount += 1;
+    thread.lastTurnStatus = 'inProgress';
+    thread.updatedAt = currentTimestamp();
+    thread.summaryTitle = '正在等待 Codex 响应';
+    thread.summaryPoints = ['已通过原生桥接发送请求，等待轮询结果。'];
+    return this.snapshotForThread(thread, 'inProgress');
+  }
+
+  private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
+    while (true) {
+      const pollObject: Record<string, Object> = parseJsonText(turnPollNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
+      const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
+      this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
+      if (nextSnapshot.status !== 'inProgress') {
+        thread.activeTurn = null;
+        pendingTurn.resolveCompletion(nextSnapshot);
+        return nextSnapshot;
       }
-      return new McpServerRecord(
-        server.id,
-        server.name,
-        server.enabled,
-        server.transportType,
-        server.command,
-        server.argsText,
-        server.url,
-        server.envText,
-        server.toolCount,
-        server.resourceCount,
-        this.normalizeMcpHealthStatus(params.status, params.error),
-        server.authStatus,
-        params.error ?? '',
-        params.error !== null && params.error.trim().length > 0 ? 'error' : server.syncStatus,
-        this.currentTimestamp()
-      );
-    });
-    this.notifyListeners();
+      await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
+    }
   }
 
-  private handleMcpOauthLoginCompleted(params?: McpOauthLoginCompletedParams): void {
-    if (params === undefined) {
-      return;
+  private applyTurnPollResult(thread: CodexThreadRecord, turnId: string, payload: Record<string, Object>): CodexTurnResult {
+    const statusRaw: string = typeof payload['status'] === 'string' ? (payload['status'] as string) : 'completed';
+    const status: CodexTurnStatus = this.mapTurnStatus(statusRaw);
+    const messages: Object[] = Array.isArray(payload['messages']) ? (payload['messages'] as Object[]) : [];
+    if (messages.length > 0) {
+      thread.messages = messages.map((item: Object, index: number) => {
+        const message = item as Record<string, Object>;
+        const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
+        const role: CodexMessageRole = roleRaw === 'user' || roleRaw === 'system' ? roleRaw : 'assistant';
+        return new CodexChatMessage(
+          typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
+          index + 1,
+          typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'Codex' : '系统'),
+          role,
+          typeof message['content'] === 'string' ? (message['content'] as string) : '',
+          typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp()
+        );
+      });
     }
-    if (params.success) {
-      this.mcpStatusText = `${params.name} OAuth 登录已完成`;
-      this.mcpErrorText = '';
-    } else {
-      this.mcpStatusText = `${params.name} OAuth 登录失败`;
-      this.mcpErrorText = params.error ?? 'OAuth 登录失败';
+    const diffText: string = typeof payload['diff'] === 'string' ? (payload['diff'] as string) : '';
+    if (diffText.trim().length > 0) {
+      const parsed: ParsedDiff = this.parseUnifiedDiff(diffText);
+      thread.diffLines = parsed.lines;
+      thread.diffStat = parsed.diffStat;
+      thread.changedFiles = parsed.changedFiles;
     }
-    this.notifyListeners();
+    const summaryRaw: Object[] = Array.isArray(payload['summary']) ? (payload['summary'] as Object[]) : [];
+    const summaryPoints: string[] = summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item));
+    thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : (status === 'completed' ? '本轮已完成' : '执行中');
+    thread.summaryPoints = summaryPoints.length > 0 ? summaryPoints : [status === 'completed' ? '本轮执行已结束。' : '等待更多轮询结果。'];
+    thread.lastTurnStatus = status;
+    thread.updatedAt = currentTimestamp();
+    return this.snapshotForThread(thread, status, turnId);
+  }
+
+  private buildApprovalFromNative(payload: Record<string, Object>): CodexApprovalRequest | null {
+    const kindRaw: string = typeof payload['kind'] === 'string' ? (payload['kind'] as string) : '';
+    if (kindRaw.length === 0) {
+      return null;
+    }
+    const kind: CodexApprovalKind = kindRaw === 'fileChange' || kindRaw === 'permissions' ? kindRaw : 'command';
+    const approval = new CodexApprovalRequest(
+      typeof payload['requestId'] === 'string' || typeof payload['requestId'] === 'number' ? payload['requestId'] as string | number : `approval-${Date.now()}`,
+      kind,
+      typeof payload['title'] === 'string' ? (payload['title'] as string) : '需要审批',
+      typeof payload['detail'] === 'string' ? (payload['detail'] as string) : '',
+      typeof payload['threadId'] === 'string' ? (payload['threadId'] as string) : '',
+      typeof payload['turnId'] === 'string' ? (payload['turnId'] as string) : '',
+      typeof payload['itemId'] === 'string' ? (payload['itemId'] as string) : ''
+    );
+    approval.grantedPermissions = payload['grantedPermissions'];
+    return approval;
   }
 
   private applyAccountState(payload: GetAccountResponsePayload): void {
     this.requiresOpenAIAuth = payload.requiresOpenaiAuth !== false;
     if (!this.requiresOpenAIAuth) {
       this.authMode = 'unknown';
-      this.authStatusText = 'å½“å‰æ¨¡åž‹æä¾›æ–¹ä¸è¦æ±‚ OpenAI è®¤è¯';
+      this.authStatusText = '当前模型提供方不要求 OpenAI 认证';
       this.planTypeText = '';
       this.notifyListeners();
       return;
     }
-
     const account: AccountPayload | undefined = payload.account;
     if (account === undefined) {
       this.authMode = 'none';
-      this.authStatusText = 'æœªç™»å½•';
+      this.authStatusText = '未登录';
       this.planTypeText = '';
       this.notifyListeners();
       return;
     }
-
     this.authMode = this.normalizeAuthMode(account.type);
     if (this.authMode === 'chatgpt' || this.authMode === 'chatgptAuthTokens') {
-      this.authStatusText = account.email ?? 'å·²ç™»å½• ChatGPT';
+      this.authStatusText = account.email ?? '已登录 ChatGPT';
     } else if (this.authMode === 'apiKey') {
-      this.authStatusText = 'å·²ä½¿ç”¨ API Key ç™»å½•';
+      this.authStatusText = '已使用 API Key 登录';
     } else {
-      this.authStatusText = 'å·²ç™»å½•';
+      this.authStatusText = '已登录';
     }
     this.planTypeText = account.planType ?? this.planTypeText;
     this.notifyListeners();
@@ -1298,313 +805,24 @@ export class CodexBackend {
     return 'unknown';
   }
 
-  private authStatusFromMode(authMode: CodexAuthMode): string {
-    if (authMode === 'apiKey') {
-      return 'å·²ä½¿ç”¨ API Key ç™»å½•';
+  private mapTurnStatus(status: string): CodexTurnStatus {
+    if (status === 'completed') {
+      return 'completed';
     }
-    if (authMode === 'chatgpt') {
-      return 'å·²ç™»å½• ChatGPT';
-    }
-    if (authMode === 'chatgptAuthTokens') {
-      return 'å·²æŽ¥å…¥å¤–éƒ¨ ChatGPT Token';
-    }
-    if (authMode === 'none') {
-      return 'æœªç™»å½•';
-    }
-    return 'è®¤è¯çŠ¶æ€�æœªçŸ¥';
-  }
-
-  private handleItemStarted(params: ItemNotificationParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null) {
-      return;
-    }
-
-    if (params.item.type === 'agentMessage') {
-      this.upsertMessage(thread, params.item.id, 'Codex', 'assistant', '', this.currentTimestamp());
-      this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-      return;
-    }
-
-    if (params.item.type === 'commandExecution') {
-      const command: string = params.item.command ?? '命令';
-      this.upsertMessage(
-        thread,
-        `tool-${params.item.id}`,
-        '系统',
-        'system',
-        `正在运行命令：${command}`,
-        this.currentTimestamp()
-      );
-      this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-    }
-  }
-
-  private handleItemCompleted(params: ItemNotificationParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null) {
-      return;
-    }
-
-    if (params.item.type === 'agentMessage') {
-      const finalText: string = this.mergeAssistantMessageContent(thread, params.item.id, params.item.text ?? '');
-      this.upsertMessage(
-        thread,
-        params.item.id,
-        'Codex',
-        'assistant',
-        finalText,
-        this.currentTimestamp()
-      );
-      this.logInfo(
-        `item completed agentMessage thread=${params.threadId} turn=${params.turnId} item=${params.item.id} ` +
-        `itemTextLen=${(params.item.text ?? '').length} mergedLen=${finalText.length} ` +
-        `preview=${this.messagePreview(finalText)}`
-      );
-      this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-      return;
-    }
-
-    if (params.item.type === 'reasoning' && params.item.summary !== undefined && params.item.summary.length > 0) {
-      thread.summaryTitle = '模型推理摘要';
-      thread.summaryPoints = [...params.item.summary];
-      this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-      return;
-    }
-
-    if (params.item.type === 'commandExecution') {
-      const command: string = params.item.command ?? '命令';
-      const output: string = params.item.aggregatedOutput ?? '';
-      const content: string = output.trim().length > 0
-        ? `命令已完成：${command}\n${this.truncate(output.trim(), 280)}`
-        : `命令已完成：${command}`;
-      this.upsertMessage(thread, `tool-${params.item.id}`, '系统', 'system', content, this.currentTimestamp());
-      this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-      return;
-    }
-
-    if (params.item.type === 'fileChange') {
-      this.upsertMessage(
-        thread,
-        `file-${params.item.id}`,
-        '系统',
-        'system',
-        '已收到文件改动结果，右侧 diff 已刷新。',
-        this.currentTimestamp()
-      );
-      this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-    }
-  }
-
-  private handleAgentMessageDelta(params: AgentMessageDeltaParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null) {
-      return;
-    }
-
-    const existingIndex: number = this.findMessageIndex(thread, params.itemId);
-    if (existingIndex >= 0) {
-      const existing: CodexChatMessage = thread.messages[existingIndex];
-      thread.messages[existingIndex] = new CodexChatMessage(
-        existing.messageId,
-        existing.sequence,
-        existing.author,
-        existing.role,
-        existing.content + params.delta,
-        existing.timestamp
-      );
-    } else {
-      this.upsertMessage(thread, params.itemId, 'Codex', 'assistant', params.delta, this.currentTimestamp());
-    }
-
-    const currentText: string = this.findMessageIndex(thread, params.itemId) >= 0
-      ? thread.messages[this.findMessageIndex(thread, params.itemId)].content
-      : params.delta;
-    this.logInfo(
-      `agent delta thread=${params.threadId} turn=${params.turnId} item=${params.itemId} ` +
-      `deltaLen=${params.delta.length} totalLen=${currentText.length} ` +
-      `preview=${this.messagePreview(currentText)}`
-    );
-    this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-  }
-
-  private handleRawResponseItemCompleted(params: RawResponseItemCompletedParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null) {
-      return;
-    }
-
-    const item: RawResponseItemPayload = params.item;
-    if (item.type !== 'message' || item.role !== 'assistant') {
-      return;
-    }
-
-    const finalText: string = this.extractRawAssistantText(item);
-    if (finalText.length === 0) {
-      return;
-    }
-
-    if (item.id !== undefined && item.id.length > 0) {
-      const merged: string = this.mergeAssistantMessageContent(thread, item.id, finalText);
-      this.upsertMessage(thread, item.id, 'Codex', 'assistant', merged, this.currentTimestamp());
-    } else {
-      this.updateLatestAssistantMessageContent(thread, finalText);
-    }
-
-    const lastAssistantText: string = this.latestAssistantMessageContent(thread);
-    this.logInfo(
-      `raw response completed thread=${params.threadId} turn=${params.turnId} item=${item.id ?? 'unknown'} ` +
-      `rawLen=${finalText.length} mergedLen=${lastAssistantText.length} ` +
-      `preview=${this.messagePreview(lastAssistantText)}`
-    );
-    this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-  }
-
-  private handleTurnDiffUpdated(params: TurnDiffUpdatedParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null) {
-      return;
-    }
-
-    const parsed: ParsedDiff = this.parseUnifiedDiff(params.diff);
-    thread.diffLines = parsed.lines;
-    thread.diffStat = parsed.diffStat;
-    thread.changedFiles = parsed.changedFiles;
-    thread.diffUpdateCount += 1;
-    thread.updatedAt = this.currentTimestamp();
-    this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-  }
-
-  private handleTurnPlanUpdated(params: TurnPlanUpdatedParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null) {
-      return;
-    }
-
-    const points: string[] = [];
-    params.plan.forEach((step: PlanStepPayload) => {
-      points.push(`${this.planStatusLabel(step.status)} ${step.step}`);
-    });
-
-    thread.summaryTitle = params.explanation ?? '执行计划';
-    thread.summaryPoints = points.length > 0 ? points : ['尚未返回结构化计划。'];
-    this.emitTurnUpdate(thread, thread.activeTurn, this.snapshotForThread(thread, 'inProgress'));
-  }
-
-  private handleTurnCompleted(params: TurnCompletedParams): void {
-    const thread: CodexThreadRecord | null = this.threadFromRemoteId(params.threadId);
-    if (thread === null || thread.activeTurn === null) {
-      return;
-    }
-
-    const status: CodexTurnStatus = this.mapTurnStatus(params.turn.status);
-    thread.lastTurnStatus = status;
-    thread.updatedAt = this.currentTimestamp();
     if (status === 'failed') {
-      const message: string = params.turn.error?.message ?? '未知错误';
-      this.upsertMessage(
-        thread,
-        `turn-error-${Date.now()}`,
-        '系统',
-        'system',
-        `本轮执行失败：${message}`,
-        this.currentTimestamp()
-      );
+      return 'failed';
     }
-
-    const turnId: string = thread.activeTurn.turnId.length > 0 ? thread.activeTurn.turnId : params.turn.id;
-    const finalAssistantText: string = this.latestAssistantMessageContent(thread);
-    this.logInfo(
-      `turn completed thread=${params.threadId} turn=${turnId} status=${status} ` +
-      `lastAssistantLen=${finalAssistantText.length} preview=${this.messagePreview(finalAssistantText)}`
-    );
-    const snapshot: CodexTurnResult = this.snapshotForThread(thread, status, turnId);
-    const activeTurn: PendingTurnState = thread.activeTurn;
-    thread.activeTurn = null;
-    this.emitTurnUpdate(thread, activeTurn, snapshot);
-    activeTurn.resolveCompletion(snapshot);
-  }
-
-  private async ensureRemoteThread(request: CodexTurnRequest): Promise<CodexThreadRecord> {
-    const existing: CodexThreadRecord | undefined = this.threads.get(request.threadKey);
-    if (existing !== undefined && existing.remoteThreadId.length > 0) {
-      existing.title = request.title;
-      return existing;
+    if (status === 'interrupted') {
+      return 'interrupted';
     }
-
-    const thread: CodexThreadRecord = existing ?? new CodexThreadRecord(request.threadKey, request.title);
-    const params: ThreadStartRequestParams = new ThreadStartRequestParams();
-    if (request.workspaceRoot.trim().length > 0) {
-      params.cwd = request.workspaceRoot.trim();
-      thread.cwd = request.workspaceRoot.trim();
-    }
-    if (request.model !== 'default') {
-      params.model = request.model;
-    }
-
-    const payload: Object = await this.sendRpcRequest(
-      new RpcRequestEnvelope(this.nextRequestId(), 'thread/start', params)
-    );
-    const result: ThreadStartResultPayload = payload as ThreadStartResultPayload;
-    if (result.thread === undefined || result.thread.id.length === 0) {
-      throw new Error('thread/start 未返回 thread.id');
-    }
-
-    thread.remoteThreadId = result.thread.id;
-    this.threads.set(request.threadKey, thread);
-    this.threadKeysByRemoteId.set(result.thread.id, request.threadKey);
-    return thread;
-  }
-
-  private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
-    this.upsertMessage(thread, `user-${Date.now()}`, '你', 'user', prompt, this.currentTimestamp());
-    thread.turnCount += 1;
-    thread.lastTurnStatus = 'inProgress';
-    thread.updatedAt = this.currentTimestamp();
-    thread.summaryTitle = '正在等待 Codex 响应';
-    thread.summaryPoints = ['已发送请求，等待 app-server 返回 streaming 结果。'];
-    return this.snapshotForThread(thread, 'inProgress');
-  }
-
-  private failTurn(thread: CodexThreadRecord, pendingTurn: PendingTurnState, message: string): CodexTurnResult {
-    this.upsertMessage(
-      thread,
-      `local-error-${Date.now()}`,
-      '系统',
-      'system',
-      `调用 app-server 失败：${message}`,
-      this.currentTimestamp()
-    );
-    thread.lastTurnStatus = 'failed';
-    thread.updatedAt = this.currentTimestamp();
-    thread.summaryTitle = '调用失败';
-    thread.summaryPoints = [message];
-    const failed: CodexTurnResult = this.snapshotForThread(thread, 'failed');
-    thread.activeTurn = null;
-    this.emitTurnUpdate(thread, pendingTurn, failed);
-    pendingTurn.resolveCompletion(failed);
-    return failed;
+    return 'inProgress';
   }
 
   private snapshotForThread(thread: CodexThreadRecord, status: CodexTurnStatus, turnId: string = ''): CodexTurnResult {
-    return new CodexTurnResult(
-      thread.remoteThreadId,
-      turnId,
-      status,
-      thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)),
-      thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)),
-      thread.summaryTitle,
-      [...thread.summaryPoints],
-      thread.changedFiles,
-      thread.diffStat
-    );
+    return new CodexTurnResult(thread.remoteThreadId, turnId, status, thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)), thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)), thread.summaryTitle, [...thread.summaryPoints], thread.changedFiles, thread.diffStat);
   }
 
-  private emitTurnUpdate(
-    thread: CodexThreadRecord,
-    pendingTurn: PendingTurnState | null,
-    result: CodexTurnResult
-  ): void {
+  private emitTurnUpdate(thread: CodexThreadRecord, pendingTurn: PendingTurnState | null, result: CodexTurnResult): void {
     if (pendingTurn !== null && pendingTurn.listener !== undefined) {
       pendingTurn.listener(result);
     }
@@ -1613,93 +831,14 @@ export class CodexBackend {
     }
   }
 
-  private upsertMessage(
-    thread: CodexThreadRecord,
-    messageId: string,
-    author: string,
-    role: CodexMessageRole,
-    content: string,
-    timestamp: string
-  ): void {
+  private upsertMessage(thread: CodexThreadRecord, messageId: string, author: string, role: CodexMessageRole, content: string, timestamp: string): void {
     const index: number = this.findMessageIndex(thread, messageId);
     if (index >= 0) {
       const current: CodexChatMessage = thread.messages[index];
-      thread.messages[index] = new CodexChatMessage(
-        current.messageId,
-        current.sequence,
-        author,
-        role,
-        content,
-        timestamp
-      );
+      thread.messages[index] = new CodexChatMessage(current.messageId, current.sequence, author, role, content, timestamp);
       return;
     }
-
-    thread.messages.push(
-      new CodexChatMessage(messageId, thread.messages.length + 1, author, role, content, timestamp)
-    );
-  }
-
-  private mergeAssistantMessageContent(
-    thread: CodexThreadRecord,
-    messageId: string,
-    completedText: string
-  ): string {
-    const existingIndex: number = this.findMessageIndex(thread, messageId);
-    const existingText: string = existingIndex >= 0 ? thread.messages[existingIndex].content : '';
-    if (completedText.length === 0) {
-      return existingText;
-    }
-    if (existingText.length === 0) {
-      return completedText;
-    }
-    if (completedText.length >= existingText.length) {
-      return completedText;
-    }
-    return existingText;
-  }
-
-  private extractRawAssistantText(item: RawResponseItemPayload): string {
-    if (item.content === undefined || item.content.length === 0) {
-      return '';
-    }
-
-    const parts: string[] = [];
-    item.content.forEach((contentItem: RawResponseContentPayload) => {
-      if (contentItem.type === 'output_text' && contentItem.text !== undefined) {
-        parts.push(contentItem.text);
-      }
-    });
-    return parts.join('');
-  }
-
-  private updateLatestAssistantMessageContent(thread: CodexThreadRecord, completedText: string): void {
-    for (let index: number = thread.messages.length - 1; index >= 0; index -= 1) {
-      const current: CodexChatMessage = thread.messages[index];
-      if (current.role !== 'assistant') {
-        continue;
-      }
-      const nextText: string = completedText.length >= current.content.length ? completedText : current.content;
-      thread.messages[index] = new CodexChatMessage(
-        current.messageId,
-        current.sequence,
-        current.author,
-        current.role,
-        nextText,
-        current.timestamp
-      );
-      return;
-    }
-  }
-
-  private latestAssistantMessageContent(thread: CodexThreadRecord): string {
-    for (let index: number = thread.messages.length - 1; index >= 0; index -= 1) {
-      const current: CodexChatMessage = thread.messages[index];
-      if (current.role === 'assistant') {
-        return current.content;
-      }
-    }
-    return '';
+    thread.messages.push(new CodexChatMessage(messageId, thread.messages.length + 1, author, role, content, timestamp));
   }
 
   private findMessageIndex(thread: CodexThreadRecord, messageId: string): number {
@@ -1711,51 +850,6 @@ export class CodexBackend {
     return -1;
   }
 
-  private buildCommandApproval(requestId: string | number, params: CommandApprovalParams): CodexApprovalRequest {
-    const command: string = params.command ?? '未命名命令';
-    const reason: string = params.reason ?? 'Codex 请求执行命令';
-    const detail: string = params.cwd !== undefined && params.cwd.length > 0
-      ? `${reason}\n命令：${command}\n目录：${params.cwd}`
-      : `${reason}\n命令：${command}`;
-    return new CodexApprovalRequest(requestId, 'command', '需要执行命令', detail, params.threadId, params.turnId, params.itemId);
-  }
-
-  private buildFileChangeApproval(requestId: string | number, params: FileChangeApprovalParams): CodexApprovalRequest {
-    const reason: string = params.reason ?? 'Codex 请求写入文件';
-    const detail: string = params.grantRoot !== undefined && params.grantRoot.length > 0
-      ? `${reason}\n授权根目录：${params.grantRoot}`
-      : reason;
-    return new CodexApprovalRequest(requestId, 'fileChange', '需要写入文件', detail, params.threadId, params.turnId, params.itemId);
-  }
-
-  private buildPermissionsApproval(requestId: string | number, params: PermissionsApprovalParams): CodexApprovalRequest {
-    const details: string[] = [params.reason ?? 'Codex 请求额外权限'];
-    if (params.permissions.fileSystem?.write !== undefined && params.permissions.fileSystem.write.length > 0) {
-      details.push(`写权限：${params.permissions.fileSystem.write.join(', ')}`);
-    }
-    if (params.permissions.fileSystem?.read !== undefined && params.permissions.fileSystem.read.length > 0) {
-      details.push(`读权限：${params.permissions.fileSystem.read.join(', ')}`);
-    }
-    if (params.permissions.network?.enabled === true) {
-      details.push('网络权限：已请求开启');
-    }
-
-    const approval: CodexApprovalRequest = new CodexApprovalRequest(
-      requestId,
-      'permissions',
-      '需要额外权限',
-      details.join('\n'),
-      params.threadId,
-      params.turnId,
-      params.itemId
-    );
-    const granted: PermissionsProfilePayload = new PermissionsProfilePayload();
-    granted.network = PermissionNetworkPayload.cloneFrom(params.permissions.network);
-    granted.fileSystem = PermissionFileSystemPayload.cloneFrom(params.permissions.fileSystem);
-    approval.grantedPermissions = granted;
-    return approval;
-  }
-
   private parseUnifiedDiff(diff: string): ParsedDiff {
     const parsed: ParsedDiff = new ParsedDiff();
     const rawLines: string[] = diff.split('\n');
@@ -1765,7 +859,6 @@ export class CodexBackend {
     let oldLineNumber: number = 0;
     let newLineNumber: number = 0;
     let lineSequence: number = 1;
-
     rawLines.forEach((line: string) => {
       if (line.startsWith('diff --git ')) {
         const match: RegExpMatchArray | null = line.match(/ b\/(.+)$/);
@@ -1774,7 +867,6 @@ export class CodexBackend {
         }
         return;
       }
-
       if (line.startsWith('+++ b/')) {
         const filePath: string = line.substring(6);
         if (changedFiles.indexOf(filePath) < 0) {
@@ -1782,7 +874,6 @@ export class CodexBackend {
         }
         return;
       }
-
       if (line.startsWith('@@')) {
         const match: RegExpMatchArray | null = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
         if (match !== null && match.length > 2) {
@@ -1791,11 +882,9 @@ export class CodexBackend {
         }
         return;
       }
-
       if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('index ')) {
         return;
       }
-
       if (line.startsWith('+')) {
         parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, newLineNumber.toString(), '+', line.substring(1), 'add'));
         lineSequence += 1;
@@ -1803,7 +892,6 @@ export class CodexBackend {
         addCount += 1;
         return;
       }
-
       if (line.startsWith('-')) {
         parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, oldLineNumber.toString(), '-', line.substring(1), 'delete'));
         lineSequence += 1;
@@ -1811,7 +899,6 @@ export class CodexBackend {
         deleteCount += 1;
         return;
       }
-
       if (line.startsWith(' ')) {
         parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, newLineNumber.toString(), ' ', line.substring(1), 'context'));
         lineSequence += 1;
@@ -1819,59 +906,10 @@ export class CodexBackend {
         newLineNumber += 1;
       }
     });
-
     parsed.lines = parsed.lines.slice(0, 160);
     parsed.diffStat = `+${addCount} -${deleteCount}`;
     parsed.changedFiles = changedFiles.length > 0 ? changedFiles.join(', ') : '尚未识别变更文件';
     return parsed;
-  }
-
-  private async sendRpcRequest(request: RpcRequestEnvelope): Promise<Object> {
-    if (this.socket === null) {
-      throw new Error('WebSocket 尚未建立');
-    }
-
-    return await new Promise<Object>(async (resolve, reject) => {
-      this.pendingRequests.set(request.id.toString(), new PendingRpcRequest(resolve, reject));
-      const socket: webSocket.WebSocket = this.socket!;
-      try {
-        await socket.send(JSON.stringify(request));
-      } catch (err) {
-        this.pendingRequests.delete(request.id.toString());
-        reject(this.describeError(err));
-      }
-    });
-  }
-
-  private async sendNotification(notification: RpcNotificationEnvelope): Promise<void> {
-    if (this.socket === null) {
-      throw new Error('WebSocket 尚未建立');
-    }
-    const socket: webSocket.WebSocket = this.socket;
-    await socket.send(JSON.stringify(notification));
-  }
-
-  private async sendServerRequestResult(response: RpcResultEnvelope): Promise<void> {
-    if (this.socket === null) {
-      return;
-    }
-    const socket: webSocket.WebSocket = this.socket;
-    await socket.send(JSON.stringify(response));
-  }
-
-  private async sendServerRequestError(response: RpcErrorEnvelope): Promise<void> {
-    if (this.socket === null) {
-      return;
-    }
-    const socket: webSocket.WebSocket = this.socket;
-    await socket.send(JSON.stringify(response));
-  }
-
-  private rejectAllPendingRequests(message: string): void {
-    this.pendingRequests.forEach((pendingRequest: PendingRpcRequest, key: string) => {
-      pendingRequest.reject(message);
-      this.pendingRequests.delete(key);
-    });
   }
 
   private updateConnectionState(connectionState: CodexConnectionState, connectionText: string): void {
@@ -1890,82 +928,30 @@ export class CodexBackend {
     });
   }
 
-  private threadFromRemoteId(remoteThreadId: string): CodexThreadRecord | null {
-    const localKey: string | undefined = this.threadKeysByRemoteId.get(remoteThreadId);
-    if (localKey === undefined) {
-      return null;
-    }
-    return this.threads.get(localKey) ?? null;
-  }
-
   private cloneApproval(approval: CodexApprovalRequest | null): CodexApprovalRequest | null {
     if (approval === null) {
       return null;
     }
-
-    const cloned: CodexApprovalRequest = new CodexApprovalRequest(
-      approval.requestId,
-      approval.kind,
-      approval.title,
-      approval.detail,
-      approval.threadId,
-      approval.turnId,
-      approval.itemId
-    );
-    const granted: PermissionsProfilePayload = new PermissionsProfilePayload();
-    granted.network = PermissionNetworkPayload.cloneFrom(approval.grantedPermissions?.network);
-    granted.fileSystem = PermissionFileSystemPayload.cloneFrom(approval.grantedPermissions?.fileSystem);
-    cloned.grantedPermissions = granted;
+    const cloned: CodexApprovalRequest = new CodexApprovalRequest(approval.requestId, approval.kind, approval.title, approval.detail, approval.threadId, approval.turnId, approval.itemId);
+    cloned.grantedPermissions = approval.grantedPermissions;
     return cloned;
   }
 
   private cloneMessage(message: CodexChatMessage): CodexChatMessage {
-    return new CodexChatMessage(
-      message.messageId,
-      message.sequence,
-      message.author,
-      message.role,
-      message.content,
-      message.timestamp
-    );
+    return new CodexChatMessage(message.messageId, message.sequence, message.author, message.role, message.content, message.timestamp);
   }
 
   private cloneDiffLine(line: CodexDiffLine): CodexDiffLine {
-    return new CodexDiffLine(
-      line.lineId,
-      line.sequence,
-      line.lineNumber,
-      line.sign,
-      line.content,
-      line.kind
-    );
+    return new CodexDiffLine(line.lineId, line.sequence, line.lineNumber, line.sign, line.content, line.kind);
   }
 
   private cloneMcpServer(server: McpServerRecord): McpServerRecord {
-    return new McpServerRecord(
-      server.id,
-      server.name,
-      server.enabled,
-      server.transportType,
-      server.command,
-      server.argsText,
-      server.url,
-      server.envText,
-      server.toolCount,
-      server.resourceCount,
-      server.healthStatus,
-      server.authStatus,
-      server.lastError,
-      server.syncStatus,
-      server.updatedAt
-    );
+    return new McpServerRecord(server.id, server.name, server.enabled, server.transportType, server.command, server.argsText, server.url, server.envText, server.toolCount, server.resourceCount, server.healthStatus, server.authStatus, server.lastError, server.syncStatus, server.updatedAt);
   }
 
-  private async readMcpConfig(): Promise<void> {
-    const payload: Object = await this.sendRpcRequest(
-      new RpcRequestEnvelope(this.nextRequestId(), 'config/read', new McpConfigReadParams())
-    );
-    const rawResponse: Record<string, Object> = payload as Record<string, Object>;
+  private readMcpConfig(): void {
+    const configReadRequest: McpConfigReadRequestPayload = new McpConfigReadRequestPayload();
+    const rawResponse: Record<string, Object> = parseJsonText(mcpConfigReadNative(JSON.stringify(configReadRequest)), new McpConfigReadResponsePayload() as Object) as Record<string, Object>;
     const configObject: Record<string, Object> | undefined = rawResponse['config'] as Record<string, Object> | undefined;
     this.mcpConfigByName.clear();
     if (configObject === undefined) {
@@ -1996,25 +982,7 @@ export class CodexBackend {
     const tools: Record<string, Object> = status.tools as Record<string, Object>;
     const toolCount: number = Object.keys(tools).length;
     const resourceCount: number = status.resources.length + status.resourceTemplates.length;
-    const startupState: string = this.mcpStartupStateByName.get(status.name) ?? 'ready';
-    const startupError: string = this.mcpStartupErrorByName.get(status.name) ?? '';
-    return new McpServerRecord(
-      status.name,
-      status.name,
-      enabled,
-      transportType,
-      command,
-      argsText,
-      url,
-      envText,
-      toolCount,
-      resourceCount,
-      this.normalizeMcpHealthStatus(startupState, startupError),
-      this.normalizeMcpAuthStatus(status.authStatus),
-      startupError,
-      startupError.length > 0 ? 'error' : 'synced',
-      this.currentTimestamp()
-    );
+    return new McpServerRecord(status.name, status.name, enabled, transportType, command, argsText, url, envText, toolCount, resourceCount, this.normalizeMcpHealthStatus('ready', null), this.normalizeMcpAuthStatus(status.authStatus), '', 'synced', currentTimestamp());
   }
 
   private normalizeMcpAuthStatus(rawStatus: string): McpAuthStatus {
@@ -2064,18 +1032,6 @@ export class CodexBackend {
     }
   }
 
-  private parseJsonText(rawText: string, fallbackValue: Object): Object {
-    const trimmed: string = rawText.trim();
-    if (trimmed.length === 0) {
-      return fallbackValue;
-    }
-    try {
-      return JSON.parse(trimmed) as Object;
-    } catch (_err) {
-      return fallbackValue;
-    }
-  }
-
   private copyConfigObject(source: Record<string, Object>): Record<string, Object> {
     const target: Record<string, Object> = {};
     const keys: string[] = Object.keys(source);
@@ -2084,64 +1040,6 @@ export class CodexBackend {
       target[key] = source[key];
     }
     return target;
-  }
-
-  private currentTimestamp(): string {
-    const now: Date = new Date();
-    const hours: string = now.getHours().toString().padStart(2, '0');
-    const minutes: string = now.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
-  }
-
-  private parseEnvelope(text: string): RpcEnvelope | null {
-    try {
-      return JSON.parse(text) as RpcEnvelope;
-    } catch (_err) {
-      return null;
-    }
-  }
-
-  private mapTurnStatus(status: string): CodexTurnStatus {
-    if (status === 'completed') {
-      return 'completed';
-    }
-    if (status === 'failed') {
-      return 'failed';
-    }
-    if (status === 'interrupted') {
-      return 'interrupted';
-    }
-    return 'inProgress';
-  }
-
-  private planStatusLabel(status: string): string {
-    if (status === 'completed') {
-      return '[完成]';
-    }
-    if (status === 'inProgress') {
-      return '[进行中]';
-    }
-    return '[待处理]';
-  }
-
-  private nextRequestId(): string {
-    const requestId: string = `req-${this.requestSequence}`;
-    this.requestSequence += 1;
-    return requestId;
-  }
-
-  private truncate(value: string, maxLength: number): string {
-    if (value.length <= maxLength) {
-      return value;
-    }
-    return `${value.substring(0, maxLength)}...`;
-  }
-
-  private describeError(err: Object): string {
-    if (err instanceof Error) {
-      return err.message;
-    }
-    return JSON.stringify(err);
   }
 }
 
