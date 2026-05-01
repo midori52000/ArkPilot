@@ -7,6 +7,56 @@ export type McpAuthStatus = 'notRequired' | 'required' | 'pending' | 'authentica
 export type SidebarView = 'chat' | 'providers' | 'sessions' | 'usage' | 'mcp' | 'prompts' | 'skills' | 'openclaw' | 'hermes';
 export type SettingsTab = 'mcp' | 'skills' | 'prompts' | 'api';
 
+export type ApiWireFormat = 'responses' | 'chat' | 'anthropic';
+export type ProviderCategory = 'official' | 'third_party' | 'cloud_provider' | 'aggregator' | 'custom';
+
+export class EndpointEntry {
+  url: string;
+  addedAt: number;
+  lastUsed: number;
+  latencyMs: number;
+  isActive: boolean;
+
+  constructor(url: string, addedAt: number, lastUsed: number, latencyMs: number, isActive: boolean) {
+    this.url = url;
+    this.addedAt = addedAt;
+    this.lastUsed = lastUsed;
+    this.latencyMs = latencyMs;
+    this.isActive = isActive;
+  }
+}
+
+export class CustomHeadersEntry {
+  key: string;
+  value: string;
+
+  constructor(key: string, value: string) {
+    this.key = key;
+    this.value = value;
+  }
+}
+
+export class UsageScriptEntry {
+  enabled: boolean;
+  scriptType: string;
+  code: string;
+  queryUrl: string;
+  headers: CustomHeadersEntry[];
+  autoQueryIntervalMin: number;
+
+  constructor(
+    enabled: boolean, scriptType: string, code: string,
+    queryUrl: string, headers: CustomHeadersEntry[], autoQueryIntervalMin: number
+  ) {
+    this.enabled = enabled;
+    this.scriptType = scriptType;
+    this.code = code;
+    this.queryUrl = queryUrl;
+    this.headers = headers;
+    this.autoQueryIntervalMin = autoQueryIntervalMin;
+  }
+}
+
 export class ProviderRecord {
   id: string;
   name: string;
@@ -18,6 +68,20 @@ export class ProviderRecord {
   isActive: boolean;
   syncStatus: ProviderSyncStatus;
   updatedAt: string;
+  authMode: string;
+  customHeaders: CustomHeadersEntry[];
+  wireApi: ApiWireFormat;
+  category: ProviderCategory;
+  description: string;
+  websiteUrl: string;
+  icon: string;
+  iconColor: string;
+  endpoints: EndpointEntry[];
+  healthStatus: string;
+  healthLatencyMs: number;
+  lastValidatedAt: number;
+  usageScript: UsageScriptEntry | null;
+  createdAt: number;
 
   constructor(
     id: string,
@@ -29,7 +93,21 @@ export class ProviderRecord {
     model: string,
     isActive: boolean,
     syncStatus: ProviderSyncStatus,
-    updatedAt: string
+    updatedAt: string,
+    authMode?: string,
+    customHeaders?: CustomHeadersEntry[],
+    wireApi?: ApiWireFormat,
+    category?: ProviderCategory,
+    description?: string,
+    websiteUrl?: string,
+    icon?: string,
+    iconColor?: string,
+    endpoints?: EndpointEntry[],
+    healthStatus?: string,
+    healthLatencyMs?: number,
+    lastValidatedAt?: number,
+    usageScript?: UsageScriptEntry | null,
+    createdAt?: number
   ) {
     this.id = id;
     this.name = name;
@@ -41,6 +119,48 @@ export class ProviderRecord {
     this.isActive = isActive;
     this.syncStatus = syncStatus;
     this.updatedAt = updatedAt;
+    this.authMode = authMode ?? 'apiKey';
+    this.customHeaders = customHeaders ?? [];
+    this.wireApi = wireApi ?? 'responses';
+    this.category = category ?? 'custom';
+    this.description = description ?? '';
+    this.websiteUrl = websiteUrl ?? '';
+    this.icon = icon ?? '';
+    this.iconColor = iconColor ?? '';
+    this.endpoints = endpoints ?? [];
+    this.healthStatus = healthStatus ?? 'unknown';
+    this.healthLatencyMs = healthLatencyMs ?? 0;
+    this.lastValidatedAt = lastValidatedAt ?? 0;
+    this.usageScript = usageScript ?? null;
+    this.createdAt = createdAt ?? Date.now();
+  }
+
+  getHeaderValue(key: string): string {
+    for (let i = 0; i < this.customHeaders.length; i++) {
+      if (this.customHeaders[i].key === key) {
+        return this.customHeaders[i].value;
+      }
+    }
+    return '';
+  }
+
+  setHeader(key: string, value: string): void {
+    for (let i = 0; i < this.customHeaders.length; i++) {
+      if (this.customHeaders[i].key === key) {
+        this.customHeaders[i].value = value;
+        return;
+      }
+    }
+    this.customHeaders.push(new CustomHeadersEntry(key, value));
+  }
+
+  copyHeaders(): CustomHeadersEntry[] {
+    const result: CustomHeadersEntry[] = [];
+    for (let i = 0; i < this.customHeaders.length; i++) {
+      const h = this.customHeaders[i];
+      result.push(new CustomHeadersEntry(h.key, h.value));
+    }
+    return result;
   }
 }
 

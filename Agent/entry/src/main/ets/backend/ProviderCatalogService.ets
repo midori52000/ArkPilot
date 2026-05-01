@@ -5,7 +5,7 @@ import {
   saveEmbeddedCodexProviderCatalog,
   saveEmbeddedCodexProviderConfig
 } from './CodexHostNative';
-import { ProviderCatalog, ProviderRecord } from './ConsoleModels';
+import { ProviderCatalog, ProviderRecord, EndpointEntry, CustomHeadersEntry } from './ConsoleModels';
 
 function currentTimestamp(): string {
   const now: Date = new Date();
@@ -25,42 +25,60 @@ function defaultProviderName(index: number): string {
   return `Codex Provider ${index}`;
 }
 
+function cloneEndpoints(src: EndpointEntry[]): EndpointEntry[] {
+  const result: EndpointEntry[] = [];
+  for (let i = 0; i < src.length; i++) {
+    const e = src[i];
+    result.push(new EndpointEntry(e.url, e.addedAt, e.lastUsed, e.latencyMs, e.isActive));
+  }
+  return result;
+}
+
+function cloneHeaders(src: CustomHeadersEntry[]): CustomHeadersEntry[] {
+  const result: CustomHeadersEntry[] = [];
+  for (let i = 0; i < src.length; i++) {
+    const h = src[i];
+    result.push(new CustomHeadersEntry(h.key, h.value));
+  }
+  return result;
+}
+
 function cloneProvider(provider: ProviderRecord): ProviderRecord {
   return new ProviderRecord(
-    provider.id,
-    provider.name,
-    provider.appType,
-    provider.mode,
-    provider.baseUrl,
-    provider.apiKey,
-    provider.model,
-    provider.isActive,
-    provider.syncStatus,
-    provider.updatedAt
+    provider.id, provider.name, provider.appType, provider.mode,
+    provider.baseUrl, provider.apiKey, provider.model,
+    provider.isActive, provider.syncStatus, provider.updatedAt,
+    provider.authMode, cloneHeaders(provider.customHeaders), provider.wireApi,
+    provider.category, provider.description, provider.websiteUrl,
+    provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
+    provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
+    provider.usageScript, provider.createdAt
   );
 }
 
 function cloneCatalog(catalog: ProviderCatalog): ProviderCatalog {
-  return new ProviderCatalog(
-    catalog.version,
-    catalog.activeProviderId,
-    catalog.providers.map((provider: ProviderRecord) => cloneProvider(provider)),
-    catalog.updatedAt
-  );
+  const providers: ProviderRecord[] = [];
+  for (let i = 0; i < catalog.providers.length; i++) {
+    providers.push(cloneProvider(catalog.providers[i]));
+  }
+  return new ProviderCatalog(catalog.version, catalog.activeProviderId, providers, catalog.updatedAt);
+}
+
+function emptyHeaders(): CustomHeadersEntry[] {
+  return [];
+}
+
+function emptyEndpoints(): EndpointEntry[] {
+  return [];
 }
 
 function buildRecordFromConfig(id: string, name: string, config: CodexProviderConfig, isActive: boolean): ProviderRecord {
   return new ProviderRecord(
-    id,
-    name,
-    'codex',
-    'exclusive',
-    config.baseUrl.trim(),
-    config.apiKey,
-    config.model.trim(),
-    isActive,
-    'synced',
-    currentTimestamp()
+    id, name, 'codex', 'exclusive',
+    config.baseUrl.trim(), config.apiKey, config.model.trim(),
+    isActive, 'synced', currentTimestamp(),
+    'apiKey', emptyHeaders(), 'responses', 'custom', '', '', '', '',
+    emptyEndpoints(), 'unknown', 0, 0, null, Date.now()
   );
 }
 
@@ -103,16 +121,11 @@ export class ProviderCatalogService {
     const catalog: ProviderCatalog = this.load();
     const providerName: string = name.trim().length > 0 ? name.trim() : defaultProviderName(catalog.providers.length + 1);
     const provider: ProviderRecord = new ProviderRecord(
-      createProviderId(),
-      providerName,
-      'codex',
-      'exclusive',
-      baseUrl.trim(),
-      apiKey,
-      model.trim(),
-      false,
-      'dirty',
-      currentTimestamp()
+      createProviderId(), providerName, 'codex', 'exclusive',
+      baseUrl.trim(), apiKey, model.trim(),
+      false, 'dirty', currentTimestamp(),
+      'apiKey', emptyHeaders(), 'responses', 'custom', '', '', '', '',
+      emptyEndpoints(), 'unknown', 0, 0, null, Date.now()
     );
     this.catalog.providers = [...catalog.providers, provider];
     return this.persistCatalog();
@@ -120,45 +133,57 @@ export class ProviderCatalogService {
 
   updateProvider(id: string, name: string, baseUrl: string, apiKey: string, model: string): ProviderCatalog {
     this.load();
-    this.catalog.providers = this.catalog.providers.map((provider: ProviderRecord) => {
+    const newProviders: ProviderRecord[] = [];
+    for (let i = 0; i < this.catalog.providers.length; i++) {
+      const provider = this.catalog.providers[i];
       if (provider.id !== id) {
-        return provider;
+        newProviders.push(provider);
+        continue;
       }
-      return new ProviderRecord(
+      newProviders.push(new ProviderRecord(
         provider.id,
         name.trim().length > 0 ? name.trim() : provider.name,
-        provider.appType,
-        provider.mode,
-        baseUrl.trim(),
-        apiKey,
-        model.trim(),
-        provider.isActive,
-        provider.isActive ? 'dirty' : provider.syncStatus,
-        currentTimestamp()
-      );
-    });
+        provider.appType, provider.mode,
+        baseUrl.trim(), apiKey, model.trim(),
+        provider.isActive, provider.isActive ? 'dirty' : provider.syncStatus, currentTimestamp(),
+        provider.authMode, cloneHeaders(provider.customHeaders), provider.wireApi,
+        provider.category, provider.description, provider.websiteUrl,
+        provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
+        provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
+        provider.usageScript, provider.createdAt
+      ));
+    }
+    this.catalog.providers = newProviders;
     return this.persistCatalog();
   }
 
   removeProvider(id: string): ProviderCatalog {
     this.load();
-    this.catalog.providers = this.catalog.providers.filter((provider: ProviderRecord) => provider.id !== id);
+    const filtered: ProviderRecord[] = [];
+    for (let i = 0; i < this.catalog.providers.length; i++) {
+      if (this.catalog.providers[i].id !== id) {
+        filtered.push(this.catalog.providers[i]);
+      }
+    }
+    this.catalog.providers = filtered;
     if (this.catalog.activeProviderId === id) {
       this.catalog.activeProviderId = this.catalog.providers.length > 0 ? this.catalog.providers[0].id : '';
-      this.catalog.providers = this.catalog.providers.map((provider: ProviderRecord, index: number) => {
-        return new ProviderRecord(
-          provider.id,
-          provider.name,
-          provider.appType,
-          provider.mode,
-          provider.baseUrl,
-          provider.apiKey,
-          provider.model,
-          index === 0,
-          index === 0 ? 'dirty' : provider.syncStatus,
-          provider.updatedAt
-        );
-      });
+      const fixed: ProviderRecord[] = [];
+      for (let i = 0; i < this.catalog.providers.length; i++) {
+        const provider = this.catalog.providers[i];
+        const isFirst = i === 0;
+        fixed.push(new ProviderRecord(
+          provider.id, provider.name, provider.appType, provider.mode,
+          provider.baseUrl, provider.apiKey, provider.model,
+          isFirst, isFirst ? 'dirty' : provider.syncStatus, provider.updatedAt,
+          provider.authMode, cloneHeaders(provider.customHeaders), provider.wireApi,
+          provider.category, provider.description, provider.websiteUrl,
+          provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
+          provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
+          provider.usageScript, provider.createdAt
+        ));
+      }
+      this.catalog.providers = fixed;
     }
     return this.persistCatalog();
   }
@@ -169,19 +194,20 @@ export class ProviderCatalogService {
     let activatedBaseUrl: string = '';
     let activatedApiKey: string = '';
     let activatedModel: string = '';
-    this.catalog.providers = this.catalog.providers.map((provider: ProviderRecord) => {
+    const newProviders: ProviderRecord[] = [];
+    for (let i = 0; i < this.catalog.providers.length; i++) {
+      const provider = this.catalog.providers[i];
       const isActive: boolean = provider.id === id;
       const next: ProviderRecord = new ProviderRecord(
-        provider.id,
-        provider.name,
-        provider.appType,
-        provider.mode,
-        provider.baseUrl,
-        provider.apiKey,
-        provider.model,
-        isActive,
-        isActive ? 'dirty' : provider.syncStatus,
-        isActive ? currentTimestamp() : provider.updatedAt
+        provider.id, provider.name, provider.appType, provider.mode,
+        provider.baseUrl, provider.apiKey, provider.model,
+        isActive, isActive ? 'dirty' : provider.syncStatus,
+        isActive ? currentTimestamp() : provider.updatedAt,
+        provider.authMode, cloneHeaders(provider.customHeaders), provider.wireApi,
+        provider.category, provider.description, provider.websiteUrl,
+        provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
+        provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
+        provider.usageScript, provider.createdAt
       );
       if (isActive) {
         activatedId = next.id;
@@ -189,8 +215,9 @@ export class ProviderCatalogService {
         activatedApiKey = next.apiKey;
         activatedModel = next.model;
       }
-      return next;
-    });
+      newProviders.push(next);
+    }
+    this.catalog.providers = newProviders;
     this.catalog.activeProviderId = activatedId;
     if (activatedId.length > 0) {
       const saved: CodexProviderConfig = saveEmbeddedCodexProviderConfig(
@@ -198,12 +225,16 @@ export class ProviderCatalogService {
         activatedApiKey,
         activatedModel
       );
-      this.catalog.providers = this.catalog.providers.map((provider: ProviderRecord) => {
+      const afterActivate: ProviderRecord[] = [];
+      for (let i = 0; i < this.catalog.providers.length; i++) {
+        const provider = this.catalog.providers[i];
         if (provider.id !== activatedId) {
-          return provider;
+          afterActivate.push(provider);
+          continue;
         }
-        return buildRecordFromConfig(provider.id, provider.name, saved, true);
-      });
+        afterActivate.push(buildRecordFromConfig(provider.id, provider.name, saved, true));
+      }
+      this.catalog.providers = afterActivate;
     }
     return this.persistCatalog();
   }
@@ -226,20 +257,20 @@ export class ProviderCatalogService {
     if (activeId.length === 0) {
       activeId = catalog.providers[0].id;
     }
-    const providers: ProviderRecord[] = catalog.providers.map((provider: ProviderRecord) => {
-      return new ProviderRecord(
-        provider.id,
-        provider.name,
-        provider.appType,
-        provider.mode,
-        provider.baseUrl,
-        provider.apiKey,
-        provider.model,
-        provider.id === activeId,
-        provider.syncStatus,
-        provider.updatedAt
-      );
-    });
+    const providers: ProviderRecord[] = [];
+    for (let i = 0; i < catalog.providers.length; i++) {
+      const provider = catalog.providers[i];
+      providers.push(new ProviderRecord(
+        provider.id, provider.name, provider.appType, provider.mode,
+        provider.baseUrl, provider.apiKey, provider.model,
+        provider.id === activeId, provider.syncStatus, provider.updatedAt,
+        provider.authMode, cloneHeaders(provider.customHeaders), provider.wireApi,
+        provider.category, provider.description, provider.websiteUrl,
+        provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
+        provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
+        provider.usageScript, provider.createdAt
+      ));
+    }
     return new ProviderCatalog(catalog.version, activeId, providers, catalog.updatedAt);
   }
 

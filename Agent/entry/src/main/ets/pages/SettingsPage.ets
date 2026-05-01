@@ -1,8 +1,10 @@
 import router from '@ohos.router';
 import { codexBackend } from '../backend/CodexBackend';
-import { getEmbeddedCodexProviderConfig, CodexProviderConfig } from '../backend/CodexHostNative';
-import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { McpServerRecord, ProviderRecord, SettingsTab } from '../backend/ConsoleModels';
+import { getSkillsRegistry, saveSkillsRegistry, getSkillsRepos, saveSkillsRepos, getSkillsBackups, deleteSkillBackup } from '../backend/CodexHostNative';
+import { McpServerRecord, SettingsTab } from '../backend/ConsoleModels';
+import { InstalledSkill, SkillRepo, SkillBackupEntry, SkillsRegistryJson, SkillEntryJson, SkillsRepoListJson, SkillRepoEntryJson, SkillBackupJson } from '../skills/SkillTypes';
+import { PromptsPage } from './PromptsPage';
+import { ApiManagementPage } from './ApiManagementPage';
 
 @Entry
 @Component
@@ -23,19 +25,23 @@ struct SettingsPage {
   @State private mcpEnvDraft: string = '{}';
   @State private mcpEnabledDraft: boolean = true;
 
-  // Provider state
-  @State private providers: ProviderRecord[] = [];
-  @State private activeProviderId: string = '';
-  @State private selectedProviderId: string = '';
-  @State private providerNameDraft: string = '';
-  @State private providerBaseUrl: string = '';
-  @State private providerApiKey: string = '';
-  @State private manualModel: string = '';
-  @State private isSavingProvider: boolean = false;
+  // Skills state
+  @State private installedSkills: InstalledSkill[] = [];
+  @State private skillRepos: SkillRepo[] = [];
+  @State private skillBackups: SkillBackupEntry[] = [];
+  @State private installedSkillsLoading: boolean = false;
+  @State private skillsStatusText: string = '';
+  @State private skillsErrorText: string = '';
+  @State private newRepoOwner: string = '';
+  @State private newRepoName: string = '';
+  @State private newRepoBranch: string = 'main';
+  @State private skillsActiveSubTab: string = 'installed'; // 'installed' | 'repos' | 'backups'
 
   aboutToAppear(): void {
-    this.loadProviderCatalog();
     void this.refreshMcpPanel();
+    this.loadInstalledSkills();
+    this.loadSkillRepos();
+    this.loadSkillBackups();
   }
 
   // ── Helpers ──
@@ -45,17 +51,6 @@ struct SettingsPage {
       return err.message;
     }
     return JSON.stringify(err);
-  }
-
-  private maskApiKey(apiKey: string): string {
-    const trimmed: string = apiKey.trim();
-    if (trimmed.length === 0) {
-      return '未配置';
-    }
-    if (trimmed.length <= 8) {
-      return '已配置';
-    }
-    return `${trimmed.slice(0, 4)}...${trimmed.slice(trimmed.length - 4)}`;
   }
 
   // ── MCP methods ──
@@ -181,171 +176,158 @@ struct SettingsPage {
     }
   }
 
-  // ── Provider methods ──
+  // ── Skills methods ──
 
-  private hasProvider(providerId: string): boolean {
-    if (providerId.length === 0) {
-      return false;
-    }
-    for (let index: number = 0; index < this.providers.length; index += 1) {
-      if (this.providers[index].id === providerId) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private activeProvider(): ProviderRecord | null {
-    for (let index: number = 0; index < this.providers.length; index += 1) {
-      const provider: ProviderRecord = this.providers[index];
-      if (provider.id === this.activeProviderId || provider.isActive) {
-        return provider;
-      }
-    }
-    return null;
-  }
-
-  private selectedProvider(): ProviderRecord | null {
-    for (let index: number = 0; index < this.providers.length; index += 1) {
-      if (this.providers[index].id === this.selectedProviderId) {
-        return this.providers[index];
-      }
-    }
-    return null;
-  }
-
-  private loadProviderCatalog(): void {
-    const catalog = providerCatalogService.load();
-    this.providers = catalog.providers;
-    this.activeProviderId = catalog.activeProviderId;
-    if (!this.hasProvider(this.selectedProviderId)) {
-      this.selectedProviderId = this.activeProviderId.length > 0
-        ? this.activeProviderId
-        : (this.providers.length > 0 ? this.providers[0].id : '');
-    }
-    if (this.selectedProviderId.length > 0) {
-      this.loadProviderDraft(this.selectedProviderId);
-    }
-  }
-
-  private loadProviderDraft(providerId: string): void {
-    for (let index: number = 0; index < this.providers.length; index += 1) {
-      const provider: ProviderRecord = this.providers[index];
-      if (provider.id !== providerId) {
-        continue;
-      }
-      this.selectedProviderId = provider.id;
-      this.providerNameDraft = provider.name;
-      this.providerBaseUrl = provider.baseUrl;
-      this.providerApiKey = provider.apiKey;
-      this.manualModel = provider.model;
-      return;
-    }
-  }
-
-  private startCreatingProvider(): void {
-    this.selectedProviderId = '';
-    this.providerNameDraft = '';
-    this.providerBaseUrl = 'https://api.openai.com/v1';
-    this.providerApiKey = '';
-    this.manualModel = '';
-  }
-
-  private async importLiveProvider(): Promise<void> {
-    if (this.isSavingProvider) {
-      return;
-    }
-    this.isSavingProvider = true;
+  private loadInstalledSkills(): void {
+    this.installedSkillsLoading = true;
     try {
-      const catalog = providerCatalogService.importCurrentProvider();
-      this.providers = catalog.providers;
-      this.activeProviderId = catalog.activeProviderId;
-      this.selectedProviderId = catalog.activeProviderId;
-      this.loadProviderDraft(this.selectedProviderId);
+      const json = getSkillsRegistry('');
+      const parsed: SkillsRegistryJson = JSON.parse(json) as SkillsRegistryJson;
+      const skills: SkillEntryJson[] = parsed.skills ?? [];
+      this.installedSkills = skills.map((s: SkillEntryJson) => InstalledSkill.fromJSON(s));
+      this.skillsStatusText = `已加载 ${this.installedSkills.length} 个 Skill`;
+      this.skillsErrorText = '';
     } catch (err) {
-      this.mcpErrorText = this.describeError(err);
+      this.skillsErrorText = this.describeError(err);
+      this.installedSkills = [];
     } finally {
-      this.isSavingProvider = false;
+      this.installedSkillsLoading = false;
     }
   }
 
-  private async saveProviderDraft(): Promise<void> {
-    if (this.isSavingProvider) {
-      return;
-    }
-    this.isSavingProvider = true;
+  private toggleSkillEnabled(skillId: string, enabled: boolean): void {
     try {
-      const isEditing: boolean = this.selectedProviderId.length > 0;
-      const name: string = this.providerNameDraft.trim();
-      const baseUrl: string = this.providerBaseUrl.trim();
-      const apiKey: string = this.providerApiKey.trim();
-      const model: string = this.manualModel.trim();
-      const catalog = isEditing
-        ? providerCatalogService.updateProvider(this.selectedProviderId, name, baseUrl, apiKey, model)
-        : providerCatalogService.addProvider(name, baseUrl, apiKey, model);
-      this.providers = catalog.providers;
-      this.activeProviderId = catalog.activeProviderId;
-      if (!isEditing && this.providers.length > 0) {
-        this.selectedProviderId = this.providers[this.providers.length - 1].id;
+      const registry: SkillsRegistryJson = JSON.parse(getSkillsRegistry('')) as SkillsRegistryJson;
+      const skills: SkillEntryJson[] = registry.skills;
+      for (let i = 0; i < skills.length; i++) {
+        if (skills[i].id === skillId) {
+          skills[i].enabled = enabled;
+          break;
+        }
       }
-      this.loadProviderDraft(this.selectedProviderId);
+      registry.skills = skills;
+      registry.updatedAt = String(Math.floor(Date.now() / 1000));
+      saveSkillsRegistry('', JSON.stringify(registry));
+      this.loadInstalledSkills();
     } catch (err) {
-      this.mcpErrorText = this.describeError(err);
-    } finally {
-      this.isSavingProvider = false;
+      this.skillsErrorText = this.describeError(err);
     }
   }
 
-  private async activateProvider(providerId: string): Promise<void> {
-    if (this.isSavingProvider) {
-      return;
-    }
-    this.isSavingProvider = true;
+  private uninstallSkill(skillId: string): void {
     try {
-      const catalog = providerCatalogService.activateProvider(providerId);
-      this.providers = catalog.providers;
-      this.activeProviderId = catalog.activeProviderId;
-      this.selectedProviderId = providerId;
-      this.loadProviderDraft(providerId);
+      const registry: SkillsRegistryJson = JSON.parse(getSkillsRegistry('')) as SkillsRegistryJson;
+      const skills: SkillEntryJson[] = registry.skills.filter(
+        (s: SkillEntryJson) => s.id !== skillId
+      );
+      registry.skills = skills;
+      registry.updatedAt = String(Math.floor(Date.now() / 1000));
+      saveSkillsRegistry('', JSON.stringify(registry));
+      this.loadInstalledSkills();
+      this.skillsStatusText = 'Skill 已卸载';
     } catch (err) {
-      this.mcpErrorText = this.describeError(err);
-    } finally {
-      this.isSavingProvider = false;
+      this.skillsErrorText = this.describeError(err);
     }
   }
 
-  private async removeProvider(providerId: string): Promise<void> {
-    if (this.isSavingProvider) {
+  private loadSkillRepos(): void {
+    try {
+      const json = getSkillsRepos('');
+      const parsed: SkillsRepoListJson = JSON.parse(json) as SkillsRepoListJson;
+      const repos: SkillRepoEntryJson[] = parsed.repos ?? [];
+      this.skillRepos = repos.map((r: SkillRepoEntryJson) => SkillRepo.fromJSON(r));
+    } catch (err) {
+      this.skillsErrorText = this.describeError(err);
+    }
+  }
+
+  private addSkillRepo(): void {
+    const owner = this.newRepoOwner.trim();
+    const name = this.newRepoName.trim();
+    const branch = this.newRepoBranch.trim() || 'main';
+    if (owner.length === 0 || name.length === 0) {
+      this.skillsErrorText = 'Owner 和 Name 不能为空';
       return;
     }
-    this.isSavingProvider = true;
     try {
-      const catalog = providerCatalogService.removeProvider(providerId);
-      this.providers = catalog.providers;
-      this.activeProviderId = catalog.activeProviderId;
-      this.selectedProviderId = this.activeProviderId.length > 0
-        ? this.activeProviderId
-        : (this.providers.length > 0 ? this.providers[0].id : '');
-      if (this.selectedProviderId.length > 0) {
-        this.loadProviderDraft(this.selectedProviderId);
-      } else {
-        this.startCreatingProvider();
+      const repoList: SkillsRepoListJson = JSON.parse(getSkillsRepos('')) as SkillsRepoListJson;
+      const repos: SkillRepoEntryJson[] = repoList.repos;
+      if (!repos.some((r: SkillRepoEntryJson) =>
+        r.owner === owner && r.name === name)) {
+        const newEntry: SkillRepoEntryJson = { owner: owner, name: name, branch: branch, enabled: true };
+        repos.push(newEntry);
       }
+      repoList.repos = repos;
+      saveSkillsRepos('', JSON.stringify(repoList));
+      this.newRepoOwner = '';
+      this.newRepoName = '';
+      this.newRepoBranch = 'main';
+      this.loadSkillRepos();
+      this.skillsStatusText = `仓库 ${owner}/${name} 已添加`;
+      this.skillsErrorText = '';
     } catch (err) {
-      this.mcpErrorText = this.describeError(err);
-    } finally {
-      this.isSavingProvider = false;
+      this.skillsErrorText = this.describeError(err);
     }
   }
 
-  private providerEditorButtonLabel(): string {
-    if (this.isSavingProvider) {
-      return '处理中...';
+  private removeSkillRepo(owner: string, name: string): void {
+    try {
+      const repoList: SkillsRepoListJson = JSON.parse(getSkillsRepos('')) as SkillsRepoListJson;
+      const repos: SkillRepoEntryJson[] = repoList.repos.filter(
+        (r: SkillRepoEntryJson) => !(r.owner === owner && r.name === name)
+      );
+      repoList.repos = repos;
+      saveSkillsRepos('', JSON.stringify(repoList));
+      this.loadSkillRepos();
+      this.skillsStatusText = `仓库 ${owner}/${name} 已移除`;
+    } catch (err) {
+      this.skillsErrorText = this.describeError(err);
     }
-    if (this.selectedProviderId.length > 0) {
-      return '更新 Provider';
+  }
+
+  private toggleRepoEnabled(owner: string, name: string, enabled: boolean): void {
+    try {
+      const repoList: SkillsRepoListJson = JSON.parse(getSkillsRepos('')) as SkillsRepoListJson;
+      const repos: SkillRepoEntryJson[] = repoList.repos;
+      for (let i = 0; i < repos.length; i++) {
+        if (repos[i].owner === owner && repos[i].name === name) {
+          repos[i].enabled = enabled;
+          break;
+        }
+      }
+      repoList.repos = repos;
+      saveSkillsRepos('', JSON.stringify(repoList));
+      this.loadSkillRepos();
+    } catch (err) {
+      this.skillsErrorText = this.describeError(err);
     }
-    return '创建 Provider';
+  }
+
+  private loadSkillBackups(): void {
+    try {
+      const json = getSkillsBackups('');
+      const parsed: SkillBackupJson[] = JSON.parse(json) as SkillBackupJson[];
+      this.skillBackups = parsed.map((b: SkillBackupJson) => SkillBackupEntry.fromBackupJson(b));
+    } catch (err) {
+      this.skillsErrorText = this.describeError(err);
+    }
+  }
+
+  private removeSkillBackup(backupId: string): void {
+    try {
+      deleteSkillBackup('', backupId);
+      this.loadSkillBackups();
+      this.skillsStatusText = '备份已删除';
+    } catch (err) {
+      this.skillsErrorText = this.describeError(err);
+    }
+  }
+
+  private formatTimestamp(ts: number): string {
+    if (ts <= 0) {
+      return '-';
+    }
+    return new Date(ts).toISOString().replace('T', ' ').substring(0, 19);
   }
 
   // ── Builder helpers ──
@@ -691,64 +673,203 @@ struct SettingsPage {
     .width('100%')
   }
 
-  // ── Provider views ──
+  @Builder
+  private apiTab() {
+    ApiManagementPage()
+  }
+
+  // ── Skills tab ──
 
   @Builder
-  private providerRow(provider: ProviderRecord) {
+  private skillsTab() {
+    Column() {
+      Row() {
+        this.panelTitle('Skills', '管理已安装的 Skills、仓库来源和备份')
+
+        Blank()
+          .layoutWeight(1)
+
+        Button('刷新')
+          .height(34)
+          .fontSize(12)
+          .backgroundColor('#FFFFFF')
+          .fontColor('#334155')
+          .borderRadius(16)
+          .border({ width: 1, color: '#CBD5E1' })
+          .onClick(() => {
+            this.loadInstalledSkills();
+            this.loadSkillRepos();
+            this.loadSkillBackups();
+          })
+      }
+      .width('100%')
+
+      if (this.skillsStatusText.trim().length > 0) {
+        Text(this.skillsStatusText)
+          .fontSize(12)
+          .fontColor('#334155')
+          .lineHeight(20)
+          .margin({ top: 8 })
+      }
+
+      if (this.skillsErrorText.trim().length > 0) {
+        Text(this.skillsErrorText)
+          .fontSize(11)
+          .fontColor('#B91C1C')
+          .lineHeight(18)
+          .margin({ top: 6 })
+      }
+
+      // Sub-tab bar
+      Row() {
+        this.skillsSubTabChip('已安装', 'installed')
+        this.skillsSubTabChip('仓库', 'repos')
+        this.skillsSubTabChip('备份', 'backups')
+      }
+      .width('100%')
+      .margin({ top: 10 })
+
+      // Content area
+      if (this.skillsActiveSubTab === 'installed') {
+        this.installedSkillsPanel()
+      } else if (this.skillsActiveSubTab === 'repos') {
+        this.skillReposPanel()
+      } else {
+        this.skillBackupsPanel()
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private skillsSubTabChip(label: string, tab: string) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(this.skillsActiveSubTab === tab ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.skillsActiveSubTab === tab ? '#1D4ED8' : '#64748B')
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .backgroundColor(this.skillsActiveSubTab === tab ? '#EEF4FF' : '#F8FAFC')
+      .border({ width: 1, color: this.skillsActiveSubTab === tab ? '#BFDBFE' : '#E5E7EB' })
+      .borderRadius(12)
+      .margin({ right: 8 })
+      .onClick(() => {
+        this.skillsActiveSubTab = tab;
+      })
+  }
+
+  // ── Installed Skills panel ──
+
+  @Builder
+  private installedSkillsPanel() {
+    Column() {
+      if (this.installedSkillsLoading) {
+        Text('加载中...')
+          .fontSize(12)
+          .fontColor('#64748B')
+          .margin({ top: 20 })
+      } else if (this.installedSkills.length === 0) {
+        Column() {
+          Text('暂无已安装的 Skill')
+            .fontSize(13)
+            .fontColor('#334155')
+            .fontWeight(FontWeight.Medium)
+
+          Text('在"仓库"标签页中启用 GitHub 仓库后，即可发现和安装 Skills。')
+            .fontSize(11)
+            .fontColor('#64748B')
+            .lineHeight(18)
+            .margin({ top: 8 })
+
+          Text('也可以将 Skill 目录手动放入 .agents/skills/ 下。')
+            .fontSize(11)
+            .fontColor('#64748B')
+            .lineHeight(18)
+            .margin({ top: 4 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(16)
+        .margin({ top: 12 })
+        .backgroundColor('#F8FAFC')
+        .border({ width: 1, color: '#E2E8F0' })
+        .borderRadius(16)
+      } else {
+        List({ space: 0 }) {
+          ForEach(this.installedSkills, (skill: InstalledSkill) => {
+            ListItem() {
+              this.installedSkillRow(skill)
+            }
+          }, (skill: InstalledSkill) => skill.id)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .margin({ top: 8 })
+        .scrollBar(BarState.Off)
+      }
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .margin({ top: 8 })
+    .padding(14)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(18)
+  }
+
+  @Builder
+  private installedSkillRow(skill: InstalledSkill) {
     Column() {
       Row() {
         Column() {
-          Text(provider.name)
+          Text(skill.name)
             .fontSize(12)
-            .fontWeight(provider.id === this.selectedProviderId ? FontWeight.Medium : FontWeight.Regular)
+            .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          Text(`${provider.baseUrl.trim().length > 0 ? provider.baseUrl : 'default base_url'} · ${provider.model.trim().length > 0 ? provider.model : 'default model'}`)
-            .fontSize(10)
-            .fontColor('#64748B')
-            .margin({ top: 4 })
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (skill.description.trim().length > 0) {
+            Text(skill.description)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 4 })
+          }
+
+          Row() {
+            this.chip(skill.source, '#EEF4FF', '#1D4ED8')
+            this.chip(skill.directory, '#F8FAFC', '#64748B')
+            if (skill.repoOwner.trim().length > 0) {
+              this.chip(`${skill.repoOwner}/${skill.repoName}`, '#FFF7ED', '#C2410C')
+            }
+            this.chip(skill.enabled ? 'enabled' : 'disabled',
+              skill.enabled ? '#DCFCE7' : '#F8FAFC',
+              skill.enabled ? '#166534' : '#64748B')
+          }
+          .width('100%')
+          .margin({ top: 6 })
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
-
-        if (provider.isActive) {
-          this.chip('当前', '#DCFCE7', '#166534')
-        } else {
-          this.chip(provider.syncStatus, '#F8FAFC', '#64748B')
-        }
       }
       .width('100%')
 
       Row() {
-        Button('编辑')
+        Button(skill.enabled ? '禁用' : '启用')
           .height(30)
           .fontSize(11)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
+          .backgroundColor(skill.enabled ? '#FFFFFF' : '#111827')
+          .fontColor(skill.enabled ? '#334155' : '#FFFFFF')
           .borderRadius(14)
-          .border({ width: 1, color: '#CBD5E1' })
+          .border({ width: 1, color: skill.enabled ? '#CBD5E1' : '#111827' })
           .onClick(() => {
-            this.loadProviderDraft(provider.id);
+            this.toggleSkillEnabled(skill.id, !skill.enabled);
           })
 
-        Button(provider.isActive ? '已启用' : '设为当前')
-          .height(30)
-          .margin({ left: 8 })
-          .fontSize(11)
-          .backgroundColor(provider.isActive ? '#DBEAFE' : '#111827')
-          .fontColor(provider.isActive ? '#1D4ED8' : '#FFFFFF')
-          .borderRadius(14)
-          .onClick(() => {
-            if (provider.isActive === false) {
-              void this.activateProvider(provider.id);
-            }
-          })
-
-        Button('删除')
+        Button('卸载')
           .height(30)
           .margin({ left: 8 })
           .fontSize(11)
@@ -757,221 +878,284 @@ struct SettingsPage {
           .borderRadius(14)
           .border({ width: 1, color: '#FECACA' })
           .onClick(() => {
-            void this.removeProvider(provider.id);
+            this.uninstallSkill(skill.id);
           })
       }
       .width('100%')
-      .margin({ top: 10 })
+      .margin({ top: 8 })
+
+      Row() {
+        Text(`安装时间: ${this.formatTimestamp(skill.installedAt)}`)
+          .fontSize(10)
+          .fontColor('#94A3B8')
+        if (skill.updatedAt > 0) {
+          Text(` · 更新: ${this.formatTimestamp(skill.updatedAt)}`)
+            .fontSize(10)
+            .fontColor('#94A3B8')
+        }
+      }
+      .width('100%')
+      .margin({ top: 4 })
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(12)
-    .backgroundColor(provider.id === this.selectedProviderId ? '#F8FAFF' : '#FFFFFF')
-    .border({ width: 1, color: provider.id === this.selectedProviderId ? '#BFDBFE' : '#E5E7EB' })
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(16)
     .margin({ bottom: 8 })
-    .onClick(() => {
-      this.loadProviderDraft(provider.id);
-    })
   }
 
+  // ── Skill Repos panel ──
+
   @Builder
-  private apiTab() {
+  private skillReposPanel() {
     Column() {
-      Row() {
-        this.panelTitle('API', '统一管理和切换 Provider')
-
-        Blank()
-          .layoutWeight(1)
-
-        this.chip(`${this.providers.length} 个`, '#EEF4FF', '#1D4ED8')
-      }
-      .width('100%')
-
-      Row() {
-        Button('导入当前 Live Provider')
-          .height(34)
-          .fontSize(12)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(16)
-          .onClick(() => {
-            void this.importLiveProvider();
-          })
-
-        Button('新建 Provider')
-          .height(34)
-          .margin({ left: 8 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(16)
-          .border({ width: 1, color: '#CBD5E1' })
-          .onClick(() => {
-            this.startCreatingProvider();
-          })
-      }
-      .width('100%')
-      .margin({ top: 10 })
-
-      List({ space: 0 }) {
-        ForEach(this.providers, (provider: ProviderRecord) => {
-          ListItem() {
-            this.providerRow(provider)
-          }
-        }, (provider: ProviderRecord) => provider.id)
-      }
-      .layoutWeight(1)
-      .width('100%')
-      .margin({ top: 10 })
-      .scrollBar(BarState.Off)
-
+      // Add repo form
       Column() {
-        this.panelTitle(this.selectedProviderId.length > 0 ? '编辑 Provider' : '创建 Provider', 'Provider 目录是事实源，设为当前时同步到 live config')
-
-        TextInput({ text: this.providerNameDraft, placeholder: '例如 OpenRouter / 公司网关 / 本地代理' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
+        Text('添加 GitHub 仓库')
           .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.providerNameDraft = value;
-          })
-
-        TextInput({ text: this.providerBaseUrl, placeholder: 'https://api.openai.com/v1' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.providerBaseUrl = value;
-          })
-
-        TextInput({ text: this.providerApiKey, placeholder: 'sk-...' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.providerApiKey = value;
-          })
-
-        TextInput({ text: this.manualModel, placeholder: 'gpt-5.5 / claude-opus / custom model id' })
-          .width('100%')
-          .height(38)
-          .margin({ top: 10 })
-          .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .onChange((value: string) => {
-            this.manualModel = value;
-          })
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#0F172A')
 
         Row() {
-          Button(this.providerEditorButtonLabel())
-            .height(34)
-            .fontSize(12)
+          TextInput({ text: this.newRepoOwner, placeholder: 'owner (如 anthropics)' })
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(11)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .padding({ left: 10, right: 10 })
+            .border({ width: 1, color: '#E2E8F0' })
+            .onChange((value: string) => { this.newRepoOwner = value; })
+
+          TextInput({ text: this.newRepoName, placeholder: 'name (如 skills)' })
+            .layoutWeight(1)
+            .height(36)
+            .fontSize(11)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .padding({ left: 10, right: 10 })
+            .border({ width: 1, color: '#E2E8F0' })
+            .margin({ left: 6 })
+            .onChange((value: string) => { this.newRepoName = value; })
+
+          TextInput({ text: this.newRepoBranch, placeholder: 'branch' })
+            .width(80)
+            .height(36)
+            .fontSize(11)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(12)
+            .padding({ left: 10, right: 10 })
+            .border({ width: 1, color: '#E2E8F0' })
+            .margin({ left: 6 })
+            .onChange((value: string) => { this.newRepoBranch = value; })
+
+          Button('添加')
+            .height(36)
+            .fontSize(11)
             .backgroundColor('#111827')
             .fontColor('#FFFFFF')
-            .borderRadius(16)
-            .onClick(() => {
-              void this.saveProviderDraft();
-            })
-
-          Button('清空编辑器')
-            .height(34)
+            .borderRadius(14)
             .margin({ left: 8 })
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .fontColor('#334155')
-            .borderRadius(16)
-            .border({ width: 1, color: '#CBD5E1' })
-            .onClick(() => {
-              this.startCreatingProvider();
-            })
+            .onClick(() => { this.addSkillRepo(); })
         }
         .width('100%')
-        .margin({ top: 12 })
+        .margin({ top: 8 })
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
-      .padding(14)
-      .margin({ top: 10 })
+      .padding(12)
       .backgroundColor('#F8FAFC')
       .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
-      .flexShrink(0)
-    }
-    .height('100%')
-    .width('100%')
-  }
+      .borderRadius(14)
+      .margin({ top: 8 })
 
-  // ── Placeholder tabs ──
-
-  @Builder
-  private skillsTab() {
-    Column() {
-      this.panelTitle('Skills', '统一技能安装与启停将在后续阶段接入')
-
-      Text('这一块将提供统一的技能管理入口。')
-        .fontSize(12)
-        .fontColor('#334155')
-        .lineHeight(20)
-        .margin({ top: 14 })
-
-      Column() {
-        this.summaryBullet('安装、启用、禁用技能。')
-        this.summaryBullet('搜索和筛选可用技能。')
-        this.summaryBullet('技能配置同步到 config.toml。')
+      // Repo list
+      if (this.skillRepos.length === 0) {
+        Column() {
+          Text('暂无仓库')
+            .fontSize(12)
+            .fontColor('#94A3B8')
+            .margin({ top: 16 })
+        }
+        .width('100%')
+      } else {
+        List({ space: 0 }) {
+          ForEach(this.skillRepos, (repo: SkillRepo) => {
+            ListItem() {
+              this.skillRepoRow(repo)
+            }
+          }, (repo: SkillRepo) => `${repo.owner}/${repo.name}`)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .margin({ top: 8 })
+        .scrollBar(BarState.Off)
       }
-      .width('100%')
-      .margin({ top: 10 })
+
+      Text('启用的仓库将在"发现"功能中扫描可安装的 Skills。')
+        .fontSize(10)
+        .fontColor('#94A3B8')
+        .lineHeight(16)
+        .margin({ top: 10 })
     }
-    .alignItems(HorizontalAlign.Start)
+    .layoutWeight(1)
     .width('100%')
-    .height('100%')
-    .padding(16)
+    .margin({ top: 8 })
+    .padding(14)
     .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(18)
+  }
+
+  @Builder
+  private skillRepoRow(repo: SkillRepo) {
+    Row() {
+      Column() {
+        Text(`${repo.owner}/${repo.name}`)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#0F172A')
+
+        Text(`branch: ${repo.branch}`)
+          .fontSize(10)
+          .fontColor('#64748B')
+          .margin({ top: 2 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      this.chip(repo.enabled ? 'enabled' : 'disabled',
+        repo.enabled ? '#DCFCE7' : '#F8FAFC',
+        repo.enabled ? '#166534' : '#64748B')
+
+      Button(repo.enabled ? '禁用' : '启用')
+        .height(28)
+        .fontSize(10)
+        .backgroundColor('#FFFFFF')
+        .fontColor('#334155')
+        .borderRadius(12)
+        .border({ width: 1, color: '#CBD5E1' })
+        .margin({ left: 8 })
+        .onClick(() => { this.toggleRepoEnabled(repo.owner, repo.name, !repo.enabled); })
+
+      Button('删除')
+        .height(28)
+        .fontSize(10)
+        .backgroundColor('#FFFFFF')
+        .fontColor('#B91C1C')
+        .borderRadius(12)
+        .border({ width: 1, color: '#FECACA' })
+        .margin({ left: 6 })
+        .onClick(() => { this.removeSkillRepo(repo.owner, repo.name); })
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(14)
+    .margin({ bottom: 6 })
+  }
+
+  // ── Skill Backups panel ──
+
+  @Builder
+  private skillBackupsPanel() {
+    Column() {
+      if (this.skillBackups.length === 0) {
+        Column() {
+          Text('暂无备份')
+            .fontSize(13)
+            .fontColor('#334155')
+            .fontWeight(FontWeight.Medium)
+            .margin({ top: 20 })
+
+          Text('卸载 Skill 时会自动创建备份。')
+            .fontSize(11)
+            .fontColor('#64748B')
+            .lineHeight(18)
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      } else {
+        List({ space: 0 }) {
+          ForEach(this.skillBackups, (backup: SkillBackupEntry) => {
+            ListItem() {
+              this.skillBackupRow(backup)
+            }
+          }, (backup: SkillBackupEntry) => backup.backupId)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .margin({ top: 8 })
+        .scrollBar(BarState.Off)
+      }
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .margin({ top: 8 })
+    .padding(14)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(18)
+  }
+
+  @Builder
+  private skillBackupRow(backup: SkillBackupEntry) {
+    Column() {
+      Row() {
+        Column() {
+          Text(backup.skill.name)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#0F172A')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(`目录: ${backup.skill.directory}  ·  来源: ${backup.skill.source}`)
+            .fontSize(10)
+            .fontColor('#64748B')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 4 })
+
+          Text(`备份时间: ${this.formatTimestamp(backup.createdAt)}`)
+            .fontSize(10)
+            .fontColor('#94A3B8')
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+      }
+      .width('100%')
+
+      Row() {
+        Button('删除备份')
+          .height(28)
+          .fontSize(10)
+          .backgroundColor('#FFFFFF')
+          .fontColor('#B91C1C')
+          .borderRadius(12)
+          .border({ width: 1, color: '#FECACA' })
+          .margin({ top: 8 })
+          .onClick(() => { this.removeSkillBackup(backup.backupId); })
+      }
+      .width('100%')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(12)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(16)
+    .margin({ bottom: 8 })
   }
 
   @Builder
   private promptsTab() {
-    Column() {
-      this.panelTitle('Prompts', '统一提示词编辑与同步将在后续阶段接入')
-
-      Text('这一块将提供统一的提示词管理入口。')
-        .fontSize(12)
-        .fontColor('#334155')
-        .lineHeight(20)
-        .margin({ top: 14 })
-
-      Column() {
-        this.summaryBullet('创建和编辑自定义提示词。')
-        this.summaryBullet('提示词模板管理。')
-        this.summaryBullet('提示词同步到 config.toml。')
-      }
-      .width('100%')
-      .margin({ top: 10 })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .height('100%')
-    .padding(16)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E5E7EB' })
-    .borderRadius(18)
+    PromptsPage({ codexHome: '' })
   }
 
   build() {

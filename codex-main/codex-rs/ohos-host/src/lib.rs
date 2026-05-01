@@ -23,6 +23,11 @@ use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
 
+mod prompts_registry;
+mod skills_backup;
+mod skills_hash;
+mod skills_registry;
+
 const DEFAULT_LISTEN_URL: &str = "ws://127.0.0.1:7456";
 const DEFAULT_PROVIDER_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_APPROVAL_POLICY: &str = "on-request";
@@ -106,6 +111,27 @@ static LAST_PROVIDER_CONFIG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 static LAST_PROVIDER_CATALOG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     let json = serde_json::to_string(&ProviderCatalog::default()).expect("default provider catalog json");
     Mutex::new(CString::new(json).expect("provider catalog cstring"))
+});
+static LAST_SKILLS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_SKILLS_REPOS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_HASH_RESULT: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("").expect("empty cstring"))
+});
+static LAST_BACKUPS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("[]").expect("empty cstring"))
+});
+static LAST_BACKUP_PATH: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("").expect("empty cstring"))
+});
+static LAST_PROMPTS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_AGENTS_MD_CONTENT: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("").expect("empty cstring"))
 });
 
 #[unsafe(no_mangle)]
@@ -229,6 +255,181 @@ pub extern "C" fn codex_ohos_host_save_provider_catalog(
             set_host_message(format!("failed to save provider catalog: {err}"));
             1
         }
+    }
+}
+
+// ========== Skills Registry ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_skills_registry_json(codex_home: *const c_char) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let registry = skills_registry::SkillsRegistry::load_or_default(&codex_home);
+    let json = serde_json::to_string(&registry).unwrap_or_else(|_| "{}".into());
+    write_cstring(&LAST_SKILLS_REGISTRY_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_save_skills_registry(
+    codex_home: *const c_char,
+    registry_json: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(json_str) = ffi_string(registry_json) else {
+        return 1;
+    };
+    let registry: skills_registry::SkillsRegistry = match serde_json::from_str(&json_str) {
+        Ok(r) => r,
+        Err(_) => return 1,
+    };
+    match registry.save(&codex_home) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+// ========== Skills Repos ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_skills_repos_json(codex_home: *const c_char) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let repos = skills_registry::SkillsRepoList::load_or_default(&codex_home);
+    let json = serde_json::to_string(&repos).unwrap_or_else(|_| "{}".into());
+    write_cstring(&LAST_SKILLS_REPOS_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_save_skills_repos(
+    codex_home: *const c_char,
+    repos_json: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(json_str) = ffi_string(repos_json) else {
+        return 1;
+    };
+    let repos: skills_registry::SkillsRepoList = match serde_json::from_str(&json_str) {
+        Ok(r) => r,
+        Err(_) => return 1,
+    };
+    match repos.save(&codex_home) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+// ========== Skills Hash ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_compute_dir_hash(dir_path: *const c_char) -> *const c_char {
+    let Some(path_str) = ffi_string(dir_path) else {
+        return write_cstring(&LAST_HASH_RESULT, "");
+    };
+    let hash = skills_hash::compute_dir_hash(Path::new(&path_str)).unwrap_or_default();
+    write_cstring(&LAST_HASH_RESULT, &hash)
+}
+
+// ========== Skills Backups ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_skills_backups_json(codex_home: *const c_char) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let backups = skills_backup::list_backups(&codex_home);
+    let json = serde_json::to_string(&backups).unwrap_or_else(|_| "[]".into());
+    write_cstring(&LAST_BACKUPS_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_create_skill_backup(
+    codex_home: *const c_char,
+    skill_dir: *const c_char,
+    skill_json: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let skill_dir = PathBuf::from(ffi_string(skill_dir).unwrap_or_default());
+    let skill_json = ffi_string(skill_json).unwrap_or_default();
+
+    match skills_backup::create_uninstall_backup(&codex_home, &skill_dir, &skill_json) {
+        Ok(path) => write_cstring(&LAST_BACKUP_PATH, &path.to_string_lossy()),
+        Err(e) => write_cstring(&LAST_BACKUP_PATH, &format!("error:{}", e)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_delete_skill_backup(
+    codex_home: *const c_char,
+    backup_id: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(backup_id) = ffi_string(backup_id) else {
+        return 1;
+    };
+
+    // 安全检查：防止路径穿越
+    if backup_id.contains("..") || backup_id.contains('/') || backup_id.contains('\\') {
+        return 1;
+    }
+
+    let backup_path = codex_home.join("skill-backups").join(&backup_id);
+    match std::fs::remove_dir_all(&backup_path) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+// ========== Prompts Registry ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_prompts_registry_json(
+    codex_home: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let registry = prompts_registry::PromptsRegistry::load_or_default(&codex_home);
+    let json = serde_json::to_string(&registry).unwrap_or_else(|_| "{}".into());
+    write_cstring(&LAST_PROMPTS_REGISTRY_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_save_prompts_registry(
+    codex_home: *const c_char,
+    registry_json: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(json_str) = ffi_string(registry_json) else { return 1; };
+    let registry: prompts_registry::PromptsRegistry = match serde_json::from_str(&json_str) {
+        Ok(r) => r,
+        Err(_) => return 1,
+    };
+    match registry.save(&codex_home) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_read_agents_md(
+    codex_home: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let path = prompts_registry::agents_md_path(&codex_home);
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    write_cstring(&LAST_AGENTS_MD_CONTENT, &content)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_write_agents_md(
+    codex_home: *const c_char,
+    content: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(content) = ffi_string(content) else { return 1; };
+    let path = prompts_registry::agents_md_path(&codex_home);
+
+    let tmp_path = path.with_extension("md.tmp");
+    match std::fs::write(&tmp_path, &content) {
+        Ok(()) => match std::fs::rename(&tmp_path, &path) {
+            Ok(()) => 0,
+            Err(_) => 1,
+        },
+        Err(_) => 1,
     }
 }
 

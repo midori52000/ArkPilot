@@ -45,6 +45,22 @@ interface NativeCodexHostModule {
   saveProviderConfig: (codexHome?: string, baseUrl?: string, apiKey?: string, model?: string) => string;
   getProviderCatalog: (codexHome?: string) => string;
   saveProviderCatalog: (codexHome?: string, catalogJson?: string) => string;
+
+  // Skills management
+  getSkillsRegistry: (codexHome?: string) => string;
+  saveSkillsRegistry: (codexHome?: string, registryJson?: string) => number;
+  getSkillsRepos: (codexHome?: string) => string;
+  saveSkillsRepos: (codexHome?: string, reposJson?: string) => number;
+  computeDirHash: (dirPath?: string) => string;
+  getSkillsBackups: (codexHome?: string) => string;
+  createSkillBackup: (codexHome?: string, skillDir?: string, skillJson?: string) => string;
+  deleteSkillBackup: (codexHome?: string, backupId?: string) => number;
+
+  // Prompts management
+  getPromptsRegistry: (codexHome?: string) => string;
+  savePromptsRegistry: (codexHome?: string, registryJson?: string) => number;
+  readAgentsMd: (codexHome?: string) => string;
+  writeAgentsMd: (codexHome?: string, content?: string) => number;
 }
 
 declare const codexHost: NativeCodexHostModule;
