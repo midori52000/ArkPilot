@@ -1600,11 +1600,10 @@ struct Index {
             })
 
           Button() {
-            Text(this.isRunning ? '↗' : '发送')
-              .fontSize(this.isRunning ? 16 : 12)
+            Text('发送')
+              .fontSize(12)
               .fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF')
-              .copyOption(CopyOptions.LocalDevice)
           }
             .width(64)
             .height(36)
