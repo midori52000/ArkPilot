@@ -1411,17 +1411,25 @@ struct Index {
             .backgroundColor('#FFFFFF')
             .borderRadius(19)
             .padding({ left: 12, right: 12 })
+            .enterKeyType(EnterKeyType.Send)
             .onChange((value: string) => {
               this.draft = value;
             })
+            .onSubmit(() => {
+              this.sendMessage();
+            })
 
-          Button(this.isRunning ? '↗' : '发送')
-            .width(52)
+          Button() {
+            Text(this.isRunning ? '↗' : '发送')
+              .fontSize(this.isRunning ? 16 : 12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+              .copyOption(CopyOptions.LocalDevice)
+          }
+            .width(64)
             .height(36)
             .margin({ left: 8 })
-            .fontSize(this.isRunning ? 16 : 12)
             .backgroundColor('#111827')
-            .fontColor('#FFFFFF')
             .borderRadius(18)
             .enabled(!this.isRunning)
             .opacity(this.isRunning ? 0.78 : 1)
