@@ -566,9 +566,11 @@ struct SettingsPage {
       Button() {
         Row() {
           Text('←')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontColor('#0F172A')
           Text('Back')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
@@ -587,10 +589,12 @@ struct SettingsPage {
 
       Column() {
         Text('Settings Console')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .fontColor('#0F172A')
         Text('前端先行 · 独立控制台视图 · 保留后端接入接口')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontColor('#64748B')
           .margin({ top: 4 })
@@ -604,6 +608,7 @@ struct SettingsPage {
       this.particleCluster()
 
       Text('Frontend Mock Mode')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0A84FF')
@@ -665,6 +670,7 @@ struct SettingsPage {
     Column() {
       Row() {
         Text('CONTROL')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontWeight(FontWeight.Medium)
           .fontColor('#0A84FF')
@@ -673,6 +679,7 @@ struct SettingsPage {
           .borderRadius(10)
 
         Text('MOCK')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontWeight(FontWeight.Medium)
           .fontColor('#166534')
@@ -683,12 +690,14 @@ struct SettingsPage {
       }
 
       Text('Settings Shell')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
         .margin({ top: 14 })
 
       Text('与主会话页分离的管理控制台，先完成视觉、交互与状态语义，再衔接 native façade。')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontColor('#475569')
         .lineHeight(20)
@@ -713,10 +722,12 @@ struct SettingsPage {
   private metricPill(value: string, label: string) {
     Column() {
       Text(value)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
       Text(label)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
         .margin({ top: 2 })
@@ -733,11 +744,13 @@ struct SettingsPage {
       Row() {
         Column() {
           Text(item.label)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(15)
             .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
             .fontColor('#0F172A')
 
           Text(item.subtitle)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor(this.activeTab === item.tab ? '#334155' : '#64748B')
             .margin({ top: 4 })
@@ -772,10 +785,12 @@ struct SettingsPage {
   private sideFootnote() {
     Column() {
       Text('接口预留')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
       Text('所有 CTA 已预留为 façade 入口；接后端时只替换 action 实现，不改页面结构。')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
         .fontColor('#64748B')
         .lineHeight(18)
@@ -824,15 +839,18 @@ struct SettingsPage {
       Row() {
         Column() {
           Text(`${this.navLabel(this.activeTab)} / Settings`)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.tabAccent(this.activeTab))
           Text(this.heroTitle())
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(22)
             .fontWeight(FontWeight.Bold)
             .fontColor('#0F172A')
             .margin({ top: 6 })
           Text(this.heroSubtitle())
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontColor('#475569')
             .lineHeight(20)
@@ -887,9 +905,11 @@ struct SettingsPage {
   private heroSummaryCard() {
     Column() {
       Text('Interaction hint')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
       Text('点击任意主操作都会触发缩放与轻粒子反馈，并给出自动消散提示。')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
         .fontColor('#334155')
         .lineHeight(18)
@@ -907,9 +927,11 @@ struct SettingsPage {
   private summaryCard(title: string, value: string, color: string, background: string) {
     Column() {
       Text(title)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
       Text(value)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
@@ -921,6 +943,7 @@ struct SettingsPage {
           .backgroundColor(color)
           .borderRadius(10)
         Text('Ready')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor(color)
           .margin({ left: 6 })
@@ -940,10 +963,12 @@ struct SettingsPage {
   private sectionCard(title: string, subtitle: string) {
     Column() {
       Text(title)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
       Text(subtitle)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
         .fontColor('#64748B')
         .margin({ top: 4 })
@@ -959,6 +984,7 @@ struct SettingsPage {
   @Builder
   private pill(label: string, background: string, color: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontWeight(FontWeight.Medium)
       .fontColor(color)
@@ -987,6 +1013,7 @@ struct SettingsPage {
   @Builder
   private optionChip(label: string, selected: boolean, key: string, onClick: () => void) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(11)
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(selected ? '#0A84FF' : '#475569')
@@ -1004,6 +1031,7 @@ struct SettingsPage {
   @Builder
   private formLabel(label: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontWeight(FontWeight.Medium)
       .fontColor('#64748B')
@@ -1046,10 +1074,12 @@ struct SettingsPage {
         Row() {
           Column() {
             Text(server.name)
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
             Text(server.id)
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#64748B')
               .margin({ top: 4 })
@@ -1071,6 +1101,7 @@ struct SettingsPage {
         .margin({ top: 10 })
 
         Text(`${server.toolCount} tools · ${server.resourceCount} resources · ${server.transportType}`)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor('#64748B')
           .margin({ top: 10 })
@@ -1105,6 +1136,7 @@ struct SettingsPage {
         .width('100%')
 
         Text(this.mcpStatusText)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
           .fontColor('#334155')
           .margin({ top: 14 })
@@ -1198,6 +1230,7 @@ struct SettingsPage {
       .margin({ top: 16 })
 
       Text(this.skillsStatusText)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontColor('#334155')
         .margin({ top: 10 })
@@ -1222,10 +1255,12 @@ struct SettingsPage {
           Row() {
             Column() {
               Text(skill.name)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
                 .fontColor('#0F172A')
               Text(skill.description)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(11)
                 .fontColor('#64748B')
                 .lineHeight(18)
@@ -1316,10 +1351,12 @@ struct SettingsPage {
           Row() {
             Column() {
               Text(`${repo.owner}/${repo.name}`)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(13)
                 .fontWeight(FontWeight.Medium)
                 .fontColor('#0F172A')
               Text(`branch: ${repo.branch}`)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(10)
                 .fontColor('#64748B')
                 .margin({ top: 5 })
@@ -1360,10 +1397,12 @@ struct SettingsPage {
       if (this.skillBackups.length === 0) {
         Column() {
           Text('暂无备份')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
           Text('这里将用于展示 native 卸载动作留下的历史快照。')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#64748B')
             .margin({ top: 6 })
@@ -1380,10 +1419,12 @@ struct SettingsPage {
             Row() {
               Column() {
                 Text(backup.skill.name)
+                  .copyOption(CopyOptions.LocalDevice)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#0F172A')
                 Text(backup.backupPath)
+                  .copyOption(CopyOptions.LocalDevice)
                   .fontSize(11)
                   .fontColor('#64748B')
                   .margin({ top: 6 })
@@ -1396,6 +1437,7 @@ struct SettingsPage {
             .width('100%')
 
             Text(`created at ${this.formatTimestamp(backup.createdAt)}`)
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#64748B')
               .margin({ top: 12 })
@@ -1455,10 +1497,12 @@ struct SettingsPage {
         Row() {
           Column() {
             Text(prompt.name)
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
             Text(prompt.description)
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(11)
               .fontColor('#64748B')
               .lineHeight(18)
@@ -1472,6 +1516,7 @@ struct SettingsPage {
         .width('100%')
 
         Text(`updated ${prompt.updatedAt}`)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor('#64748B')
           .margin({ top: 12 })
@@ -1645,10 +1690,12 @@ struct SettingsPage {
               Row() {
                 Column() {
                   Text(endpoint.label)
+                    .copyOption(CopyOptions.LocalDevice)
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor('#0F172A')
                   Text(endpoint.value)
+                    .copyOption(CopyOptions.LocalDevice)
                     .fontSize(11)
                     .fontColor('#64748B')
                     .margin({ top: 6 })
@@ -1671,10 +1718,12 @@ struct SettingsPage {
 
           Column() {
             Text('接入说明')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
             Text('当前页只演示 provider form、状态标签和 CTA 反馈；真实请求、测速和导入导出逻辑留待后端接入。')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(11)
               .fontColor('#64748B')
               .lineHeight(18)
@@ -1710,6 +1759,7 @@ struct SettingsPage {
             .borderRadius(8)
 
           Text(toast.message)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#0F172A')
             .margin({ left: 10 })

@@ -69,6 +69,7 @@ export struct ApiManagementPage {
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 3, bottom: 3 })
@@ -80,10 +81,12 @@ export struct ApiManagementPage {
   private sectionTitle(title: string, subtitle: string) {
     Column() {
       Text(title)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
       Text(subtitle)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#94A3B8')
         .margin({ top: 2 })
@@ -94,6 +97,7 @@ export struct ApiManagementPage {
   @Builder
   private subTabChip(label: string, tab: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(11)
       .fontWeight(this.activeSubTab === tab ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.activeSubTab === tab ? '#1D4ED8' : '#64748B')
@@ -158,6 +162,7 @@ export struct ApiManagementPage {
   @Builder
   private filterChip(label: string, category: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor(this.filterCategory === category ? '#1D4ED8' : '#64748B')
       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -174,11 +179,13 @@ export struct ApiManagementPage {
       Row() {
         Column() {
           Text(preset.name)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
 
           Text(preset.description)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#64748B')
             .maxLines(2)
@@ -228,10 +235,12 @@ export struct ApiManagementPage {
     Column() {
       Row() {
         Text('Provider 管理')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor('#0F172A')
         Text(`  ${this.vm.providers.length} 个`)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
           .fontColor('#64748B')
           .margin({ left: 6 })
@@ -295,10 +304,12 @@ export struct ApiManagementPage {
       if (this.vm.providers.length === 0) {
         Column() {
           Text('暂无 Provider')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(13)
             .fontColor('#334155')
             .fontWeight(FontWeight.Medium)
           Text('从预设库快速添加，或创建自定义 Provider')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#64748B')
             .lineHeight(18)
@@ -338,6 +349,7 @@ export struct ApiManagementPage {
         Column() {
           Row() {
             Text(provider.name.length > 0 ? provider.name : '未命名')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(12)
               .fontWeight(provider.isActive ? FontWeight.Bold : FontWeight.Medium)
               .fontColor('#0F172A')
@@ -350,6 +362,7 @@ export struct ApiManagementPage {
           }
 
           Text(`${provider.baseUrl.length > 0 ? provider.baseUrl : '未设置 URL'} · ${provider.model.length > 0 ? provider.model : '未设置模型'}`)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#64748B')
             .margin({ top: 3 })
@@ -511,6 +524,7 @@ export struct ApiManagementPage {
           .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.model = value; } })
 
         Text('API 格式')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10).fontColor('#64748B').margin({ top: 10 })
         Row() {
           this.optionChip('Responses', this.vm.editingProvider.wireApi === 'responses', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.wireApi = 'responses'; } })
@@ -519,6 +533,7 @@ export struct ApiManagementPage {
         }
 
         Text('分类')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10).fontColor('#64748B').margin({ top: 8 })
         Row() {
           this.optionChip('官方', this.vm.editingProvider.category === 'official', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.category = 'official'; } })
@@ -571,6 +586,7 @@ export struct ApiManagementPage {
   @Builder
   private optionChip(label: string, selected: boolean, onClick: () => void) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor(selected ? '#1D4ED8' : '#64748B')
       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -588,9 +604,11 @@ export struct ApiManagementPage {
     if (this.vm.showAddFromPreset) {
       Column() {
         Text('从预设创建 Provider')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
 
         Text('请在下方填入 API Key，其他字段将自动从预设填充。')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#64748B').lineHeight(16).margin({ top: 6 })
 
         TextInput({ text: this.vm.newApiKey, placeholder: '输入你的 API Key' })
@@ -627,18 +645,22 @@ export struct ApiManagementPage {
     if (this.vm.validationResult !== null) {
       Column() {
         Text(this.vm.validationResult.success ? '验证通过' : '验证失败')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(13).fontWeight(FontWeight.Medium)
           .fontColor(this.vm.validationResult.success ? '#166534' : '#B91C1C')
 
         Text(`延迟: ${this.vm.validationResult.latencyMs}ms · HTTP ${this.vm.validationResult.statusCode}`)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#64748B').margin({ top: 4 })
 
         if (this.vm.validationResult.accountInfo.length > 0) {
           Text(this.vm.validationResult.accountInfo)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11).fontColor('#334155').margin({ top: 4 })
         }
         if (this.vm.validationResult.errorMessage.length > 0) {
           Text(this.vm.validationResult.errorMessage)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11).fontColor('#B91C1C').margin({ top: 4 })
         }
 
@@ -664,6 +686,7 @@ export struct ApiManagementPage {
       Column() {
         Row() {
           Text('端点测速结果')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Blank().layoutWeight(1)
           Button('关闭')
@@ -678,9 +701,11 @@ export struct ApiManagementPage {
             ListItem() {
               Row() {
                 Text(r.endpointUrl)
+                  .copyOption(CopyOptions.LocalDevice)
                   .fontSize(10).fontColor('#334155').maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
                 Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
+                  .copyOption(CopyOptions.LocalDevice)
                   .fontSize(10).fontColor(r.success ? '#166534' : '#B91C1C')
                 this.chip(r.success ? 'OK' : `ERR`,
                   r.success ? '#DCFCE7' : '#FEE2E2',
@@ -712,6 +737,7 @@ export struct ApiManagementPage {
       Column() {
         Row() {
           Text(`发现 ${this.vm.discoveredModels.length} 个模型`)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Blank().layoutWeight(1)
           Button('关闭')
@@ -725,6 +751,7 @@ export struct ApiManagementPage {
           ForEach(this.firstN(this.vm.discoveredModels, 30), (model: string) => {
             ListItem() {
               Text(model)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(10).fontColor('#334155')
                 .padding({ top: 4, bottom: 4 })
             }
@@ -751,6 +778,7 @@ export struct ApiManagementPage {
       Column() {
         Row() {
           Text('用量查询')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Blank().layoutWeight(1)
           Button('关闭')
@@ -761,13 +789,19 @@ export struct ApiManagementPage {
         .width('100%')
 
         if (this.vm.usageResult.success) {
-          Text(`计划: ${this.vm.usageResult.planName}`).fontSize(11).fontColor('#334155').margin({ top: 8 })
+          Text(`计划: ${this.vm.usageResult.planName}`)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#334155').margin({ top: 8 })
           Text(`已用: ${this.vm.usageResult.usedAmount.toFixed(2)} / 总额: ${this.vm.usageResult.totalAmount.toFixed(2)} ${this.vm.usageResult.unit}`)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11).fontColor('#334155').margin({ top: 4 })
           Text(`剩余: ${this.vm.usageResult.remainingAmount.toFixed(2)} ${this.vm.usageResult.unit}`)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11).fontWeight(FontWeight.Medium).fontColor('#166534').margin({ top: 4 })
         } else {
-          Text(this.vm.usageResult.errorMessage).fontSize(11).fontColor('#B91C1C').margin({ top: 8 })
+          Text(this.vm.usageResult.errorMessage)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#B91C1C').margin({ top: 8 })
         }
       }
       .alignItems(HorizontalAlign.Start)
@@ -785,7 +819,9 @@ export struct ApiManagementPage {
     if (this.showExportDialog) {
       Column() {
         Row() {
-          Text('导出 Provider 配置').fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+          Text('导出 Provider 配置')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Blank().layoutWeight(1)
           Button('关闭')
             .height(26).fontSize(10).backgroundColor('#FFFFFF').fontColor('#64748B').borderRadius(8)
@@ -800,6 +836,7 @@ export struct ApiManagementPage {
           .fontFamily('monospace')
 
         Text('已自动保护隐私数据。')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10).fontColor('#94A3B8').margin({ top: 6 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -816,7 +853,9 @@ export struct ApiManagementPage {
     if (this.showImportDialog) {
       Column() {
         Row() {
-          Text('导入 Provider 配置').fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+          Text('导入 Provider 配置')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Blank().layoutWeight(1)
           Button('关闭')
             .height(26).fontSize(10).backgroundColor('#FFFFFF').fontColor('#64748B').borderRadius(8)
@@ -866,23 +905,28 @@ export struct ApiManagementPage {
     Column() {
       if (this.vm.statusText.trim().length > 0) {
         Text(this.vm.statusText)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#334155').lineHeight(18).margin({ top: 4, bottom: 4 })
       }
       if (this.vm.errorText.trim().length > 0) {
         Text(this.vm.errorText)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#B91C1C').lineHeight(18).margin({ top: 4, bottom: 4 })
       }
 
       if (this.vm.validating) {
         Text('正在验证 API Key...')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
       }
       if (this.vm.speedTesting) {
         Text('正在进行端点测速...')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
       }
       if (this.vm.discoveringModels) {
         Text('正在获取模型列表...')
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
       }
 

@@ -614,6 +614,7 @@ struct Index {
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -625,11 +626,13 @@ struct Index {
   private panelTitle(title: string, subtitle: string) {
     Column() {
       Text(title)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
 
       Text(subtitle)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#94A3B8')
         .margin({ top: 4 })
@@ -641,15 +644,18 @@ struct Index {
   private selectorButton(label: string, value: string, active: boolean, onPress: () => void) {
     Row() {
       Text(label)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
 
       Text(value)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#0F172A')
         .margin({ left: 6 })
 
       Text('▾')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#94A3B8')
         .margin({ left: 6 })
@@ -666,6 +672,7 @@ struct Index {
   @Builder
   private optionChip(option: SelectorOption, selected: boolean, onPress: () => void) {
     Text(option.label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor(selected ? '#1D4ED8' : '#475569')
       .padding({ left: 8, right: 8, top: 5, bottom: 5 })
@@ -682,6 +689,7 @@ struct Index {
   private workspaceRow(item: WorkspaceItem) {
     Column() {
       Text(item.title)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
         .fontColor('#0F172A')
@@ -689,6 +697,7 @@ struct Index {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(item.description)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
         .margin({ top: 4 })
@@ -715,6 +724,7 @@ struct Index {
     Column() {
       Row() {
         Text(item.label)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
           .fontWeight(this.isSidebarActive(item.view) ? FontWeight.Medium : FontWeight.Regular)
           .fontColor('#0F172A')
@@ -725,6 +735,7 @@ struct Index {
       .width('100%')
 
       Text(item.description)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
         .margin({ top: 4 })
@@ -748,11 +759,13 @@ struct Index {
   private infoRow(label: string, value: string) {
     Row() {
       Text(label)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#94A3B8')
         .width(78)
 
       Text(value)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
         .fontColor('#334155')
         .layoutWeight(1)
@@ -767,16 +780,19 @@ struct Index {
   private metricCard(title: string, value: string, hint: string) {
     Column() {
       Text(title)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#94A3B8')
 
       Text(value)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
         .margin({ top: 8 })
 
       Text(hint)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor('#64748B')
         .margin({ top: 6 })
@@ -796,11 +812,13 @@ struct Index {
   private summaryBullet(text: string) {
     Row() {
       Text('•')
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontColor('#475569')
         .margin({ right: 6 })
 
       Text(text)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontColor('#334155')
         .layoutWeight(1)
@@ -815,11 +833,13 @@ struct Index {
     Column() {
       Row() {
         Text(item.author)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.authorColor(item.role))
 
         Text(item.timestamp)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor('#94A3B8')
           .margin({ left: 8 })
@@ -827,6 +847,7 @@ struct Index {
       .width('100%')
 
       Text(item.content)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .lineHeight(19)
         .fontColor('#334155')
@@ -847,18 +868,21 @@ struct Index {
   private diffRow(line: CodeDiffLine) {
     Row() {
       Text(line.lineNumber)
+        .copyOption(CopyOptions.LocalDevice)
         .width(28)
         .fontSize(10)
         .fontColor('#94A3B8')
         .fontFamily('monospace')
 
       Text(line.sign)
+        .copyOption(CopyOptions.LocalDevice)
         .width(12)
         .fontSize(11)
         .fontColor(this.diffColor(line.kind))
         .fontFamily('monospace')
 
       Text(line.content)
+        .copyOption(CopyOptions.LocalDevice)
         .layoutWeight(1)
         .fontSize(10)
         .fontColor(this.diffColor(line.kind))
@@ -875,6 +899,7 @@ struct Index {
   @Builder
   private actionChip(label: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor('#475569')
       .padding({ left: 8, right: 8, top: 5, bottom: 5 })
@@ -942,6 +967,7 @@ struct Index {
       .width('100%')
 
       Text(approval.detail)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontColor('#334155')
         .lineHeight(19)
@@ -1064,11 +1090,13 @@ struct Index {
       Row() {
         Column() {
           Text('ArkPilot')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor('#0F172A')
 
           Text('项目侧边栏控制台')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#94A3B8')
             .margin({ top: 4 })
@@ -1137,6 +1165,7 @@ struct Index {
 
           Row() {
             Text('会话')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#94A3B8')
 
@@ -1144,6 +1173,7 @@ struct Index {
               .layoutWeight(1)
 
             Text(this.workspaces.length.toString())
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#94A3B8')
           }
@@ -1237,10 +1267,12 @@ struct Index {
       Button() {
         Row() {
           Text('⚙')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(14)
             .fontColor('#64748B')
 
           Text('Settings')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontColor('#64748B')
             .margin({ left: 6 })
@@ -1284,6 +1316,7 @@ struct Index {
 
       Column() {
         Text(this.summaryTitle)
+          .copyOption(CopyOptions.LocalDevice)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor('#0F172A')
@@ -1298,6 +1331,7 @@ struct Index {
 
         Row() {
           Text(this.changedFiles)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#64748B')
             .layoutWeight(1)
@@ -1305,6 +1339,7 @@ struct Index {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
           Text(this.diffStat)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#16A34A')
         }
@@ -1380,14 +1415,16 @@ struct Index {
               this.draft = value;
             })
 
-          Button(this.isRunning ? '...' : '发送')
+          Button(this.isRunning ? '↗' : '发送')
             .width(52)
             .height(36)
             .margin({ left: 8 })
-            .fontSize(12)
+            .fontSize(this.isRunning ? 16 : 12)
             .backgroundColor('#111827')
             .fontColor('#FFFFFF')
             .borderRadius(18)
+            .enabled(!this.isRunning)
+            .opacity(this.isRunning ? 0.78 : 1)
             .onClick(() => {
               this.sendMessage();
             })
@@ -1397,10 +1434,12 @@ struct Index {
 
         Row() {
           Text(this.connectionText)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#94A3B8')
 
           Text(this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#94A3B8')
             .margin({ left: 10 })
@@ -1462,6 +1501,7 @@ struct Index {
       .width('100%')
 
       Text(this.changedFiles)
+        .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
         .fontColor('#64748B')
         .margin({ top: 8 })

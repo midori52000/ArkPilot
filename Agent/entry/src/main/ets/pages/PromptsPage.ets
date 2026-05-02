@@ -27,6 +27,7 @@ export struct PromptsPage {
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
+      .copyOption(CopyOptions.LocalDevice)
       .fontSize(10)
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -40,6 +41,7 @@ export struct PromptsPage {
       Column() {
         Row() {
           Text('Prompts')
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor('#0F172A')
@@ -58,6 +60,7 @@ export struct PromptsPage {
 
         Row() {
           Text(`共 ${this.promptsViewModel.state.prompts.length} 个 · 已启用: ${this.promptsViewModel.activePromptName}`)
+            .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#888')
         }
@@ -69,7 +72,11 @@ export struct PromptsPage {
         if (this.promptsViewModel.state.loading) {
           Column() {
             LoadingProgress().width(40).height(40)
-            Text('加载中...').fontSize(12).fontColor('#999').margin({ top: 8 })
+            Text('加载中...')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(12)
+              .fontColor('#999')
+              .margin({ top: 8 })
           }
           .width('100%')
           .layoutWeight(1)
@@ -77,9 +84,11 @@ export struct PromptsPage {
         } else if (this.promptsViewModel.state.prompts.length === 0) {
           Column() {
             Text('还没有 Prompt')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(14)
               .fontColor('#333')
             Text('创建一个自定义指令，启用后将写入 AGENTS.md')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(12)
               .fontColor('#999')
               .margin({ top: 4 })
@@ -103,11 +112,13 @@ export struct PromptsPage {
                     Column() {
                       Row() {
                         Text(prompt.enabled ? '●' : '○')
+                          .copyOption(CopyOptions.LocalDevice)
                           .fontSize(14)
                           .fontColor(prompt.enabled ? '#4ADE80' : '#ccc')
                           .margin({ right: 6 })
 
                         Text(prompt.name)
+                          .copyOption(CopyOptions.LocalDevice)
                           .fontSize(14)
                           .fontColor('#0F172A')
                           .maxLines(1)
@@ -117,6 +128,7 @@ export struct PromptsPage {
 
                       if (prompt.description.length > 0) {
                         Text(prompt.description)
+                          .copyOption(CopyOptions.LocalDevice)
                           .fontSize(11)
                           .fontColor('#999')
                           .maxLines(1)
@@ -230,6 +242,7 @@ export struct PromptsPage {
 
           Row() {
             Text('名称')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(13)
               .fontColor('#334155')
               .width(60)
@@ -251,6 +264,7 @@ export struct PromptsPage {
 
           Row() {
             Text('描述')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(13)
               .fontColor('#334155')
               .width(60)
@@ -272,6 +286,7 @@ export struct PromptsPage {
 
           Row() {
             Text('此 Prompt 启用后将写入 AGENTS.md，Agent 启动时自动加载。切换后请新建会话以生效。')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(11)
               .fontColor('#94A3B8')
               .lineHeight(16)
@@ -296,6 +311,7 @@ export struct PromptsPage {
         Column() {
           Row() {
             Text('AGENTS.md 实时预览')
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(14)
               .fontWeight(FontWeight.Bold)
               .fontColor('#0F172A')
@@ -317,6 +333,7 @@ export struct PromptsPage {
           if (this.promptsViewModel.activePrompt) {
             Row() {
               Text(`当前启用: ${this.promptsViewModel.activePrompt.name}`)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(12)
                 .fontColor('#4ADE80')
             }
@@ -325,6 +342,7 @@ export struct PromptsPage {
           } else {
             Row() {
               Text('未启用任何 Prompt，AGENTS.md 为空')
+                .copyOption(CopyOptions.LocalDevice)
                 .fontSize(12)
                 .fontColor('#FF9800')
             }
@@ -335,6 +353,7 @@ export struct PromptsPage {
           Scroll() {
             if (this.promptsViewModel.state.liveContent.length > 0) {
               Text(this.promptsViewModel.state.liveContent)
+                .copyOption(CopyOptions.LocalDevice)
                 .fontFamily('monospace')
                 .fontSize(12)
                 .fontColor('#334155')
@@ -343,9 +362,11 @@ export struct PromptsPage {
             } else {
               Column() {
                 Text('暂无内容')
+                  .copyOption(CopyOptions.LocalDevice)
                   .fontSize(24)
                   .fontColor('#ddd')
                 Text('启用一个 Prompt 后，其内容将显示在此处')
+                  .copyOption(CopyOptions.LocalDevice)
                   .fontSize(12)
                   .fontColor('#aaa')
                   .margin({ top: 8 })
