@@ -4,5 +4,7 @@
 # Local signing materials
 /Agent/signing/
 
+# Local working directories
 /ccmanage/
-/design/
+
+# Keep design references versioned; ignore generated exports separately if needed later.

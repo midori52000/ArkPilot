@@ -143,5 +143,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1、目前纯设计前端，不改动后端，预留好接口，前端设计完给出一定交互反馈（比如按钮按压的时候会缩放，有一定的粒子效果等），同时如果还没对接后端则给出一个提示没有对接的弹窗（自动消散无需确认），我给出参考文件在design/design.md
 2、即使更新gitignore,更新claude.md。
 
+### Settings 前端先行约定
+
+- 当前 `Agent/entry/src/main/ets/pages/SettingsPage.ets` 以 **独立 settings 控制台** 的形式推进，和主聊天页分离。
+- 本轮以 **统一 mock / facade** 为准：允许做前端状态切换、草稿编辑、自动消散提示、按压缩放、轻粒子/装饰反馈，但**不要把新的 settings 交互直接接到真实后端写入逻辑**。
+- 未对接完成的操作，应给出“暂未接入后端 / 当前仅前端模拟”之类的轻提示，不增加确认成本。
+- 如果后续接入真实后端，优先替换 action/facade 层，不要推翻当前 settings 的页面结构与视觉层级。
+
 ## 错误经验
 （这里写错误和解决方案，遇到错误优先查找，避免重复工作）
