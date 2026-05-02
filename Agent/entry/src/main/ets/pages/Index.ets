@@ -12,12 +12,18 @@ import {
   WorkspaceAccessStatus,
   checkWorkspaceAccess,
   getEmbeddedCodexHostStatus,
+  getEmbeddedCodexProviderCatalog,
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
+import { providerCatalogService } from '../backend/ProviderCatalogService';
 import { SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
 import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+
+const INDEX_DOMAIN = 0x0000;
+const INDEX_TAG = 'IndexProviderDebug';
 
 class WorkspaceItem {
   id: number;
@@ -488,10 +494,20 @@ struct Index {
 
   private loadProviderConfig(): void {
     const config: CodexProviderConfig = getEmbeddedCodexProviderConfig();
+    const catalog = getEmbeddedCodexProviderCatalog();
     this.providerBaseUrl = config.baseUrl;
     this.providerApiKey = config.apiKey;
     this.manualModel = config.model;
     this.providerStatusText = this.describeProviderConfig(config);
+    hilog.info(
+      INDEX_DOMAIN,
+      INDEX_TAG,
+      'loadProviderConfig baseUrl=%{public}s model=%{public}s apiKeyLen=%{public}d catalogProviders=%{public}d',
+      config.baseUrl,
+      config.model,
+      config.apiKey.length,
+      catalog.providers.length
+    );
   }
 
   private async saveProviderConfig(): Promise<void> {
@@ -501,22 +517,52 @@ struct Index {
 
     this.isSavingProvider = true;
     try {
+      hilog.info(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig input baseUrl=%{public}s model=%{public}s apiKeyLen=%{public}d',
+        this.providerBaseUrl.trim(),
+        this.manualModel.trim(),
+        this.providerApiKey.trim().length
+      );
       const config: CodexProviderConfig = saveEmbeddedCodexProviderConfig(
         this.providerBaseUrl.trim(),
         this.providerApiKey.trim(),
         this.manualModel.trim()
       );
+      hilog.info(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig native returned baseUrl=%{public}s model=%{public}s apiKeyLen=%{public}d',
+        config.baseUrl,
+        config.model,
+        config.apiKey.length
+      );
       this.providerBaseUrl = config.baseUrl;
       this.providerApiKey = config.apiKey;
       this.manualModel = config.model;
+      const importedCatalog = providerCatalogService.importCurrentProvider();
+      hilog.info(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig imported catalog activeProviderId=%{public}s providers=%{public}d',
+        importedCatalog.activeProviderId,
+        importedCatalog.providers.length
+      );
       this.providerStatusText = this.describeProviderConfig(config);
       this.summaryTitle = 'Provider config saved';
       this.summaryPoints = [
-        'base_url, api_key, and default model were written to CODEX_HOME/config.toml.',
-        'Restart the app to apply provider changes to the embedded app-server.',
+        'base_url, api_key, and default model were written to CODEX_HOME and synced to the active provider catalog.',
+        'Restart the app to apply provider changes to the embedded app-server runtime.',
         this.providerStatusText
       ];
     } catch (err) {
+      hilog.error(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig failed: %{public}s',
+        this.describeError(err)
+      );
       this.summaryTitle = 'Provider config failed';
       this.summaryPoints = [this.describeError(err)];
     } finally {
@@ -1246,6 +1292,69 @@ struct Index {
               })
 
             Text(this.workspaceStatusText)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .margin({ top: 8 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(12)
+          .margin({ top: 10 })
+          .backgroundColor('#F8FAFC')
+          .border({ width: 1, color: '#E2E8F0' })
+          .borderRadius(16)
+
+          Column() {
+            this.panelTitle('Provider 调试', '临时入口：直接修改 base URL、API Key 和 model')
+
+            TextInput({ text: this.providerBaseUrl, placeholder: 'http://127.0.0.1:8317/v1' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.providerBaseUrl = value;
+              })
+
+            TextInput({ text: this.providerApiKey, placeholder: 'API key' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.providerApiKey = value;
+              })
+
+            TextInput({ text: this.manualModel, placeholder: 'gpt-5.4' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.manualModel = value;
+              })
+
+            Button(this.providerButtonLabel())
+              .height(34)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(16)
+              .onClick(() => {
+                void this.saveProviderConfig();
+              })
+
+            Text(this.providerStatusText)
               .fontSize(10)
               .fontColor('#64748B')
               .margin({ top: 8 })

@@ -20,7 +20,18 @@ export default class EntryAbility extends UIAbility {
     try {
       const codexHome: string = `${this.context.filesDir}/codex-home`;
       const defaultWorkspaceRoot: string = `${this.context.filesDir}/workspace-default`;
-      fileIo.mkdirSync(defaultWorkspaceRoot, true);
+      AppStorage.setOrCreate<string>('codexHome', codexHome);
+      AppStorage.setOrCreate<string>('defaultWorkspaceRoot', defaultWorkspaceRoot);
+      try {
+        fileIo.mkdirSync(defaultWorkspaceRoot, true);
+      } catch (mkdirErr) {
+        const mkdirErrText: string = JSON.stringify(mkdirErr);
+        if (!mkdirErrText.includes('"code":13900015')) {
+          hilog.error(DOMAIN, TAG, 'Failed to prepare workspace directory. Cause: %{public}s', mkdirErrText);
+          throw new Error(mkdirErrText);
+        }
+        hilog.info(DOMAIN, TAG, 'Workspace directory already exists: %{public}s', defaultWorkspaceRoot);
+      }
       const status = startEmbeddedCodexHost(codexHome, DEFAULT_SERVER_URL);
       hilog.info(
         DOMAIN,
@@ -35,7 +46,6 @@ export default class EntryAbility extends UIAbility {
       // 首次启动自动导入已有 AGENTS.md
       const promptsService = new PromptsBackendService(codexHome);
       promptsService.autoImportOnFirstLaunch();
-      AppStorage.setOrCreate<string>('defaultWorkspaceRoot', defaultWorkspaceRoot);
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
     }

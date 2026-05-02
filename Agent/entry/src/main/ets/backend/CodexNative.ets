@@ -196,7 +196,8 @@ export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
     return new CodexProviderConfig('', '', '');
   }
   try {
-    return parseProviderConfig(nativeBridge!.getProviderConfig(''));
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    return parseProviderConfig(nativeBridge!.getProviderConfig(codexHome));
   } catch (_err) {
     return new CodexProviderConfig('', '', '');
   }
@@ -204,12 +205,18 @@ export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
 
 export function saveEmbeddedCodexProviderConfig(baseUrl: string, apiKey: string, model: string): CodexProviderConfig {
   if (nativeModuleUnavailable()) {
-    return new CodexProviderConfig('', '', '');
+    throw new Error('libentry.so failed to load.');
   }
   try {
-    return parseProviderConfig(nativeBridge!.saveProviderConfig('', baseUrl, apiKey, model));
-  } catch (_err) {
-    return new CodexProviderConfig('', '', '');
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    const response = nativeBridge!.saveProviderConfig(codexHome, baseUrl, apiKey, model);
+    const parsed = parseProviderConfig(response);
+    if (parsed.baseUrl.trim().length === 0 && parsed.apiKey.trim().length === 0 && parsed.model.trim().length === 0) {
+      throw new Error('native saveProviderConfig returned an empty provider config');
+    }
+    return parsed;
+  } catch (err) {
+    throw err instanceof Error ? err : new Error('Failed to save provider config.');
   }
 }
 
@@ -218,7 +225,8 @@ export function getEmbeddedCodexProviderCatalog(): ProviderCatalog {
     return new ProviderCatalog(1, '', [], '');
   }
   try {
-    return parseProviderCatalog(nativeBridge!.getProviderCatalog(''));
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    return parseProviderCatalog(nativeBridge!.getProviderCatalog(codexHome));
   } catch (_err) {
     return new ProviderCatalog(1, '', [], '');
   }
@@ -226,12 +234,17 @@ export function getEmbeddedCodexProviderCatalog(): ProviderCatalog {
 
 export function saveEmbeddedCodexProviderCatalog(catalog: ProviderCatalog): ProviderCatalog {
   if (nativeModuleUnavailable()) {
-    return new ProviderCatalog(1, '', [], '');
+    throw new Error('libentry.so failed to load.');
   }
   try {
-    return parseProviderCatalog(nativeBridge!.saveProviderCatalog('', JSON.stringify(catalog)));
-  } catch (_err) {
-    return new ProviderCatalog(1, '', [], '');
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    const parsed = parseProviderCatalog(nativeBridge!.saveProviderCatalog(codexHome, JSON.stringify(catalog)));
+    if (parsed.providers.length === 0) {
+      throw new Error('native saveProviderCatalog returned an empty provider catalog');
+    }
+    return parsed;
+  } catch (err) {
+    throw err instanceof Error ? err : new Error('Failed to save provider catalog.');
   }
 }
 
