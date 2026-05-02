@@ -47,6 +47,7 @@ const char* codex_ohos_host_mcp_oauth_start(const char* params_json);
 
 const char* codex_ohos_host_account_login(const char* params_json);
 const char* codex_ohos_host_account_read(void);
+const char* codex_ohos_host_check_workspace_access(const char* params_json);
 
 #ifdef __cplusplus
 }

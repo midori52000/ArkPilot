@@ -9,23 +9,33 @@ import {
 } from '../backend/CodexBackend';
 import {
   CodexProviderConfig,
+  WorkspaceAccessStatus,
+  checkWorkspaceAccess,
   getEmbeddedCodexHostStatus,
+  getEmbeddedCodexProviderCatalog,
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
-import { SidebarView } from '../backend/ConsoleModels';
+import { providerCatalogService } from '../backend/ProviderCatalogService';
+import { SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
 import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+
+const INDEX_DOMAIN = 0x0000;
+const INDEX_TAG = 'IndexProviderDebug';
 
 class WorkspaceItem {
   id: number;
   title: string;
   description: string;
+  workspaceId: string;
 
-  constructor(id: number, title: string, description: string) {
+  constructor(id: number, title: string, description: string, workspaceId?: string) {
     this.id = id;
     this.title = title;
     this.description = description;
+    this.workspaceId = workspaceId ?? `session:${id.toString()}`;
   }
 }
 
@@ -114,10 +124,15 @@ struct Index {
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
   private readonly workspaceRoots: Map<number, string> = new Map();
+  private readonly workspaceIds: Map<number, string> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private activeSidebarView: SidebarView = 'chat';
   @State private activeWorkspaceId: number = 1;
+  @State private activeWorkspaceBindingId: string = 'session:1';
+  @State private activeWorkspacePermissionState: WorkspacePermissionState = 'unavailable';
+  @State private activeWorkspaceAccessKind: WorkspaceAccessKind = 'unknown';
+  @State private workspaceStatusText: string = 'å°šæœªæ£€æµ‹å·¥ä½œåŒºæƒé™';
   @State private selectedEffortIndex: number = 0;
   @State private showEffortOptions: boolean = false;
   @State private serverUrl: string = 'ws://127.0.0.1:7456';
@@ -170,6 +185,7 @@ struct Index {
     this.applyBackendSnapshot(codexBackend.snapshot());
     this.applyEmbeddedHostStatus();
     this.loadProviderConfig();
+    this.initializeDefaultWorkspace();
     this.scheduleEmbeddedHostReconnect(0);
     this.scheduleMessageScrollToBottom();
   }
@@ -238,6 +254,56 @@ struct Index {
     return this.workspaces[0];
   }
 
+  private ensureWorkspaceBinding(item: WorkspaceItem): string {
+    const existing: string | undefined = this.workspaceIds.get(item.id);
+    if (existing !== undefined && existing.trim().length > 0) {
+      item.workspaceId = existing;
+      return existing;
+    }
+    const workspaceId: string = item.workspaceId.trim().length > 0 ? item.workspaceId : `session:${item.id.toString()}`;
+    item.workspaceId = workspaceId;
+    this.workspaceIds.set(item.id, workspaceId);
+    return workspaceId;
+  }
+
+  private refreshWorkspaceBindingState(): void {
+    const active: WorkspaceItem = this.activeWorkspace();
+    this.activeWorkspaceBindingId = this.ensureWorkspaceBinding(active);
+    if (this.workspaceRoot.trim().length > 0) {
+      const status: WorkspaceAccessStatus = checkWorkspaceAccess(this.workspaceRoot.trim());
+      this.activeWorkspacePermissionState = this.mapWorkspacePermissionState(status.permissionState);
+      this.activeWorkspaceAccessKind = this.mapWorkspaceAccessKind(status.accessKind);
+      this.workspaceStatusText = status.message.trim().length > 0 ? status.message : 'å·¥ä½œåŒºå·²é…ç½®';
+      return;
+    }
+    this.activeWorkspacePermissionState = 'unavailable';
+    this.activeWorkspaceAccessKind = 'unknown';
+    this.workspaceStatusText = 'å½“å‰æœªé…ç½®å·¥ä½œåŒº';
+  }
+
+  private initializeDefaultWorkspace(): void {
+    const defaultWorkspaceRoot: string = AppStorage.get('defaultWorkspaceRoot') as string ?? '';
+    if (this.workspaceRoot.trim().length === 0 && defaultWorkspaceRoot.trim().length > 0) {
+      this.workspaceRoot = defaultWorkspaceRoot;
+      this.workspaceRoots.set(this.activeWorkspaceId, defaultWorkspaceRoot);
+    }
+    this.refreshWorkspaceBindingState();
+  }
+
+  private mapWorkspacePermissionState(value: string): WorkspacePermissionState {
+    if (value === 'writable' || value === 'readonly' || value === 'revoked') {
+      return value;
+    }
+    return 'unavailable';
+  }
+
+  private mapWorkspaceAccessKind(value: string): WorkspaceAccessKind {
+    if (value === 'sandbox' || value === 'user_granted' || value === 'readonly') {
+      return value;
+    }
+    return 'unknown';
+  }
+
   private currentModelLabel(): string {
     const model: string = this.manualModel.trim();
     if (model.length === 0) {
@@ -273,16 +339,22 @@ struct Index {
   private async runTurn(prompt: string): Promise<void> {
     this.isRunning = true;
     this.workspaceRoots.set(this.activeWorkspaceId, this.workspaceRoot);
+    this.refreshWorkspaceBindingState();
     codexBackend.configureServerUrl(this.serverUrl);
 
     const workspace: WorkspaceItem = this.activeWorkspace();
+    const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
     this.applyEmbeddedHostStatus();
     try {
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(
           workspace.id.toString(),
           workspace.title,
-          this.workspaceRoot.trim(),
+          this.activeWorkspaceBindingId,
+          trimmedWorkspaceRoot,
+          this.activeWorkspacePermissionState,
+          this.activeWorkspaceAccessKind,
+          trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
           this.currentModelValue(),
           this.currentEffortValue(),
           prompt
@@ -422,10 +494,20 @@ struct Index {
 
   private loadProviderConfig(): void {
     const config: CodexProviderConfig = getEmbeddedCodexProviderConfig();
+    const catalog = getEmbeddedCodexProviderCatalog();
     this.providerBaseUrl = config.baseUrl;
     this.providerApiKey = config.apiKey;
     this.manualModel = config.model;
     this.providerStatusText = this.describeProviderConfig(config);
+    hilog.info(
+      INDEX_DOMAIN,
+      INDEX_TAG,
+      'loadProviderConfig baseUrl=%{public}s model=%{public}s apiKeyLen=%{public}d catalogProviders=%{public}d',
+      config.baseUrl,
+      config.model,
+      config.apiKey.length,
+      catalog.providers.length
+    );
   }
 
   private async saveProviderConfig(): Promise<void> {
@@ -435,22 +517,52 @@ struct Index {
 
     this.isSavingProvider = true;
     try {
+      hilog.info(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig input baseUrl=%{public}s model=%{public}s apiKeyLen=%{public}d',
+        this.providerBaseUrl.trim(),
+        this.manualModel.trim(),
+        this.providerApiKey.trim().length
+      );
       const config: CodexProviderConfig = saveEmbeddedCodexProviderConfig(
         this.providerBaseUrl.trim(),
         this.providerApiKey.trim(),
         this.manualModel.trim()
       );
+      hilog.info(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig native returned baseUrl=%{public}s model=%{public}s apiKeyLen=%{public}d',
+        config.baseUrl,
+        config.model,
+        config.apiKey.length
+      );
       this.providerBaseUrl = config.baseUrl;
       this.providerApiKey = config.apiKey;
       this.manualModel = config.model;
+      const importedCatalog = providerCatalogService.importCurrentProvider();
+      hilog.info(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig imported catalog activeProviderId=%{public}s providers=%{public}d',
+        importedCatalog.activeProviderId,
+        importedCatalog.providers.length
+      );
       this.providerStatusText = this.describeProviderConfig(config);
       this.summaryTitle = 'Provider config saved';
       this.summaryPoints = [
-        'base_url, api_key, and default model were written to CODEX_HOME/config.toml.',
-        'Restart the app to apply provider changes to the embedded app-server.',
+        'base_url, api_key, and default model were written to CODEX_HOME and synced to the active provider catalog.',
+        'Restart the app to apply provider changes to the embedded app-server runtime.',
         this.providerStatusText
       ];
     } catch (err) {
+      hilog.error(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig failed: %{public}s',
+        this.describeError(err)
+      );
       this.summaryTitle = 'Provider config failed';
       this.summaryPoints = [this.describeError(err)];
     } finally {
@@ -469,6 +581,7 @@ struct Index {
   private selectWorkspace(item: WorkspaceItem): void {
     this.activeWorkspaceId = item.id;
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
+    this.refreshWorkspaceBindingState();
     this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
     this.activeSidebarView = 'chat';
   }
@@ -1205,7 +1318,76 @@ struct Index {
               .onChange((value: string) => {
                 this.workspaceRoot = value;
                 this.workspaceRoots.set(this.activeWorkspaceId, value);
+                this.refreshWorkspaceBindingState();
               })
+
+            Text(this.workspaceStatusText)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .margin({ top: 8 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(12)
+          .margin({ top: 10 })
+          .backgroundColor('#F8FAFC')
+          .border({ width: 1, color: '#E2E8F0' })
+          .borderRadius(16)
+
+          Column() {
+            this.panelTitle('Provider 调试', '临时入口：直接修改 base URL、API Key 和 model')
+
+            TextInput({ text: this.providerBaseUrl, placeholder: 'http://127.0.0.1:8317/v1' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.providerBaseUrl = value;
+              })
+
+            TextInput({ text: this.providerApiKey, placeholder: 'API key' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.providerApiKey = value;
+              })
+
+            TextInput({ text: this.manualModel, placeholder: 'gpt-5.4' })
+              .width('100%')
+              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12 })
+              .onChange((value: string) => {
+                this.manualModel = value;
+              })
+
+            Button(this.providerButtonLabel())
+              .height(34)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(16)
+              .onClick(() => {
+                void this.saveProviderConfig();
+              })
+
+            Text(this.providerStatusText)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .margin({ top: 8 })
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')

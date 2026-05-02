@@ -15,7 +15,16 @@ import {
   turnPollNative,
   turnStartNative
 } from './CodexNative';
-import { McpAuthStatus, McpHealthStatus, McpServerRecord, SessionSummary, UsageSummary } from './ConsoleModels';
+import {
+  McpAuthStatus,
+  McpHealthStatus,
+  McpServerRecord,
+  SessionSummary,
+  UsageSummary,
+  WorkspaceAccessKind,
+  WorkspaceDescriptor,
+  WorkspacePermissionState
+} from './ConsoleModels';
 
 export type CodexMessageRole = 'user' | 'assistant' | 'system';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
@@ -48,6 +57,7 @@ class TurnPayload {
 
 class ThreadStartResultPayload {
   thread: ThreadPayload = new ThreadPayload();
+  error?: TurnErrorPayload;
 }
 
 class TurnStartResultPayload {
@@ -199,15 +209,34 @@ export class CodexDiffLine {
 export class CodexTurnRequest {
   threadKey: string;
   title: string;
+  workspaceId: string;
   workspaceRoot: string;
+  workspacePermissionState: WorkspacePermissionState;
+  workspaceAccessKind: WorkspaceAccessKind;
+  writableRoots: string[];
   model: string;
   reasoningEffort: string;
   prompt: string;
 
-  constructor(threadKey: string, title: string, workspaceRoot: string, model: string, reasoningEffort: string, prompt: string) {
+  constructor(
+    threadKey: string,
+    title: string,
+    workspaceId: string,
+    workspaceRoot: string,
+    workspacePermissionState: WorkspacePermissionState,
+    workspaceAccessKind: WorkspaceAccessKind,
+    writableRoots: string[],
+    model: string,
+    reasoningEffort: string,
+    prompt: string
+  ) {
     this.threadKey = threadKey;
     this.title = title;
+    this.workspaceId = workspaceId;
     this.workspaceRoot = workspaceRoot;
+    this.workspacePermissionState = workspacePermissionState;
+    this.workspaceAccessKind = workspaceAccessKind;
+    this.writableRoots = writableRoots;
     this.model = model;
     this.reasoningEffort = reasoningEffort;
     this.prompt = prompt;
@@ -308,7 +337,12 @@ class CodexThreadRecord {
   localKey: string;
   title: string;
   remoteThreadId: string = '';
+  workspaceId: string = '';
+  workspaceName: string = '';
   cwd: string = '';
+  workspacePermissionState: WorkspacePermissionState = 'unavailable';
+  workspaceAccessKind: WorkspaceAccessKind = 'unknown';
+  writableRoots: string[] = [];
   messages: CodexChatMessage[] = [];
   diffLines: CodexDiffLine[] = [];
   summaryTitle: string = '等待 ArkPilot 响应';
@@ -355,6 +389,7 @@ export class CodexBackend {
   private readonly listeners: Map<number, BackendListener> = new Map();
   private readonly threads: Map<string, CodexThreadRecord> = new Map();
   private readonly threadKeysByRemoteId: Map<string, string> = new Map();
+  private readonly workspaceCatalog: Map<string, WorkspaceDescriptor> = new Map();
   private serverUrl: string = DEFAULT_SERVER_URL;
   private listenerSequence: number = 1;
   private pendingApproval: CodexApprovalRequest | null = null;
@@ -403,7 +438,21 @@ export class CodexBackend {
     const sessions: SessionSummary[] = [];
     this.threads.forEach((thread: CodexThreadRecord) => {
       const lastMessageTimestamp: string = thread.messages.length > 0 ? thread.messages[thread.messages.length - 1].timestamp : thread.updatedAt;
-      sessions.push(new SessionSummary(thread.localKey, thread.title, thread.cwd, thread.messages.length, lastMessageTimestamp, thread.summaryTitle, thread.lastTurnStatus, thread.changedFiles));
+      const workspace: WorkspaceDescriptor = this.workspaceDescriptorForThread(thread);
+      sessions.push(new SessionSummary(
+        thread.localKey,
+        thread.title,
+        workspace.id,
+        workspace.name,
+        workspace.rootPath,
+        workspace.permissionState,
+        workspace.accessKind,
+        thread.messages.length,
+        lastMessageTimestamp,
+        thread.summaryTitle,
+        thread.lastTurnStatus,
+        thread.changedFiles
+      ));
     });
     return sessions.sort((left: SessionSummary, right: SessionSummary) => {
       if (left.lastUpdatedAt === right.lastUpdatedAt) {
@@ -530,9 +579,7 @@ export class CodexBackend {
     const thread: CodexThreadRecord = await this.ensureRemoteThread(request);
     const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate);
     thread.activeTurn = pendingTurn;
-    if (request.workspaceRoot.trim().length > 0) {
-      thread.cwd = request.workspaceRoot.trim();
-    }
+    const workspace: WorkspaceDescriptor = this.bindWorkspaceToThread(thread, request);
 
     const startedSnapshot: CodexTurnResult = this.beginLocalTurn(thread, request.prompt);
     this.emitTurnUpdate(thread, pendingTurn, startedSnapshot);
@@ -542,13 +589,28 @@ export class CodexBackend {
     const inputItem: TurnInputItemPayload = new TurnInputItemPayload();
     inputItem.text = request.prompt;
     turnRequest.input = [inputItem];
-    turnRequest.cwd = request.workspaceRoot.trim().length > 0 ? request.workspaceRoot.trim() : undefined;
+    turnRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
     turnRequest.model = request.model !== 'default' ? request.model : undefined;
     turnRequest.effort = request.reasoningEffort !== 'default' ? request.reasoningEffort : undefined;
     const turnResult: Object = parseJsonText(turnStartNative(JSON.stringify(turnRequest)), new Object() as Object);
 
     const turnPayload: Record<string, Object> = ((turnResult as Record<string, Object>)['turn'] as Record<string, Object> | undefined) ?? {};
-    pendingTurn.turnId = typeof turnPayload['id'] === 'string' ? (turnPayload['id'] as string) : 'native-turn';
+    pendingTurn.turnId = typeof turnPayload['id'] === 'string' ? (turnPayload['id'] as string) : '';
+    const rawStatus: string = typeof turnPayload['status'] === 'string' ? (turnPayload['status'] as string) : 'unknown';
+    const errorPayload: Record<string, Object> = (turnPayload['error'] as Record<string, Object> | undefined) ?? {};
+    const errorMessage: string = typeof errorPayload['message'] === 'string' ? (errorPayload['message'] as string) : '';
+    this.logInfo(`turnStart thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} rawStatus=${rawStatus} error=${errorMessage}`);
+    if (rawStatus === 'failed' || pendingTurn.turnId.trim().length === 0) {
+      thread.activeTurn = null;
+      thread.lastTurnStatus = 'failed';
+      thread.updatedAt = currentTimestamp();
+      thread.summaryTitle = '本轮失败';
+      thread.summaryPoints = [errorMessage.trim().length > 0 ? errorMessage : 'turn/start 未返回有效的 turnId。'];
+      const failedSnapshot: CodexTurnResult = this.snapshotForThread(thread, 'failed');
+      this.emitTurnUpdate(thread, pendingTurn, failedSnapshot);
+      pendingTurn.resolveCompletion(failedSnapshot);
+      return failedSnapshot;
+    }
 
     const result: CodexTurnResult = await this.pollTurnUntilCompleted(thread, pendingTurn);
     return result;
@@ -664,22 +726,83 @@ export class CodexBackend {
     const existing: CodexThreadRecord | undefined = this.threads.get(request.threadKey);
     if (existing !== undefined && existing.remoteThreadId.length > 0) {
       existing.title = request.title;
+      this.bindWorkspaceToThread(existing, request);
       return existing;
     }
     const thread: CodexThreadRecord = existing ?? new CodexThreadRecord(request.threadKey, request.title);
+    const workspace: WorkspaceDescriptor = this.bindWorkspaceToThread(thread, request);
     const threadStartRequest: ThreadStartRequestPayload = new ThreadStartRequestPayload();
-    threadStartRequest.cwd = request.workspaceRoot.trim().length > 0 ? request.workspaceRoot.trim() : undefined;
+    threadStartRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
     threadStartRequest.model = request.model !== 'default' ? request.model : undefined;
     const payload: ThreadStartResultPayload = parseJsonText(threadStartNative(JSON.stringify(threadStartRequest)), new ThreadStartResultPayload()) as ThreadStartResultPayload;
+    if (payload.thread === undefined || payload.thread.id.length === 0) {
+      const message: string = payload.error?.message?.trim() ?? '';
+      if (message.length > 0) {
+        throw new Error(`threadStart failed: ${message}`);
+      }
+    }
     if (payload.thread === undefined || payload.thread.id.length === 0) {
       payload.thread = new ThreadPayload();
       payload.thread.id = `native-thread-${request.threadKey}`;
     }
     thread.remoteThreadId = payload.thread.id;
-    thread.cwd = request.workspaceRoot.trim();
     this.threads.set(request.threadKey, thread);
     this.threadKeysByRemoteId.set(payload.thread.id, request.threadKey);
     return thread;
+  }
+
+  private bindWorkspaceToThread(thread: CodexThreadRecord, request: CodexTurnRequest): WorkspaceDescriptor {
+    const workspace: WorkspaceDescriptor = this.upsertWorkspaceDescriptor(request);
+    thread.workspaceId = workspace.id;
+    thread.workspaceName = workspace.name;
+    thread.cwd = workspace.rootPath;
+    thread.workspacePermissionState = workspace.permissionState;
+    thread.workspaceAccessKind = workspace.accessKind;
+    thread.writableRoots = [...workspace.writableRoots];
+    return workspace;
+  }
+
+  private upsertWorkspaceDescriptor(request: CodexTurnRequest): WorkspaceDescriptor {
+    const trimmedRoot: string = request.workspaceRoot.trim();
+    const workspaceId: string = request.workspaceId.trim().length > 0 ? request.workspaceId.trim() : `session:${request.threadKey}`;
+    const existing: WorkspaceDescriptor | undefined = this.workspaceCatalog.get(workspaceId);
+    const nextRoot: string = trimmedRoot.length > 0 ? trimmedRoot : (existing?.rootPath ?? '');
+    const nextWritableRoots: string[] = request.writableRoots.length > 0
+      ? [...request.writableRoots]
+      : (nextRoot.length > 0 ? [nextRoot] : (existing?.writableRoots ?? []));
+    const nextName: string = request.title.trim().length > 0 ? request.title.trim() : (existing?.name ?? workspaceId);
+    const workspace: WorkspaceDescriptor = new WorkspaceDescriptor(
+      workspaceId,
+      nextName,
+      nextRoot,
+      request.workspaceAccessKind,
+      request.workspacePermissionState,
+      existing?.sourceUri ?? '',
+      nextWritableRoots,
+      existing?.grantedAt ?? Date.now(),
+      Date.now()
+    );
+    this.workspaceCatalog.set(workspaceId, workspace);
+    return workspace;
+  }
+
+  private workspaceDescriptorForThread(thread: CodexThreadRecord): WorkspaceDescriptor {
+    const existing: WorkspaceDescriptor | undefined = thread.workspaceId.length > 0 ? this.workspaceCatalog.get(thread.workspaceId) : undefined;
+    if (existing !== undefined) {
+      return existing;
+    }
+    const inferredRoot: string = thread.cwd.trim();
+    return new WorkspaceDescriptor(
+      thread.workspaceId.length > 0 ? thread.workspaceId : `session:${thread.localKey}`,
+      thread.workspaceName.length > 0 ? thread.workspaceName : thread.title,
+      inferredRoot,
+      thread.workspaceAccessKind,
+      thread.workspacePermissionState,
+      '',
+      thread.writableRoots.length > 0 ? [...thread.writableRoots] : (inferredRoot.length > 0 ? [inferredRoot] : []),
+      Date.now(),
+      Date.now()
+    );
   }
 
   private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
@@ -695,6 +818,7 @@ export class CodexBackend {
   private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
     while (true) {
       const pollObject: Record<string, Object> = parseJsonText(turnPollNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
+      this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
       const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
       this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
       if (nextSnapshot.status !== 'inProgress') {
@@ -711,7 +835,7 @@ export class CodexBackend {
     const status: CodexTurnStatus = this.mapTurnStatus(statusRaw);
     const messages: Object[] = Array.isArray(payload['messages']) ? (payload['messages'] as Object[]) : [];
     if (messages.length > 0) {
-      thread.messages = messages.map((item: Object, index: number) => {
+      const nextMessages: CodexChatMessage[] = messages.map((item: Object, index: number) => {
         const message = item as Record<string, Object>;
         const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
         const role: CodexMessageRole = roleRaw === 'user' || roleRaw === 'system' ? roleRaw : 'assistant';
@@ -724,6 +848,7 @@ export class CodexBackend {
           typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp()
         );
       });
+      thread.messages = this.mergeThreadMessages(thread.messages, nextMessages);
     }
     const diffText: string = typeof payload['diff'] === 'string' ? (payload['diff'] as string) : '';
     if (diffText.trim().length > 0) {
@@ -739,6 +864,33 @@ export class CodexBackend {
     thread.lastTurnStatus = status;
     thread.updatedAt = currentTimestamp();
     return this.snapshotForThread(thread, status, turnId);
+  }
+
+  private mergeThreadMessages(existing: CodexChatMessage[], incoming: CodexChatMessage[]): CodexChatMessage[] {
+    if (existing.length === 0) {
+      return incoming.map((message: CodexChatMessage) => this.cloneMessage(message));
+    }
+    const merged: CodexChatMessage[] = existing.map((message: CodexChatMessage) => this.cloneMessage(message));
+    for (const message of incoming) {
+      const index: number = merged.findIndex((item: CodexChatMessage) => item.messageId === message.messageId);
+      if (index >= 0) {
+        merged[index] = this.cloneMessage(message);
+      } else {
+        merged.push(this.cloneMessage(message));
+      }
+    }
+    for (let index: number = 0; index < merged.length; index += 1) {
+      const current: CodexChatMessage = merged[index];
+      merged[index] = new CodexChatMessage(
+        current.messageId,
+        index + 1,
+        current.author,
+        current.role,
+        current.content,
+        current.timestamp
+      );
+    }
+    return merged;
   }
 
   private buildApprovalFromNative(payload: Record<string, Object>): CodexApprovalRequest | null {

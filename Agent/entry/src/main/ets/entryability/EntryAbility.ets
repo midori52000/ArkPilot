@@ -3,6 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { startEmbeddedCodexHost } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
+import fileIo from '@ohos.file.fs';
 
 const DOMAIN = 0x0000;
 const TAG = 'CodexHost';
@@ -18,6 +19,19 @@ export default class EntryAbility extends UIAbility {
 
     try {
       const codexHome: string = `${this.context.filesDir}/codex-home`;
+      const defaultWorkspaceRoot: string = `${this.context.filesDir}/workspace-default`;
+      AppStorage.setOrCreate<string>('codexHome', codexHome);
+      AppStorage.setOrCreate<string>('defaultWorkspaceRoot', defaultWorkspaceRoot);
+      try {
+        fileIo.mkdirSync(defaultWorkspaceRoot, true);
+      } catch (mkdirErr) {
+        const mkdirErrText: string = JSON.stringify(mkdirErr);
+        if (!mkdirErrText.includes('"code":13900015')) {
+          hilog.error(DOMAIN, TAG, 'Failed to prepare workspace directory. Cause: %{public}s', mkdirErrText);
+          throw new Error(mkdirErrText);
+        }
+        hilog.info(DOMAIN, TAG, 'Workspace directory already exists: %{public}s', defaultWorkspaceRoot);
+      }
       const status = startEmbeddedCodexHost(codexHome, DEFAULT_SERVER_URL);
       hilog.info(
         DOMAIN,

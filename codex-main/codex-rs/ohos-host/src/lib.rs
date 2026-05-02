@@ -15,8 +15,26 @@ use anyhow::Result;
 use codex_app_server::AppServerTransport;
 use codex_app_server::AppServerWebsocketAuthSettings;
 use codex_app_server::run_main_with_transport;
+use codex_app_server_client::AppServerEvent;
+use codex_app_server_client::RemoteAppServerClient;
+use codex_app_server_client::RemoteAppServerConnectArgs;
 use codex_arg0::Arg0DispatchPaths;
+use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::ApprovalsReviewer;
+use codex_app_server_protocol::AskForApproval;
+use codex_app_server_protocol::RequestId;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_app_server_protocol::SandboxMode;
+use codex_app_server_protocol::SandboxPolicy;
+use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::ThreadStartParams;
+use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::TurnStartParams;
+use codex_app_server_protocol::TurnStartResponse;
+use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UserInput;
 use codex_core::config_loader::LoaderOverrides;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_cli::CliConfigOverrides;
 use once_cell::sync::Lazy;
@@ -29,7 +47,9 @@ mod skills_hash;
 mod skills_registry;
 
 const DEFAULT_LISTEN_URL: &str = "ws://127.0.0.1:7456";
-const DEFAULT_PROVIDER_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_PROVIDER_BASE_URL: &str = "http://192.168.31.101:8317/v1";
+const DEFAULT_PROVIDER_API_KEY: &str = "midori52000";
+const DEFAULT_PROVIDER_MODEL: &str = "gpt-5.4";
 const DEFAULT_APPROVAL_POLICY: &str = "on-request";
 const DEFAULT_SANDBOX_MODE: &str = "workspace-write";
 const CUSTOM_PROVIDER_ID: &str = "harmony-openai-compatible";
@@ -37,6 +57,9 @@ const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const DEFAULT_PROVIDER_MODE: &str = "exclusive";
 const DEFAULT_PROVIDER_SYNC_STATUS: &str = "synced";
+const REMOTE_CLIENT_NAME: &str = "codex_harmony_agent_native";
+const REMOTE_CLIENT_VERSION: &str = "0.1.0";
+const REMOTE_CLIENT_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Default)]
 struct HostState {
@@ -44,6 +67,97 @@ struct HostState {
     server_url: String,
     message: String,
     codex_home: String,
+}
+
+#[derive(Default)]
+struct NativeConversationState {
+    next_request_id: i64,
+    client: Option<RemoteAppServerClient>,
+    initialized: bool,
+    threads: std::collections::HashMap<String, NativeThreadState>,
+    turns: std::collections::HashMap<String, NativeTurnState>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NativeThreadState {
+    remote_thread_id: String,
+    messages: Vec<NativeMessage>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NativeTurnState {
+    thread_id: String,
+    status: String,
+    messages: Vec<NativeMessage>,
+    summary: Vec<String>,
+    summary_title: String,
+    diff: String,
+    error_message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMessage {
+    message_id: String,
+    author: String,
+    role: String,
+    content: String,
+    timestamp: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeInitializeRequest {
+    #[serde(default)]
+    client_info: Option<NativeClientInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeClientInfo {
+    #[allow(dead_code)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadStartRequest {
+    cwd: Option<String>,
+    model: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTurnInput {
+    #[serde(rename = "type")]
+    kind: String,
+    text: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTurnStartRequest {
+    thread_id: String,
+    #[serde(default)]
+    input: Vec<NativeTurnInput>,
+    cwd: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceAccessStatus {
+    root_path: String,
+    access_kind: String,
+    permission_state: String,
+    writable: bool,
+    exists: bool,
+    message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,8 +172,8 @@ impl Default for ProviderSettings {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_PROVIDER_BASE_URL.to_string(),
-            api_key: String::new(),
-            model: String::new(),
+            api_key: DEFAULT_PROVIDER_API_KEY.to_string(),
+            model: DEFAULT_PROVIDER_MODEL.to_string(),
         }
     }
 }
@@ -162,6 +276,19 @@ static LAST_MCP_OAUTH_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 });
 static LAST_ACCOUNT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{\"account\":null,\"requiresOpenaiAuth\":false}").expect("empty cstring"))
+});
+static LAST_WORKSPACE_ACCESS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static NATIVE_CONVERSATION_STATE: Lazy<Mutex<NativeConversationState>> =
+    Lazy::new(|| Mutex::new(NativeConversationState::default()));
+static NATIVE_ASYNC_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("native async runtime");
+    Mutex::new(runtime)
 });
 
 #[unsafe(no_mangle)]
@@ -882,27 +1009,199 @@ fn write_cstring(target: &Mutex<CString>, value: &str) -> *const c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_initialize(config_json: *const c_char) -> *const c_char {
     let config_text = ffi_string(config_json).unwrap_or_else(|| "{}".to_string());
-    let json = format!("{{\"ok\":true,\"config\":{}}}", config_text);
-    write_cstring(&LAST_INIT_RESULT_JSON, &json)
+    let request = serde_json::from_str::<NativeInitializeRequest>(&config_text).ok();
+
+    match with_runtime_result(connect_remote_client_if_needed()) {
+        Ok(()) => {
+            let mut state = NATIVE_CONVERSATION_STATE
+                .lock()
+                .expect("native conversation lock");
+            state.initialized = true;
+            let platform_os = "ohos";
+            let client_name = request
+                .and_then(|payload| payload.client_info.and_then(|info| info.name))
+                .unwrap_or_else(|| REMOTE_CLIENT_NAME.to_string());
+            let server_url = current_server_url();
+            let json = serde_json::json!({
+                "ok": true,
+                "platformOs": platform_os,
+                "serverUrl": server_url,
+                "clientName": client_name,
+            })
+            .to_string();
+            write_cstring(&LAST_INIT_RESULT_JSON, &json)
+        }
+        Err(err) => {
+            let json = serde_json::json!({
+                "ok": false,
+                "platformOs": "ohos",
+                "error": err.to_string(),
+            })
+            .to_string();
+            write_cstring(&LAST_INIT_RESULT_JSON, &json)
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let json = format!(
-        "{{\"thread\":{{\"id\":\"native-thread\"}},\"params\":{}}}",
-        params_text
-    );
+    let request =
+        serde_json::from_str::<NativeThreadStartRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let mut params = ThreadStartParams::default();
+        params.cwd = request.cwd.filter(|value| !value.trim().is_empty());
+        params.model = request.model.filter(|value| !value.trim().is_empty());
+        params.model_provider = Some(CUSTOM_PROVIDER_ID.to_string());
+        params.approval_policy = parse_approval_policy(
+            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+        )?;
+        params.approvals_reviewer = Some(ApprovalsReviewer::User);
+        params.sandbox = parse_thread_sandbox_mode(
+            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE))
+        )?;
+        params.ephemeral = Some(true);
+
+        let response: ThreadStartResponse = handle
+            .request_typed(ClientRequest::ThreadStart {
+                request_id,
+                params,
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        with_native_state(|state| {
+            state.threads.insert(
+                response.thread.id.clone(),
+                NativeThreadState {
+                    remote_thread_id: response.thread.id.clone(),
+                    messages: collect_thread_messages(&response.thread.turns),
+                },
+            );
+        });
+
+        Ok::<ThreadStartResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => serde_json::json!({
+            "thread": { "id": response.thread.id },
+            "model": response.model,
+            "cwd": response.cwd,
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "thread": { "id": "" },
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
     write_cstring(&LAST_THREAD_RESULT_JSON, &json)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let json = format!(
-        "{{\"turn\":{{\"id\":\"native-turn\",\"status\":\"completed\"}},\"params\":{}}}",
-        params_text
-    );
+    let request = serde_json::from_str::<NativeTurnStartRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let mut params = TurnStartParams::default();
+        params.thread_id = request.thread_id.clone();
+        let cwd = request
+            .cwd
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from);
+        params.cwd = cwd.clone();
+        params.model = request.model.filter(|value| !value.trim().is_empty());
+        params.effort = parse_reasoning_effort(request.effort.as_deref())?;
+        params.approval_policy = parse_approval_policy(
+            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+        )?;
+        params.approvals_reviewer = Some(ApprovalsReviewer::User);
+        params.sandbox_policy = build_sandbox_policy(
+            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE)),
+            cwd.as_deref(),
+        )?;
+        params.input = request
+            .input
+            .into_iter()
+            .filter_map(|item| {
+                if item.kind == "text" {
+                    let text = item.text.unwrap_or_default();
+                    Some(UserInput::Text {
+                        text,
+                        text_elements: Vec::new(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let response: TurnStartResponse = handle
+            .request_typed(ClientRequest::TurnStart {
+                request_id,
+                params,
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        with_native_state(|state| {
+            state.turns.insert(
+                response.turn.id.clone(),
+                NativeTurnState {
+                    thread_id: request.thread_id.clone(),
+                    status: map_turn_status(&response.turn.status).to_string(),
+                    messages: Vec::new(),
+                    summary: vec!["正在等待 Codex 响应".to_string()],
+                    summary_title: "执行中".to_string(),
+                    diff: String::new(),
+                    error_message: String::new(),
+                },
+            );
+        });
+
+        Ok::<TurnStartResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => serde_json::json!({
+            "turn": {
+                "id": response.turn.id,
+                "status": map_turn_status(&response.turn.status),
+            }
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "turn": {
+                "id": "",
+                "status": "failed",
+                "error": { "message": err.to_string() }
+            }
+        })
+        .to_string(),
+    };
     write_cstring(&LAST_TURN_RESULT_JSON, &json)
 }
 
@@ -921,11 +1220,40 @@ pub extern "C" fn codex_ohos_host_turn_poll(
 ) -> *const c_char {
     let thread_id = ffi_string(thread_id).unwrap_or_default();
     let turn_id = ffi_string(turn_id).unwrap_or_default();
-    let json = format!(
-        "{{\"threadId\":\"{}\",\"turnId\":\"{}\",\"status\":\"completed\",\"messages\":[],\"summary\":[]}}",
-        escape_json_string(&thread_id),
-        escape_json_string(&turn_id)
-    );
+    let response = with_runtime_result(async {
+        process_pending_events(Some(&turn_id)).await
+    });
+
+    let json = match response {
+        Ok(()) => {
+            let snapshot = with_native_state(|state| {
+                build_turn_poll_payload(
+                    state,
+                    &thread_id,
+                    &turn_id,
+                )
+            });
+            serde_json::to_string(&snapshot).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "status": "failed",
+                    "messages": [],
+                    "summary": ["轮询结果序列化失败。"],
+                })
+                .to_string()
+            })
+        }
+        Err(err) => serde_json::json!({
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "status": "failed",
+            "messages": [],
+            "summaryTitle": "轮询失败",
+            "summary": [err.to_string()],
+        })
+        .to_string(),
+    };
     write_cstring(&LAST_TURN_POLL_JSON, &json)
 }
 
@@ -984,6 +1312,66 @@ pub extern "C" fn codex_ohos_host_account_read() -> *const c_char {
     write_cstring(&LAST_ACCOUNT_JSON, "{\"account\":null,\"requiresOpenaiAuth\":false}")
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_check_workspace_access(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let root_path = serde_json::from_str::<serde_json::Value>(&params_text)
+        .ok()
+        .and_then(|value| value.get("rootPath").and_then(|field| field.as_str()).map(ToOwned::to_owned))
+        .unwrap_or_default();
+
+    let trimmed_root = root_path.trim().to_string();
+    let status = if trimmed_root.is_empty() {
+        WorkspaceAccessStatus {
+            root_path: trimmed_root,
+            access_kind: "unknown".to_string(),
+            permission_state: "unavailable".to_string(),
+            writable: false,
+            exists: false,
+            message: "workspace root is empty".to_string(),
+        }
+    } else {
+        let path = PathBuf::from(&trimmed_root);
+        let exists = path.exists();
+        if !exists {
+            WorkspaceAccessStatus {
+                root_path: trimmed_root,
+                access_kind: infer_workspace_access_kind(&path),
+                permission_state: "unavailable".to_string(),
+                writable: false,
+                exists: false,
+                message: "workspace path does not exist".to_string(),
+            }
+        } else if !path.is_dir() {
+            WorkspaceAccessStatus {
+                root_path: trimmed_root,
+                access_kind: infer_workspace_access_kind(&path),
+                permission_state: "unavailable".to_string(),
+                writable: false,
+                exists: true,
+                message: "workspace path is not a directory".to_string(),
+            }
+        } else {
+            let writable = can_write_to_directory(&path);
+            WorkspaceAccessStatus {
+                root_path: trimmed_root,
+                access_kind: infer_workspace_access_kind(&path),
+                permission_state: if writable { "writable".to_string() } else { "readonly".to_string() },
+                writable,
+                exists: true,
+                message: if writable {
+                    "workspace is writable".to_string()
+                } else {
+                    "workspace exists but is not writable".to_string()
+                },
+            }
+        }
+    };
+
+    let json = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
+    write_cstring(&LAST_WORKSPACE_ACCESS_JSON, &json)
+}
+
 fn escape_json_string(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -991,6 +1379,767 @@ fn escape_json_string(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+fn infer_workspace_access_kind(path: &Path) -> String {
+    let normalized = path.to_string_lossy();
+    if normalized.contains("/data/storage/") {
+        "sandbox".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+fn current_server_url() -> String {
+    let state = HOST_STATE.lock().expect("host state lock");
+    if state.server_url.trim().is_empty() {
+        DEFAULT_LISTEN_URL.to_string()
+    } else {
+        state.server_url.clone()
+    }
+}
+
+fn with_runtime_result<F, T>(future: F) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    let runtime = NATIVE_ASYNC_RUNTIME
+        .lock()
+        .expect("native async runtime lock");
+    runtime.block_on(future)
+}
+
+fn with_native_state<T>(f: impl FnOnce(&mut NativeConversationState) -> T) -> T {
+    let mut state = NATIVE_CONVERSATION_STATE
+        .lock()
+        .expect("native conversation lock");
+    f(&mut state)
+}
+
+fn with_native_handle<T>(
+    f: impl FnOnce(&mut NativeConversationState) -> Result<T>,
+) -> Result<T> {
+    let mut state = NATIVE_CONVERSATION_STATE
+        .lock()
+        .expect("native conversation lock");
+    f(&mut state)
+}
+
+fn next_request_id(state: &mut NativeConversationState) -> RequestId {
+    state.next_request_id += 1;
+    RequestId::Integer(state.next_request_id)
+}
+
+async fn connect_remote_client_if_needed() -> Result<()> {
+    let already_connected = {
+        let state = NATIVE_CONVERSATION_STATE
+            .lock()
+            .expect("native conversation lock");
+        state.client.is_some()
+    };
+    if already_connected {
+        return Ok(());
+    }
+
+    let args = RemoteAppServerConnectArgs {
+        websocket_url: current_server_url(),
+        auth_token: None,
+        client_name: REMOTE_CLIENT_NAME.to_string(),
+        client_version: REMOTE_CLIENT_VERSION.to_string(),
+        experimental_api: true,
+        opt_out_notification_methods: Vec::new(),
+        channel_capacity: REMOTE_CLIENT_CHANNEL_CAPACITY,
+    };
+    let client = RemoteAppServerClient::connect(args)
+        .await
+        .context("failed to connect embedded websocket app-server")?;
+    with_native_state(|state| {
+        state.client = Some(client);
+        state.initialized = true;
+    });
+    Ok(())
+}
+
+fn parse_reasoning_effort(raw: Option<&str>) -> Result<Option<ReasoningEffort>> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("default") => Ok(None),
+        Some(value) => value
+            .parse::<ReasoningEffort>()
+            .map(Some)
+            .map_err(anyhow::Error::msg),
+    }
+}
+
+fn parse_approval_policy(raw: Option<&str>) -> Result<Option<AskForApproval>> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("default") => Ok(None),
+        Some("untrusted") | Some("unless-trusted") => Ok(Some(AskForApproval::UnlessTrusted)),
+        Some("on-failure") => Ok(Some(AskForApproval::OnFailure)),
+        Some("on-request") => Ok(Some(AskForApproval::OnRequest)),
+        Some("never") => Ok(Some(AskForApproval::Never)),
+        Some(other) => anyhow::bail!("unsupported approval policy: {other}"),
+    }
+}
+
+fn parse_thread_sandbox_mode(raw: Option<&str>) -> Result<Option<SandboxMode>> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("danger-full-access") => Ok(Some(SandboxMode::DangerFullAccess)),
+        Some("read-only") => Ok(Some(SandboxMode::ReadOnly)),
+        Some("workspace-write") => Ok(Some(SandboxMode::WorkspaceWrite)),
+        Some(other) => anyhow::bail!("unsupported sandbox mode: {other}"),
+    }
+}
+
+fn build_sandbox_policy(raw: Option<&str>, cwd: Option<&Path>) -> Result<Option<SandboxPolicy>> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("default") => Ok(None),
+        Some("danger-full-access") => Ok(Some(SandboxPolicy::DangerFullAccess)),
+        Some("read-only") => Ok(Some(SandboxPolicy::ReadOnly {
+            access: codex_app_server_protocol::ReadOnlyAccess::Restricted {
+                include_platform_defaults: true,
+                readable_roots: Vec::new(),
+            },
+            network_access: true,
+        })),
+        Some("workspace-write") => {
+            let writable_roots = cwd
+                .into_iter()
+                .map(|path| AbsolutePathBuf::try_from(path.to_path_buf()))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(anyhow::Error::from)?;
+            Ok(Some(SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                read_only_access: codex_app_server_protocol::ReadOnlyAccess::Restricted {
+                    include_platform_defaults: true,
+                    readable_roots: Vec::new(),
+                },
+                network_access: true,
+                exclude_tmpdir_env_var: false,
+                exclude_slash_tmp: false,
+            }))
+        }
+        Some(other) => anyhow::bail!("unsupported sandbox mode: {other}"),
+    }
+}
+
+async fn process_pending_events(target_turn_id: Option<&str>) -> Result<()> {
+    loop {
+        let mut client = with_native_state(|state| state.client.take())
+            .context("remote app-server client is not initialized")?;
+        let event = tokio::time::timeout(Duration::from_millis(50), client.next_event())
+            .await
+            .ok()
+            .flatten();
+        let should_stop = event.is_none();
+        if let Some(app_event) = event {
+            handle_app_server_event(&mut client, app_event, target_turn_id).await?;
+        }
+        with_native_state(|state| {
+            state.client = Some(client);
+        });
+        if should_stop {
+            break;
+        }
+        if target_turn_id
+            .and_then(|turn_id| with_native_state(|state| state.turns.get(turn_id).cloned()))
+            .map(|turn| turn.status != "inProgress")
+            .unwrap_or(false)
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_app_server_event(
+    client: &mut RemoteAppServerClient,
+    event: AppServerEvent,
+    target_turn_id: Option<&str>,
+) -> Result<()> {
+    match event {
+        AppServerEvent::ServerNotification(notification) => {
+            apply_server_notification(&notification, target_turn_id);
+            Ok(())
+        }
+        AppServerEvent::ServerRequest(request) => {
+            let request_id = request.id().clone();
+            client
+                .resolve_server_request(request_id, serde_json::json!({}))
+                .await
+                .map_err(anyhow::Error::from)?;
+            Ok(())
+        }
+        AppServerEvent::Lagged { skipped } => {
+            set_host_message(format!("app-server event stream lagged; skipped {skipped} events"));
+            Ok(())
+        }
+        AppServerEvent::Disconnected { message } => Err(anyhow::anyhow!(
+            "embedded websocket app-server disconnected: {message}"
+        )),
+    }
+}
+
+fn apply_server_notification(notification: &ServerNotification, _target_turn_id: Option<&str>) {
+    match notification {
+        ServerNotification::TurnStarted(payload) => {
+            with_native_state(|state| {
+                let entry = state
+                    .turns
+                    .entry(payload.turn.id.clone())
+                    .or_insert_with(NativeTurnState::default);
+                entry.thread_id = payload.thread_id.clone();
+                entry.status = map_turn_status(&payload.turn.status).to_string();
+                if entry.summary_title.is_empty() {
+                    entry.summary_title = "执行中".to_string();
+                }
+                if entry.summary.is_empty() {
+                    entry.summary.push("Codex 正在处理请求。".to_string());
+                }
+            });
+        }
+        ServerNotification::ItemStarted(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "执行中".to_string();
+                push_turn_summary(turn, describe_started_item(&payload.item));
+            });
+        }
+        ServerNotification::AgentMessageDelta(payload) => {
+            with_native_state(|state| {
+                {
+                    let turn = state
+                        .turns
+                        .entry(payload.turn_id.clone())
+                        .or_insert_with(|| NativeTurnState {
+                            thread_id: payload.thread_id.clone(),
+                            status: "inProgress".to_string(),
+                            ..Default::default()
+                        });
+                    turn.status = "inProgress".to_string();
+                    turn.summary_title = "执行中".to_string();
+                    push_turn_summary(turn, "Codex 正在生成回复。".to_string());
+                }
+                append_assistant_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
+            });
+        }
+        ServerNotification::PlanDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "计划中".to_string();
+                push_turn_summary(turn, format!("计划: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::ReasoningSummaryTextDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "推理中".to_string();
+                push_turn_summary(turn, format!("推理摘要: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::ReasoningTextDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "推理中".to_string();
+                push_turn_summary(turn, format!("推理: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::CommandExecutionOutputDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "执行工具中".to_string();
+                push_turn_summary(turn, format!("命令输出: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::FileChangeOutputDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "更改文件中".to_string();
+                push_turn_summary(turn, format!("文件变更: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::McpToolCallProgress(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "执行工具中".to_string();
+                push_turn_summary(turn, format!("工具进度: {}", compact_text(&payload.message, 160)));
+            });
+        }
+        ServerNotification::ItemCompleted(payload) => {
+            with_native_state(|state| {
+                sync_thread_from_completed_item(state, &payload.thread_id, &payload.turn_id, &payload.item);
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                if let Some(summary) = describe_completed_item(&payload.item) {
+                    push_turn_summary(turn, summary);
+                }
+            });
+        }
+        ServerNotification::TurnCompleted(payload) => {
+            with_native_state(|state| {
+                let entry = state
+                    .turns
+                    .entry(payload.turn.id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        ..Default::default()
+                    });
+                entry.status = map_turn_status(&payload.turn.status).to_string();
+                entry.error_message = payload
+                    .turn
+                    .error
+                    .as_ref()
+                    .map(|err| err.message.clone())
+                    .unwrap_or_default();
+                entry.summary_title = if entry.status == "completed" {
+                    "本轮已完成".to_string()
+                } else if entry.status == "failed" {
+                    "本轮失败".to_string()
+                } else {
+                    "本轮已结束".to_string()
+                };
+                if entry.error_message.is_empty() {
+                    push_turn_summary(entry, "本轮对话已完成。".to_string());
+                } else {
+                    entry.summary = vec![entry.error_message.clone()];
+                }
+            });
+        }
+        ServerNotification::TurnDiffUpdated(payload) => {
+            with_native_state(|state| {
+                let entry = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        ..Default::default()
+                    });
+                entry.diff = payload.diff.clone();
+            });
+        }
+        ServerNotification::Error(payload) => {
+            with_native_state(|state| {
+                let entry = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        ..Default::default()
+                    });
+                entry.status = "failed".to_string();
+                entry.error_message = payload.error.message.clone();
+                entry.summary_title = "本轮失败".to_string();
+                entry.summary = vec![payload.error.message.clone()];
+            });
+        }
+        _ => {}
+    }
+}
+
+fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if turn.summary.last().map(|last| last == trimmed).unwrap_or(false) {
+        return;
+    }
+    turn.summary.push(trimmed.to_string());
+    const MAX_SUMMARY_LINES: usize = 12;
+    if turn.summary.len() > MAX_SUMMARY_LINES {
+        let drain_count = turn.summary.len() - MAX_SUMMARY_LINES;
+        turn.summary.drain(0..drain_count);
+    }
+}
+
+fn compact_text(value: &str, limit: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= limit {
+        return compact;
+    }
+    let mut truncated = compact.chars().take(limit).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn describe_started_item(item: &codex_app_server_protocol::ThreadItem) -> String {
+    match item {
+        codex_app_server_protocol::ThreadItem::Plan { .. } => "开始生成计划。".to_string(),
+        codex_app_server_protocol::ThreadItem::Reasoning { .. } => "开始推理。".to_string(),
+        codex_app_server_protocol::ThreadItem::CommandExecution { command, cwd, .. } => {
+            format!("开始执行命令: {} (cwd: {})", compact_text(command, 120), cwd.display())
+        }
+        codex_app_server_protocol::ThreadItem::FileChange { changes, .. } => {
+            format!("开始应用文件变更，共 {} 处。", changes.len())
+        }
+        codex_app_server_protocol::ThreadItem::McpToolCall { server, tool, .. } => {
+            format!("开始调用 MCP 工具: {} / {}", server, tool)
+        }
+        codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } => {
+            format!("开始调用动态工具: {}", tool)
+        }
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall { tool, .. } => {
+            format!("开始协作工具调用: {:?}", tool)
+        }
+        codex_app_server_protocol::ThreadItem::WebSearch { query, .. } => {
+            format!("开始网络搜索: {}", compact_text(query, 120))
+        }
+        codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
+            format!("正在查看图像: {}", path)
+        }
+        codex_app_server_protocol::ThreadItem::ImageGeneration { .. } => "开始生成图像。".to_string(),
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { review, .. } => {
+            format!("进入审查模式: {}", review)
+        }
+        codex_app_server_protocol::ThreadItem::ExitedReviewMode { review, .. } => {
+            format!("退出审查模式: {}", review)
+        }
+        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => "开始压缩上下文。".to_string(),
+        codex_app_server_protocol::ThreadItem::AgentMessage { .. }
+        | codex_app_server_protocol::ThreadItem::UserMessage { .. }
+        | codex_app_server_protocol::ThreadItem::HookPrompt { .. } => "更新对话内容。".to_string(),
+    }
+}
+
+fn describe_completed_item(item: &codex_app_server_protocol::ThreadItem) -> Option<String> {
+    match item {
+        codex_app_server_protocol::ThreadItem::Plan { text, .. } => {
+            Some(format!("计划已生成: {}", compact_text(text, 160)))
+        }
+        codex_app_server_protocol::ThreadItem::Reasoning { summary, content, .. } => {
+            let source = if !summary.is_empty() { summary.join(" ") } else { content.join(" ") };
+            Some(format!("推理完成: {}", compact_text(&source, 160)))
+        }
+        codex_app_server_protocol::ThreadItem::CommandExecution {
+            command,
+            status,
+            exit_code,
+            aggregated_output,
+            ..
+        } => {
+            let status_text = match status {
+                codex_app_server_protocol::CommandExecutionStatus::InProgress => "进行中",
+                codex_app_server_protocol::CommandExecutionStatus::Completed => "已完成",
+                codex_app_server_protocol::CommandExecutionStatus::Failed => "失败",
+                codex_app_server_protocol::CommandExecutionStatus::Declined => "已拒绝",
+            };
+            let mut message = format!("命令{}: {}", status_text, compact_text(command, 120));
+            if let Some(code) = exit_code {
+                message.push_str(&format!(" (exit={code})"));
+            }
+            if let Some(output) = aggregated_output {
+                if !output.trim().is_empty() {
+                    message.push_str(&format!(" | {}", compact_text(output, 120)));
+                }
+            }
+            Some(message)
+        }
+        codex_app_server_protocol::ThreadItem::FileChange { changes, status, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::PatchApplyStatus::InProgress => "进行中",
+                codex_app_server_protocol::PatchApplyStatus::Completed => "已完成",
+                codex_app_server_protocol::PatchApplyStatus::Failed => "失败",
+                codex_app_server_protocol::PatchApplyStatus::Declined => "已拒绝",
+            };
+            Some(format!("文件变更{}，共 {} 处。", status_text, changes.len()))
+        }
+        codex_app_server_protocol::ThreadItem::McpToolCall { server, tool, status, error, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::McpToolCallStatus::InProgress => "进行中",
+                codex_app_server_protocol::McpToolCallStatus::Completed => "已完成",
+                codex_app_server_protocol::McpToolCallStatus::Failed => "失败",
+            };
+            let mut message = format!("MCP 工具 {} / {} {}", server, tool, status_text);
+            if let Some(err) = error {
+                message.push_str(&format!(": {}", compact_text(&err.message, 120)));
+            }
+            Some(message)
+        }
+        codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, status, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::DynamicToolCallStatus::InProgress => "进行中",
+                codex_app_server_protocol::DynamicToolCallStatus::Completed => "已完成",
+                codex_app_server_protocol::DynamicToolCallStatus::Failed => "失败",
+            };
+            Some(format!("动态工具 {} {}", tool, status_text))
+        }
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall { tool, status, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::CollabAgentToolCallStatus::InProgress => "进行中",
+                codex_app_server_protocol::CollabAgentToolCallStatus::Completed => "已完成",
+                codex_app_server_protocol::CollabAgentToolCallStatus::Failed => "失败",
+            };
+            Some(format!("协作工具 {:?} {}", tool, status_text))
+        }
+        codex_app_server_protocol::ThreadItem::WebSearch { query, .. } => {
+            Some(format!("网络搜索完成: {}", compact_text(query, 120)))
+        }
+        codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
+            Some(format!("图像已加载: {}", path))
+        }
+        codex_app_server_protocol::ThreadItem::ImageGeneration { status, revised_prompt, saved_path, .. } => {
+            let mut message = format!("图像生成状态: {}", status);
+            if let Some(prompt) = revised_prompt {
+                if !prompt.trim().is_empty() {
+                    message.push_str(&format!(" | prompt: {}", compact_text(prompt, 120)));
+                }
+            }
+            if let Some(path) = saved_path {
+                message.push_str(&format!(" | saved: {}", path));
+            }
+            Some(message)
+        }
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { review, .. } => {
+            Some(format!("已进入审查模式: {}", review))
+        }
+        codex_app_server_protocol::ThreadItem::ExitedReviewMode { review, .. } => {
+            Some(format!("已退出审查模式: {}", review))
+        }
+        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => {
+            Some("上下文压缩已完成。".to_string())
+        }
+        codex_app_server_protocol::ThreadItem::AgentMessage { .. }
+        | codex_app_server_protocol::ThreadItem::UserMessage { .. }
+        | codex_app_server_protocol::ThreadItem::HookPrompt { .. } => None,
+    }
+}
+
+fn append_assistant_delta(
+    state: &mut NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+    item_id: &str,
+    delta: &str,
+) {
+    let thread_messages = {
+        let thread = state
+            .threads
+            .entry(thread_id.to_string())
+            .or_insert_with(|| NativeThreadState {
+                remote_thread_id: thread_id.to_string(),
+                messages: Vec::new(),
+            });
+        let target_message_id = format!("{turn_id}:{item_id}");
+        if let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.message_id == target_message_id)
+        {
+            message.content.push_str(delta);
+        } else {
+            thread.messages.push(NativeMessage {
+                message_id: target_message_id,
+                author: "Codex".to_string(),
+                role: "assistant".to_string(),
+                content: delta.to_string(),
+                timestamp: current_timestamp_string(),
+            });
+        }
+        thread.messages.clone()
+    };
+
+    if let Some(turn) = state.turns.get_mut(turn_id) {
+        turn.messages = thread_messages;
+    }
+}
+
+fn sync_thread_from_completed_item(
+    state: &mut NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+    item: &codex_app_server_protocol::ThreadItem,
+) {
+    if let codex_app_server_protocol::ThreadItem::AgentMessage { id, text, .. } = item {
+        let thread_messages = {
+            let thread = state
+                .threads
+                .entry(thread_id.to_string())
+                .or_insert_with(|| NativeThreadState {
+                    remote_thread_id: thread_id.to_string(),
+                    messages: Vec::new(),
+                });
+            let message_id = format!("{turn_id}:{id}");
+            if let Some(message) = thread
+                .messages
+                .iter_mut()
+                .find(|message| message.message_id == message_id)
+            {
+                message.content = text.clone();
+            } else {
+                thread.messages.push(NativeMessage {
+                    message_id,
+                    author: "Codex".to_string(),
+                    role: "assistant".to_string(),
+                    content: text.clone(),
+                    timestamp: current_timestamp_string(),
+                });
+            }
+            thread.messages.clone()
+        };
+        if let Some(turn) = state.turns.get_mut(turn_id) {
+            turn.messages = thread_messages;
+        }
+    }
+}
+
+fn build_turn_poll_payload(
+    state: &NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+) -> serde_json::Value {
+    let turn = state.turns.get(turn_id).cloned().unwrap_or_default();
+    let effective_thread_id = if thread_id.is_empty() {
+        turn.thread_id.clone()
+    } else {
+        thread_id.to_string()
+    };
+    let thread_messages = state
+        .threads
+        .get(&effective_thread_id)
+        .map(|thread| thread.messages.clone())
+        .unwrap_or_else(|| turn.messages.clone());
+    let status = if turn.status.is_empty() {
+        "inProgress".to_string()
+    } else {
+        turn.status.clone()
+    };
+    let summary_title = if turn.summary_title.is_empty() {
+        "执行中".to_string()
+    } else {
+        turn.summary_title.clone()
+    };
+    serde_json::json!({
+        "threadId": effective_thread_id,
+        "turnId": turn_id,
+        "status": status,
+        "messages": thread_messages,
+        "summaryTitle": summary_title,
+        "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
+        "diff": turn.diff,
+    })
+}
+
+fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<NativeMessage> {
+    let mut messages: Vec<NativeMessage> = Vec::new();
+    for turn in turns {
+        for item in &turn.items {
+            match item {
+                codex_app_server_protocol::ThreadItem::UserMessage { id, content } => {
+                    let text = content
+                        .iter()
+                        .filter_map(|input| match input {
+                            UserInput::Text { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    messages.push(NativeMessage {
+                        message_id: id.clone(),
+                        author: "你".to_string(),
+                        role: "user".to_string(),
+                        content: text,
+                        timestamp: current_timestamp_string(),
+                    });
+                }
+                codex_app_server_protocol::ThreadItem::AgentMessage { id, text, .. } => {
+                    messages.push(NativeMessage {
+                        message_id: id.clone(),
+                        author: "Codex".to_string(),
+                        role: "assistant".to_string(),
+                        content: text.clone(),
+                        timestamp: current_timestamp_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    messages
+}
+
+fn map_turn_status(status: &TurnStatus) -> &'static str {
+    match status {
+        TurnStatus::Completed => "completed",
+        TurnStatus::Failed => "failed",
+        TurnStatus::Interrupted => "interrupted",
+        TurnStatus::InProgress => "inProgress",
+    }
+}
+
+fn can_write_to_directory(path: &Path) -> bool {
+    let probe_path = path.join(".codex-write-test.tmp");
+    match std::fs::write(&probe_path, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe_path);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]

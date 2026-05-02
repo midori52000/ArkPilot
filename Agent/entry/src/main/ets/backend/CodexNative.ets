@@ -3,7 +3,8 @@ import entry, {
   NativeCodexHostStatus,
   NativeCodexProviderCatalog,
   NativeCodexProviderConfig,
-  NativeCodexProviderRecord
+  NativeCodexProviderRecord,
+  NativeWorkspaceAccessStatus
 } from 'libentry.so';
 import { ProviderCatalog, ProviderRecord } from './ConsoleModels';
 
@@ -32,6 +33,24 @@ export class CodexProviderConfig {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
+  }
+}
+
+export class WorkspaceAccessStatus {
+  rootPath: string;
+  accessKind: string;
+  permissionState: string;
+  writable: boolean;
+  exists: boolean;
+  message: string;
+
+  constructor(rootPath: string, accessKind: string, permissionState: string, writable: boolean, exists: boolean, message: string) {
+    this.rootPath = rootPath;
+    this.accessKind = accessKind;
+    this.permissionState = permissionState;
+    this.writable = writable;
+    this.exists = exists;
+    this.message = message;
   }
 }
 
@@ -100,6 +119,20 @@ function normalizeProviderConfig(rawConfig: NativeCodexProviderConfig | undefine
   );
 }
 
+function normalizeWorkspaceAccessStatus(rawStatus: NativeWorkspaceAccessStatus | undefined): WorkspaceAccessStatus {
+  if (rawStatus === undefined) {
+    return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'native bridge returned no workspace status');
+  }
+  return new WorkspaceAccessStatus(
+    rawStatus.rootPath ?? '',
+    rawStatus.accessKind ?? 'unknown',
+    rawStatus.permissionState ?? 'unavailable',
+    rawStatus.writable === true,
+    rawStatus.exists === true,
+    rawStatus.message ?? ''
+  );
+}
+
 function parseProviderConfig(rawValue: string): CodexProviderConfig {
   if (rawValue.trim().length === 0) {
     return new CodexProviderConfig('', '', '');
@@ -121,6 +154,18 @@ function parseProviderCatalog(rawValue: string): ProviderCatalog {
     return normalizeProviderCatalog(rawCatalog);
   } catch (_err) {
     return new ProviderCatalog(1, '', [], '');
+  }
+}
+
+function parseWorkspaceAccessStatus(rawValue: string): WorkspaceAccessStatus {
+  if (rawValue.trim().length === 0) {
+    return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'workspace status is empty');
+  }
+  try {
+    const rawStatus: NativeWorkspaceAccessStatus = JSON.parse(rawValue) as NativeWorkspaceAccessStatus;
+    return normalizeWorkspaceAccessStatus(rawStatus);
+  } catch (_err) {
+    return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'failed to parse workspace status');
   }
 }
 
@@ -151,7 +196,8 @@ export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
     return new CodexProviderConfig('', '', '');
   }
   try {
-    return parseProviderConfig(nativeBridge!.getProviderConfig(''));
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    return parseProviderConfig(nativeBridge!.getProviderConfig(codexHome));
   } catch (_err) {
     return new CodexProviderConfig('', '', '');
   }
@@ -159,12 +205,18 @@ export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
 
 export function saveEmbeddedCodexProviderConfig(baseUrl: string, apiKey: string, model: string): CodexProviderConfig {
   if (nativeModuleUnavailable()) {
-    return new CodexProviderConfig('', '', '');
+    throw new Error('libentry.so failed to load.');
   }
   try {
-    return parseProviderConfig(nativeBridge!.saveProviderConfig('', baseUrl, apiKey, model));
-  } catch (_err) {
-    return new CodexProviderConfig('', '', '');
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    const response = nativeBridge!.saveProviderConfig(codexHome, baseUrl, apiKey, model);
+    const parsed = parseProviderConfig(response);
+    if (parsed.baseUrl.trim().length === 0 && parsed.apiKey.trim().length === 0 && parsed.model.trim().length === 0) {
+      throw new Error('native saveProviderConfig returned an empty provider config');
+    }
+    return parsed;
+  } catch (err) {
+    throw err instanceof Error ? err : new Error('Failed to save provider config.');
   }
 }
 
@@ -173,7 +225,8 @@ export function getEmbeddedCodexProviderCatalog(): ProviderCatalog {
     return new ProviderCatalog(1, '', [], '');
   }
   try {
-    return parseProviderCatalog(nativeBridge!.getProviderCatalog(''));
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    return parseProviderCatalog(nativeBridge!.getProviderCatalog(codexHome));
   } catch (_err) {
     return new ProviderCatalog(1, '', [], '');
   }
@@ -181,12 +234,17 @@ export function getEmbeddedCodexProviderCatalog(): ProviderCatalog {
 
 export function saveEmbeddedCodexProviderCatalog(catalog: ProviderCatalog): ProviderCatalog {
   if (nativeModuleUnavailable()) {
-    return new ProviderCatalog(1, '', [], '');
+    throw new Error('libentry.so failed to load.');
   }
   try {
-    return parseProviderCatalog(nativeBridge!.saveProviderCatalog('', JSON.stringify(catalog)));
-  } catch (_err) {
-    return new ProviderCatalog(1, '', [], '');
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    const parsed = parseProviderCatalog(nativeBridge!.saveProviderCatalog(codexHome, JSON.stringify(catalog)));
+    if (parsed.providers.length === 0) {
+      throw new Error('native saveProviderCatalog returned an empty provider catalog');
+    }
+    return parsed;
+  } catch (err) {
+    throw err instanceof Error ? err : new Error('Failed to save provider catalog.');
   }
 }
 
@@ -499,5 +557,16 @@ export function accountReadNative(): string {
     return nativeBridge!.accountRead();
   } catch (_err) {
     return '{"account":null,"requiresOpenaiAuth":false}';
+  }
+}
+
+export function checkWorkspaceAccess(rootPath: string): WorkspaceAccessStatus {
+  if (nativeModuleUnavailable()) {
+    return new WorkspaceAccessStatus(rootPath, 'unknown', 'unavailable', false, false, 'native module unavailable');
+  }
+  try {
+    return parseWorkspaceAccessStatus(nativeBridge!.checkWorkspaceAccess(JSON.stringify({ rootPath })));
+  } catch (_err) {
+    return new WorkspaceAccessStatus(rootPath, 'unknown', 'unavailable', false, false, 'workspace access check failed');
   }
 }

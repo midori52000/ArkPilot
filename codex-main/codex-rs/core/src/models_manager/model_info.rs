@@ -60,13 +60,17 @@ pub(crate) fn with_config_overrides(mut model: ModelInfo, config: &Config) -> Mo
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub(crate) fn model_info_from_slug(slug: &str) -> ModelInfo {
     warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    let shell_type = match slug {
+        "gpt-5.4" => ConfigShellToolType::ShellCommand,
+        _ => ConfigShellToolType::Default,
+    };
     ModelInfo {
         slug: slug.to_string(),
         display_name: slug.to_string(),
         description: None,
         default_reasoning_level: None,
         supported_reasoning_levels: Vec::new(),
-        shell_type: ConfigShellToolType::Default,
+        shell_type,
         visibility: ModelVisibility::None,
         supported_in_api: true,
         priority: 99,
