@@ -6,5 +6,7 @@
 
 # Local working directories
 /ccmanage/
+/design/
+/CLAUDE.md
 
 # Keep design references versioned; ignore generated exports separately if needed later.
