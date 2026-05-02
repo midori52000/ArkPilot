@@ -58,6 +58,7 @@ struct BridgeApi {
     const char* (*mcp_oauth_start)(const char*) = nullptr;
     const char* (*account_login)(const char*) = nullptr;
     const char* (*account_read)(void) = nullptr;
+    const char* (*check_workspace_access)(const char*) = nullptr;
 };
 
 template <typename T>
@@ -107,7 +108,8 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_mcp_reload", &api->mcp_reload) &&
         LoadSymbol(api->handle, "codex_ohos_host_mcp_oauth_start", &api->mcp_oauth_start) &&
         LoadSymbol(api->handle, "codex_ohos_host_account_login", &api->account_login) &&
-        LoadSymbol(api->handle, "codex_ohos_host_account_read", &api->account_read);
+        LoadSymbol(api->handle, "codex_ohos_host_account_read", &api->account_read) &&
+        LoadSymbol(api->handle, "codex_ohos_host_check_workspace_access", &api->check_workspace_access);
 }
 
 void UnloadBridgeApi(BridgeApi* api) {
@@ -413,6 +415,7 @@ napi_value McpReload(napi_env env, napi_callback_info info) { (void)info; Bridge
 napi_value McpOauthStart(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.mcp_oauth_start); UnloadBridgeApi(&api); return result; }
 napi_value AccountLogin(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.account_login); UnloadBridgeApi(&api); return result; }
 napi_value AccountRead(napi_env env, napi_callback_info info) { (void)info; BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateUtf8String(env, api.account_read()); UnloadBridgeApi(&api); return result; }
+napi_value CheckWorkspaceAccess(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.check_workspace_access); UnloadBridgeApi(&api); return result; }
 }  // namespace
 
 EXTERN_C_START
@@ -455,6 +458,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"mcpOauthStart", nullptr, McpOauthStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"accountLogin", nullptr, AccountLogin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"accountRead", nullptr, AccountRead, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"checkWorkspaceAccess", nullptr, CheckWorkspaceAccess, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

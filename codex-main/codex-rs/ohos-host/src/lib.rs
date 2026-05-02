@@ -48,6 +48,17 @@ struct HostState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct WorkspaceAccessStatus {
+    root_path: String,
+    access_kind: String,
+    permission_state: String,
+    writable: bool,
+    exists: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ProviderSettings {
     base_url: String,
     api_key: String,
@@ -162,6 +173,9 @@ static LAST_MCP_OAUTH_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 });
 static LAST_ACCOUNT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{\"account\":null,\"requiresOpenaiAuth\":false}").expect("empty cstring"))
+});
+static LAST_WORKSPACE_ACCESS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
 });
 
 #[unsafe(no_mangle)]
@@ -984,6 +998,66 @@ pub extern "C" fn codex_ohos_host_account_read() -> *const c_char {
     write_cstring(&LAST_ACCOUNT_JSON, "{\"account\":null,\"requiresOpenaiAuth\":false}")
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_check_workspace_access(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let root_path = serde_json::from_str::<serde_json::Value>(&params_text)
+        .ok()
+        .and_then(|value| value.get("rootPath").and_then(|field| field.as_str()).map(ToOwned::to_owned))
+        .unwrap_or_default();
+
+    let trimmed_root = root_path.trim().to_string();
+    let status = if trimmed_root.is_empty() {
+        WorkspaceAccessStatus {
+            root_path: trimmed_root,
+            access_kind: "unknown".to_string(),
+            permission_state: "unavailable".to_string(),
+            writable: false,
+            exists: false,
+            message: "workspace root is empty".to_string(),
+        }
+    } else {
+        let path = PathBuf::from(&trimmed_root);
+        let exists = path.exists();
+        if !exists {
+            WorkspaceAccessStatus {
+                root_path: trimmed_root,
+                access_kind: infer_workspace_access_kind(&path),
+                permission_state: "unavailable".to_string(),
+                writable: false,
+                exists: false,
+                message: "workspace path does not exist".to_string(),
+            }
+        } else if !path.is_dir() {
+            WorkspaceAccessStatus {
+                root_path: trimmed_root,
+                access_kind: infer_workspace_access_kind(&path),
+                permission_state: "unavailable".to_string(),
+                writable: false,
+                exists: true,
+                message: "workspace path is not a directory".to_string(),
+            }
+        } else {
+            let writable = can_write_to_directory(&path);
+            WorkspaceAccessStatus {
+                root_path: trimmed_root,
+                access_kind: infer_workspace_access_kind(&path),
+                permission_state: if writable { "writable".to_string() } else { "readonly".to_string() },
+                writable,
+                exists: true,
+                message: if writable {
+                    "workspace is writable".to_string()
+                } else {
+                    "workspace exists but is not writable".to_string()
+                },
+            }
+        }
+    };
+
+    let json = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
+    write_cstring(&LAST_WORKSPACE_ACCESS_JSON, &json)
+}
+
 fn escape_json_string(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -991,6 +1065,26 @@ fn escape_json_string(value: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+fn infer_workspace_access_kind(path: &Path) -> String {
+    let normalized = path.to_string_lossy();
+    if normalized.contains("/data/storage/") {
+        "sandbox".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+fn can_write_to_directory(path: &Path) -> bool {
+    let probe_path = path.join(".codex-write-test.tmp");
+    match std::fs::write(&probe_path, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe_path);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]

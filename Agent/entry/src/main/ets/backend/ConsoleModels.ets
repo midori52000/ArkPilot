@@ -9,6 +9,42 @@ export type SettingsTab = 'mcp' | 'skills' | 'prompts' | 'api';
 
 export type ApiWireFormat = 'responses' | 'chat' | 'anthropic';
 export type ProviderCategory = 'official' | 'third_party' | 'cloud_provider' | 'aggregator' | 'custom';
+export type WorkspaceAccessKind = 'sandbox' | 'user_granted' | 'readonly' | 'unknown';
+export type WorkspacePermissionState = 'writable' | 'readonly' | 'unavailable' | 'revoked';
+
+export class WorkspaceDescriptor {
+  id: string;
+  name: string;
+  rootPath: string;
+  accessKind: WorkspaceAccessKind;
+  permissionState: WorkspacePermissionState;
+  sourceUri: string;
+  writableRoots: string[];
+  grantedAt: number;
+  lastCheckedAt: number;
+
+  constructor(
+    id: string,
+    name: string,
+    rootPath: string,
+    accessKind: WorkspaceAccessKind,
+    permissionState: WorkspacePermissionState,
+    sourceUri: string,
+    writableRoots: string[],
+    grantedAt: number,
+    lastCheckedAt: number
+  ) {
+    this.id = id;
+    this.name = name;
+    this.rootPath = rootPath;
+    this.accessKind = accessKind;
+    this.permissionState = permissionState;
+    this.sourceUri = sourceUri;
+    this.writableRoots = writableRoots;
+    this.grantedAt = grantedAt;
+    this.lastCheckedAt = lastCheckedAt;
+  }
+}
 
 export class EndpointEntry {
   url: string;
@@ -233,7 +269,11 @@ export class McpServerRecord {
 export class SessionSummary {
   sessionId: string;
   title: string;
+  workspaceId: string;
+  workspaceName: string;
   workspaceRoot: string;
+  workspacePermissionState: WorkspacePermissionState;
+  workspaceAccessKind: WorkspaceAccessKind;
   messageCount: number;
   lastUpdatedAt: string;
   summaryTitle: string;
@@ -243,7 +283,11 @@ export class SessionSummary {
   constructor(
     sessionId: string,
     title: string,
+    workspaceId: string,
+    workspaceName: string,
     workspaceRoot: string,
+    workspacePermissionState: WorkspacePermissionState,
+    workspaceAccessKind: WorkspaceAccessKind,
     messageCount: number,
     lastUpdatedAt: string,
     summaryTitle: string,
@@ -252,7 +296,11 @@ export class SessionSummary {
   ) {
     this.sessionId = sessionId;
     this.title = title;
+    this.workspaceId = workspaceId;
+    this.workspaceName = workspaceName;
     this.workspaceRoot = workspaceRoot;
+    this.workspacePermissionState = workspacePermissionState;
+    this.workspaceAccessKind = workspaceAccessKind;
     this.messageCount = messageCount;
     this.lastUpdatedAt = lastUpdatedAt;
     this.summaryTitle = summaryTitle;

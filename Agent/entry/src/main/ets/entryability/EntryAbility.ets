@@ -3,6 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { startEmbeddedCodexHost } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
+import fileIo from '@ohos.file.fs';
 
 const DOMAIN = 0x0000;
 const TAG = 'CodexHost';
@@ -18,6 +19,8 @@ export default class EntryAbility extends UIAbility {
 
     try {
       const codexHome: string = `${this.context.filesDir}/codex-home`;
+      const defaultWorkspaceRoot: string = `${this.context.filesDir}/workspace-default`;
+      fileIo.mkdirSync(defaultWorkspaceRoot, true);
       const status = startEmbeddedCodexHost(codexHome, DEFAULT_SERVER_URL);
       hilog.info(
         DOMAIN,
@@ -32,6 +35,7 @@ export default class EntryAbility extends UIAbility {
       // 首次启动自动导入已有 AGENTS.md
       const promptsService = new PromptsBackendService(codexHome);
       promptsService.autoImportOnFirstLaunch();
+      AppStorage.setOrCreate<string>('defaultWorkspaceRoot', defaultWorkspaceRoot);
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
     }

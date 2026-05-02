@@ -35,6 +35,15 @@ export interface NativeCodexProviderCatalog {
   updatedAt?: string;
 }
 
+export interface NativeWorkspaceAccessStatus {
+  rootPath?: string;
+  accessKind?: string;
+  permissionState?: string;
+  writable?: boolean;
+  exists?: boolean;
+  message?: string;
+}
+
 export interface EntryBridgeModule {
   startHost: (codexHome?: string, serverUrl?: string) => NativeCodexHostStatus;
   getStatus: () => NativeCodexHostStatus;
@@ -73,6 +82,7 @@ export interface EntryBridgeModule {
   mcpOauthStart: (paramsJson?: string) => string;
   accountLogin: (paramsJson?: string) => string;
   accountRead: () => string;
+  checkWorkspaceAccess: (paramsJson?: string) => string;
 }
 
 declare const entry: EntryBridgeModule;

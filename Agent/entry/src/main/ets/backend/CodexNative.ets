@@ -3,7 +3,8 @@ import entry, {
   NativeCodexHostStatus,
   NativeCodexProviderCatalog,
   NativeCodexProviderConfig,
-  NativeCodexProviderRecord
+  NativeCodexProviderRecord,
+  NativeWorkspaceAccessStatus
 } from 'libentry.so';
 import { ProviderCatalog, ProviderRecord } from './ConsoleModels';
 
@@ -32,6 +33,24 @@ export class CodexProviderConfig {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
+  }
+}
+
+export class WorkspaceAccessStatus {
+  rootPath: string;
+  accessKind: string;
+  permissionState: string;
+  writable: boolean;
+  exists: boolean;
+  message: string;
+
+  constructor(rootPath: string, accessKind: string, permissionState: string, writable: boolean, exists: boolean, message: string) {
+    this.rootPath = rootPath;
+    this.accessKind = accessKind;
+    this.permissionState = permissionState;
+    this.writable = writable;
+    this.exists = exists;
+    this.message = message;
   }
 }
 
@@ -100,6 +119,20 @@ function normalizeProviderConfig(rawConfig: NativeCodexProviderConfig | undefine
   );
 }
 
+function normalizeWorkspaceAccessStatus(rawStatus: NativeWorkspaceAccessStatus | undefined): WorkspaceAccessStatus {
+  if (rawStatus === undefined) {
+    return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'native bridge returned no workspace status');
+  }
+  return new WorkspaceAccessStatus(
+    rawStatus.rootPath ?? '',
+    rawStatus.accessKind ?? 'unknown',
+    rawStatus.permissionState ?? 'unavailable',
+    rawStatus.writable === true,
+    rawStatus.exists === true,
+    rawStatus.message ?? ''
+  );
+}
+
 function parseProviderConfig(rawValue: string): CodexProviderConfig {
   if (rawValue.trim().length === 0) {
     return new CodexProviderConfig('', '', '');
@@ -121,6 +154,18 @@ function parseProviderCatalog(rawValue: string): ProviderCatalog {
     return normalizeProviderCatalog(rawCatalog);
   } catch (_err) {
     return new ProviderCatalog(1, '', [], '');
+  }
+}
+
+function parseWorkspaceAccessStatus(rawValue: string): WorkspaceAccessStatus {
+  if (rawValue.trim().length === 0) {
+    return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'workspace status is empty');
+  }
+  try {
+    const rawStatus: NativeWorkspaceAccessStatus = JSON.parse(rawValue) as NativeWorkspaceAccessStatus;
+    return normalizeWorkspaceAccessStatus(rawStatus);
+  } catch (_err) {
+    return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'failed to parse workspace status');
   }
 }
 
@@ -499,5 +544,16 @@ export function accountReadNative(): string {
     return nativeBridge!.accountRead();
   } catch (_err) {
     return '{"account":null,"requiresOpenaiAuth":false}';
+  }
+}
+
+export function checkWorkspaceAccess(rootPath: string): WorkspaceAccessStatus {
+  if (nativeModuleUnavailable()) {
+    return new WorkspaceAccessStatus(rootPath, 'unknown', 'unavailable', false, false, 'native module unavailable');
+  }
+  try {
+    return parseWorkspaceAccessStatus(nativeBridge!.checkWorkspaceAccess(JSON.stringify({ rootPath })));
+  } catch (_err) {
+    return new WorkspaceAccessStatus(rootPath, 'unknown', 'unavailable', false, false, 'workspace access check failed');
   }
 }

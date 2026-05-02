@@ -9,11 +9,13 @@ import {
 } from '../backend/CodexBackend';
 import {
   CodexProviderConfig,
+  WorkspaceAccessStatus,
+  checkWorkspaceAccess,
   getEmbeddedCodexHostStatus,
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
-import { SidebarView } from '../backend/ConsoleModels';
+import { SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
 import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
 
@@ -21,11 +23,13 @@ class WorkspaceItem {
   id: number;
   title: string;
   description: string;
+  workspaceId: string;
 
-  constructor(id: number, title: string, description: string) {
+  constructor(id: number, title: string, description: string, workspaceId?: string) {
     this.id = id;
     this.title = title;
     this.description = description;
+    this.workspaceId = workspaceId ?? `session:${id.toString()}`;
   }
 }
 
@@ -114,10 +118,15 @@ struct Index {
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
   private readonly workspaceRoots: Map<number, string> = new Map();
+  private readonly workspaceIds: Map<number, string> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private activeSidebarView: SidebarView = 'chat';
   @State private activeWorkspaceId: number = 1;
+  @State private activeWorkspaceBindingId: string = 'session:1';
+  @State private activeWorkspacePermissionState: WorkspacePermissionState = 'unavailable';
+  @State private activeWorkspaceAccessKind: WorkspaceAccessKind = 'unknown';
+  @State private workspaceStatusText: string = 'å°šæœªæ£€æµ‹å·¥ä½œåŒºæƒé™';
   @State private selectedEffortIndex: number = 0;
   @State private showEffortOptions: boolean = false;
   @State private serverUrl: string = 'ws://127.0.0.1:7456';
@@ -170,6 +179,7 @@ struct Index {
     this.applyBackendSnapshot(codexBackend.snapshot());
     this.applyEmbeddedHostStatus();
     this.loadProviderConfig();
+    this.initializeDefaultWorkspace();
     this.scheduleEmbeddedHostReconnect(0);
     this.scheduleMessageScrollToBottom();
   }
@@ -238,6 +248,56 @@ struct Index {
     return this.workspaces[0];
   }
 
+  private ensureWorkspaceBinding(item: WorkspaceItem): string {
+    const existing: string | undefined = this.workspaceIds.get(item.id);
+    if (existing !== undefined && existing.trim().length > 0) {
+      item.workspaceId = existing;
+      return existing;
+    }
+    const workspaceId: string = item.workspaceId.trim().length > 0 ? item.workspaceId : `session:${item.id.toString()}`;
+    item.workspaceId = workspaceId;
+    this.workspaceIds.set(item.id, workspaceId);
+    return workspaceId;
+  }
+
+  private refreshWorkspaceBindingState(): void {
+    const active: WorkspaceItem = this.activeWorkspace();
+    this.activeWorkspaceBindingId = this.ensureWorkspaceBinding(active);
+    if (this.workspaceRoot.trim().length > 0) {
+      const status: WorkspaceAccessStatus = checkWorkspaceAccess(this.workspaceRoot.trim());
+      this.activeWorkspacePermissionState = this.mapWorkspacePermissionState(status.permissionState);
+      this.activeWorkspaceAccessKind = this.mapWorkspaceAccessKind(status.accessKind);
+      this.workspaceStatusText = status.message.trim().length > 0 ? status.message : 'å·¥ä½œåŒºå·²é…ç½®';
+      return;
+    }
+    this.activeWorkspacePermissionState = 'unavailable';
+    this.activeWorkspaceAccessKind = 'unknown';
+    this.workspaceStatusText = 'å½“å‰æœªé…ç½®å·¥ä½œåŒº';
+  }
+
+  private initializeDefaultWorkspace(): void {
+    const defaultWorkspaceRoot: string = AppStorage.get('defaultWorkspaceRoot') as string ?? '';
+    if (this.workspaceRoot.trim().length === 0 && defaultWorkspaceRoot.trim().length > 0) {
+      this.workspaceRoot = defaultWorkspaceRoot;
+      this.workspaceRoots.set(this.activeWorkspaceId, defaultWorkspaceRoot);
+    }
+    this.refreshWorkspaceBindingState();
+  }
+
+  private mapWorkspacePermissionState(value: string): WorkspacePermissionState {
+    if (value === 'writable' || value === 'readonly' || value === 'revoked') {
+      return value;
+    }
+    return 'unavailable';
+  }
+
+  private mapWorkspaceAccessKind(value: string): WorkspaceAccessKind {
+    if (value === 'sandbox' || value === 'user_granted' || value === 'readonly') {
+      return value;
+    }
+    return 'unknown';
+  }
+
   private currentModelLabel(): string {
     const model: string = this.manualModel.trim();
     if (model.length === 0) {
@@ -273,16 +333,22 @@ struct Index {
   private async runTurn(prompt: string): Promise<void> {
     this.isRunning = true;
     this.workspaceRoots.set(this.activeWorkspaceId, this.workspaceRoot);
+    this.refreshWorkspaceBindingState();
     codexBackend.configureServerUrl(this.serverUrl);
 
     const workspace: WorkspaceItem = this.activeWorkspace();
+    const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
     this.applyEmbeddedHostStatus();
     try {
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(
           workspace.id.toString(),
           workspace.title,
-          this.workspaceRoot.trim(),
+          this.activeWorkspaceBindingId,
+          trimmedWorkspaceRoot,
+          this.activeWorkspacePermissionState,
+          this.activeWorkspaceAccessKind,
+          trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
           this.currentModelValue(),
           this.currentEffortValue(),
           prompt
@@ -469,6 +535,7 @@ struct Index {
   private selectWorkspace(item: WorkspaceItem): void {
     this.activeWorkspaceId = item.id;
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
+    this.refreshWorkspaceBindingState();
     this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
     this.activeSidebarView = 'chat';
   }
@@ -1175,7 +1242,13 @@ struct Index {
               .onChange((value: string) => {
                 this.workspaceRoot = value;
                 this.workspaceRoots.set(this.activeWorkspaceId, value);
+                this.refreshWorkspaceBindingState();
               })
+
+            Text(this.workspaceStatusText)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .margin({ top: 8 })
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')
