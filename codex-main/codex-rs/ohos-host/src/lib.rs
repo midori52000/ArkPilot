@@ -24,6 +24,7 @@ use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::RequestId;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadStartParams;
@@ -123,6 +124,8 @@ struct NativeClientInfo {
 struct NativeThreadStartRequest {
     cwd: Option<String>,
     model: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1060,6 +1063,14 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
         let mut params = ThreadStartParams::default();
         params.cwd = request.cwd.filter(|value| !value.trim().is_empty());
         params.model = request.model.filter(|value| !value.trim().is_empty());
+        params.model_provider = Some(CUSTOM_PROVIDER_ID.to_string());
+        params.approval_policy = parse_approval_policy(
+            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+        )?;
+        params.approvals_reviewer = Some(ApprovalsReviewer::User);
+        params.sandbox = parse_thread_sandbox_mode(
+            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE))
+        )?;
         params.ephemeral = Some(true);
 
         let response: ThreadStartResponse = handle
@@ -1472,6 +1483,16 @@ fn parse_approval_policy(raw: Option<&str>) -> Result<Option<AskForApproval>> {
     }
 }
 
+fn parse_thread_sandbox_mode(raw: Option<&str>) -> Result<Option<SandboxMode>> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some("danger-full-access") => Ok(Some(SandboxMode::DangerFullAccess)),
+        Some("read-only") => Ok(Some(SandboxMode::ReadOnly)),
+        Some("workspace-write") => Ok(Some(SandboxMode::WorkspaceWrite)),
+        Some(other) => anyhow::bail!("unsupported sandbox mode: {other}"),
+    }
+}
+
 fn build_sandbox_policy(raw: Option<&str>, cwd: Option<&Path>) -> Result<Option<SandboxPolicy>> {
     match raw.map(str::trim).filter(|value| !value.is_empty()) {
         None => Ok(None),
@@ -1580,6 +1601,21 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 }
             });
         }
+        ServerNotification::ItemStarted(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "执行中".to_string();
+                push_turn_summary(turn, describe_started_item(&payload.item));
+            });
+        }
         ServerNotification::AgentMessageDelta(payload) => {
             with_native_state(|state| {
                 {
@@ -1593,14 +1629,115 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                         });
                     turn.status = "inProgress".to_string();
                     turn.summary_title = "执行中".to_string();
-                    turn.summary = vec!["Codex 正在生成回复。".to_string()];
+                    push_turn_summary(turn, "Codex 正在生成回复。".to_string());
                 }
                 append_assistant_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
+            });
+        }
+        ServerNotification::PlanDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "计划中".to_string();
+                push_turn_summary(turn, format!("计划: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::ReasoningSummaryTextDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "推理中".to_string();
+                push_turn_summary(turn, format!("推理摘要: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::ReasoningTextDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "推理中".to_string();
+                push_turn_summary(turn, format!("推理: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::CommandExecutionOutputDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "执行工具中".to_string();
+                push_turn_summary(turn, format!("命令输出: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::FileChangeOutputDelta(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "更改文件中".to_string();
+                push_turn_summary(turn, format!("文件变更: {}", compact_text(&payload.delta, 160)));
+            });
+        }
+        ServerNotification::McpToolCallProgress(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "执行工具中".to_string();
+                push_turn_summary(turn, format!("工具进度: {}", compact_text(&payload.message, 160)));
             });
         }
         ServerNotification::ItemCompleted(payload) => {
             with_native_state(|state| {
                 sync_thread_from_completed_item(state, &payload.thread_id, &payload.turn_id, &payload.item);
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                if let Some(summary) = describe_completed_item(&payload.item) {
+                    push_turn_summary(turn, summary);
+                }
             });
         }
         ServerNotification::TurnCompleted(payload) => {
@@ -1627,7 +1764,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     "本轮已结束".to_string()
                 };
                 if entry.error_message.is_empty() {
-                    entry.summary = vec!["本轮对话已完成。".to_string()];
+                    push_turn_summary(entry, "本轮对话已完成。".to_string());
                 } else {
                     entry.summary = vec![entry.error_message.clone()];
                 }
@@ -1661,6 +1798,174 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             });
         }
         _ => {}
+    }
+}
+
+fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if turn.summary.last().map(|last| last == trimmed).unwrap_or(false) {
+        return;
+    }
+    turn.summary.push(trimmed.to_string());
+    const MAX_SUMMARY_LINES: usize = 12;
+    if turn.summary.len() > MAX_SUMMARY_LINES {
+        let drain_count = turn.summary.len() - MAX_SUMMARY_LINES;
+        turn.summary.drain(0..drain_count);
+    }
+}
+
+fn compact_text(value: &str, limit: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= limit {
+        return compact;
+    }
+    let mut truncated = compact.chars().take(limit).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn describe_started_item(item: &codex_app_server_protocol::ThreadItem) -> String {
+    match item {
+        codex_app_server_protocol::ThreadItem::Plan { .. } => "开始生成计划。".to_string(),
+        codex_app_server_protocol::ThreadItem::Reasoning { .. } => "开始推理。".to_string(),
+        codex_app_server_protocol::ThreadItem::CommandExecution { command, cwd, .. } => {
+            format!("开始执行命令: {} (cwd: {})", compact_text(command, 120), cwd.display())
+        }
+        codex_app_server_protocol::ThreadItem::FileChange { changes, .. } => {
+            format!("开始应用文件变更，共 {} 处。", changes.len())
+        }
+        codex_app_server_protocol::ThreadItem::McpToolCall { server, tool, .. } => {
+            format!("开始调用 MCP 工具: {} / {}", server, tool)
+        }
+        codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } => {
+            format!("开始调用动态工具: {}", tool)
+        }
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall { tool, .. } => {
+            format!("开始协作工具调用: {:?}", tool)
+        }
+        codex_app_server_protocol::ThreadItem::WebSearch { query, .. } => {
+            format!("开始网络搜索: {}", compact_text(query, 120))
+        }
+        codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
+            format!("正在查看图像: {}", path)
+        }
+        codex_app_server_protocol::ThreadItem::ImageGeneration { .. } => "开始生成图像。".to_string(),
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { review, .. } => {
+            format!("进入审查模式: {}", review)
+        }
+        codex_app_server_protocol::ThreadItem::ExitedReviewMode { review, .. } => {
+            format!("退出审查模式: {}", review)
+        }
+        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => "开始压缩上下文。".to_string(),
+        codex_app_server_protocol::ThreadItem::AgentMessage { .. }
+        | codex_app_server_protocol::ThreadItem::UserMessage { .. }
+        | codex_app_server_protocol::ThreadItem::HookPrompt { .. } => "更新对话内容。".to_string(),
+    }
+}
+
+fn describe_completed_item(item: &codex_app_server_protocol::ThreadItem) -> Option<String> {
+    match item {
+        codex_app_server_protocol::ThreadItem::Plan { text, .. } => {
+            Some(format!("计划已生成: {}", compact_text(text, 160)))
+        }
+        codex_app_server_protocol::ThreadItem::Reasoning { summary, content, .. } => {
+            let source = if !summary.is_empty() { summary.join(" ") } else { content.join(" ") };
+            Some(format!("推理完成: {}", compact_text(&source, 160)))
+        }
+        codex_app_server_protocol::ThreadItem::CommandExecution {
+            command,
+            status,
+            exit_code,
+            aggregated_output,
+            ..
+        } => {
+            let status_text = match status {
+                codex_app_server_protocol::CommandExecutionStatus::InProgress => "进行中",
+                codex_app_server_protocol::CommandExecutionStatus::Completed => "已完成",
+                codex_app_server_protocol::CommandExecutionStatus::Failed => "失败",
+                codex_app_server_protocol::CommandExecutionStatus::Declined => "已拒绝",
+            };
+            let mut message = format!("命令{}: {}", status_text, compact_text(command, 120));
+            if let Some(code) = exit_code {
+                message.push_str(&format!(" (exit={code})"));
+            }
+            if let Some(output) = aggregated_output {
+                if !output.trim().is_empty() {
+                    message.push_str(&format!(" | {}", compact_text(output, 120)));
+                }
+            }
+            Some(message)
+        }
+        codex_app_server_protocol::ThreadItem::FileChange { changes, status, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::PatchApplyStatus::InProgress => "进行中",
+                codex_app_server_protocol::PatchApplyStatus::Completed => "已完成",
+                codex_app_server_protocol::PatchApplyStatus::Failed => "失败",
+                codex_app_server_protocol::PatchApplyStatus::Declined => "已拒绝",
+            };
+            Some(format!("文件变更{}，共 {} 处。", status_text, changes.len()))
+        }
+        codex_app_server_protocol::ThreadItem::McpToolCall { server, tool, status, error, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::McpToolCallStatus::InProgress => "进行中",
+                codex_app_server_protocol::McpToolCallStatus::Completed => "已完成",
+                codex_app_server_protocol::McpToolCallStatus::Failed => "失败",
+            };
+            let mut message = format!("MCP 工具 {} / {} {}", server, tool, status_text);
+            if let Some(err) = error {
+                message.push_str(&format!(": {}", compact_text(&err.message, 120)));
+            }
+            Some(message)
+        }
+        codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, status, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::DynamicToolCallStatus::InProgress => "进行中",
+                codex_app_server_protocol::DynamicToolCallStatus::Completed => "已完成",
+                codex_app_server_protocol::DynamicToolCallStatus::Failed => "失败",
+            };
+            Some(format!("动态工具 {} {}", tool, status_text))
+        }
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall { tool, status, .. } => {
+            let status_text = match status {
+                codex_app_server_protocol::CollabAgentToolCallStatus::InProgress => "进行中",
+                codex_app_server_protocol::CollabAgentToolCallStatus::Completed => "已完成",
+                codex_app_server_protocol::CollabAgentToolCallStatus::Failed => "失败",
+            };
+            Some(format!("协作工具 {:?} {}", tool, status_text))
+        }
+        codex_app_server_protocol::ThreadItem::WebSearch { query, .. } => {
+            Some(format!("网络搜索完成: {}", compact_text(query, 120)))
+        }
+        codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
+            Some(format!("图像已加载: {}", path))
+        }
+        codex_app_server_protocol::ThreadItem::ImageGeneration { status, revised_prompt, saved_path, .. } => {
+            let mut message = format!("图像生成状态: {}", status);
+            if let Some(prompt) = revised_prompt {
+                if !prompt.trim().is_empty() {
+                    message.push_str(&format!(" | prompt: {}", compact_text(prompt, 120)));
+                }
+            }
+            if let Some(path) = saved_path {
+                message.push_str(&format!(" | saved: {}", path));
+            }
+            Some(message)
+        }
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { review, .. } => {
+            Some(format!("已进入审查模式: {}", review))
+        }
+        codex_app_server_protocol::ThreadItem::ExitedReviewMode { review, .. } => {
+            Some(format!("已退出审查模式: {}", review))
+        }
+        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => {
+            Some("上下文压缩已完成。".to_string())
+        }
+        codex_app_server_protocol::ThreadItem::AgentMessage { .. }
+        | codex_app_server_protocol::ThreadItem::UserMessage { .. }
+        | codex_app_server_protocol::ThreadItem::HookPrompt { .. } => None,
     }
 }
 
