@@ -1,6 +1,20 @@
 import { apiManagementVM, ApiManagementState } from '../apim/ApiManagementViewModel';
 import { ProviderRecord, ProviderPreset, EndpointSpeedResult, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
 
+type ToastTone = 'info' | 'success' | 'warning' | 'error';
+
+class UiToastItem {
+  id: number;
+  tone: ToastTone;
+  message: string;
+
+  constructor(id: number, tone: ToastTone, message: string) {
+    this.id = id;
+    this.tone = tone;
+    this.message = message;
+  }
+}
+
 @Component
 export struct ApiManagementPage {
   @State private vm: ApiManagementState = apiManagementVM.state;
@@ -14,9 +28,17 @@ export struct ApiManagementPage {
   @State private importJson: string = '';
   @State private showExportDialog: boolean = false;
   @State private showImportDialog: boolean = false;
+  @State private toasts: UiToastItem[] = [];
+  @State private toastIdSeed: number = 1;
+  @State private pressedKey: string = '';
+  @State private sparkSeed: number = 0;
+  @State private selectedProviderId: string = '';
 
   aboutToAppear(): void {
     apiManagementVM.loadProviders();
+    if (this.vm.providers.length > 0 && this.selectedProviderId.length === 0) {
+      this.selectedProviderId = this.vm.providers[0].id;
+    }
   }
 
   private categoryLabel(category: string): string {
@@ -64,6 +86,97 @@ export struct ApiManagementPage {
       case 'unhealthy': return '#FEE2E2';
       default: return '#F8FAFC';
     }
+  }
+
+  private triggerFeedback(message: string, tone: ToastTone = 'info'): void {
+    this.sparkSeed += 1;
+    this.showToast(message, tone);
+  }
+
+  private showToast(message: string, tone: ToastTone = 'info', duration: number = 1800): void {
+    const toastId = this.toastIdSeed;
+    this.toastIdSeed += 1;
+    this.toasts = [...this.toasts, new UiToastItem(toastId, tone, message)];
+    setTimeout(() => {
+      this.dismissToast(toastId);
+    }, duration);
+  }
+
+  private dismissToast(toastId: number): void {
+    this.toasts = this.toasts.filter((toast: UiToastItem) => toast.id !== toastId);
+  }
+
+  private notePending(action: string): void {
+    this.triggerFeedback(`${action}暂未接入后端，当前仅前端模拟。`, 'warning');
+  }
+
+  private updatePressed(key: string, event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.pressedKey = key;
+      return;
+    }
+    if (this.pressedKey === key) {
+      this.pressedKey = '';
+    }
+  }
+
+  private pressScale(key: string): number {
+    return this.pressedKey === key ? 0.985 : 1;
+  }
+
+  private toneBackground(tone: ToastTone): string {
+    switch (tone) {
+      case 'success':
+        return '#DCFCE7';
+      case 'warning':
+        return '#FEF3C7';
+      case 'error':
+        return '#FEE2E2';
+      default:
+        return '#E0F2FE';
+    }
+  }
+
+  private toneColor(tone: ToastTone): string {
+    switch (tone) {
+      case 'success':
+        return '#166534';
+      case 'warning':
+        return '#92400E';
+      case 'error':
+        return '#B91C1C';
+      default:
+        return '#0C4A6E';
+    }
+  }
+
+  private providerInitial(provider: ProviderRecord): string {
+    const name = provider.name.trim();
+    if (name.length > 0) {
+      return name.substring(0, 1).toUpperCase();
+    }
+    if (provider.icon.trim().length > 0) {
+      return provider.icon.substring(0, 1).toUpperCase();
+    }
+    return 'P';
+  }
+
+  private providerCardBorder(provider: ProviderRecord): string {
+    return provider.isActive || provider.id === this.selectedProviderId ? '#6AA7FF' : '#D7E2F1';
+  }
+
+  private providerCardBackground(provider: ProviderRecord): string {
+    return provider.isActive || provider.id === this.selectedProviderId ? '#EEF6FF' : '#FFFFFF';
+  }
+
+  private providerSecondaryText(provider: ProviderRecord): string {
+    if (provider.baseUrl.trim().length > 0) {
+      return provider.baseUrl;
+    }
+    if (provider.description.trim().length > 0) {
+      return provider.description;
+    }
+    return '未配置官方网址';
   }
 
   @Builder
@@ -269,6 +382,7 @@ export struct ApiManagementPage {
           .borderRadius(12)
           .border({ width: 1, color: '#CBD5E1' })
           .onClick(() => {
+            this.selectedProviderId = '';
             apiManagementVM.startEditing(null);
             this.editorExpanded = true;
           })
@@ -344,148 +458,228 @@ export struct ApiManagementPage {
 
   @Builder
   private providerCard(provider: ProviderRecord) {
-    Column() {
+    const emphasized = provider.isActive || provider.id === this.selectedProviderId;
+    Row() {
       Row() {
-        Column() {
-          Row() {
-            Text(provider.name.length > 0 ? provider.name : '未命名')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(12)
-              .fontWeight(provider.isActive ? FontWeight.Bold : FontWeight.Medium)
-              .fontColor('#0F172A')
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text('⋮⋮')
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .fontColor('#C0CAD8')
+          .opacity(0.95)
+      }
+      .width(22)
+      .justifyContent(FlexAlign.Center)
+      .margin({ right: 8 })
 
-            if (provider.isActive) {
-              this.chip('ACTIVE', '#DCFCE7', '#166534')
-            }
-          }
+      Stack({ alignContent: Alignment.Center }) {
+        Column()
+          .width(42)
+          .height(42)
+          .backgroundColor(provider.isActive ? '#FFF5EC' : '#F8FAFC')
+          .border({ width: 1, color: provider.isActive ? '#FAD4B4' : '#E2E8F0' })
+          .borderRadius(21)
 
-          Text(`${provider.baseUrl.length > 0 ? provider.baseUrl : '未设置 URL'} · ${provider.model.length > 0 ? provider.model : '未设置模型'}`)
+        Text(this.providerInitial(provider))
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(provider.iconColor.trim().length > 0 ? provider.iconColor : (provider.isActive ? '#D97757' : '#64748B'))
+      }
+      .margin({ right: 12 })
+
+      Column() {
+        Row() {
+          Text(provider.name.length > 0 ? provider.name : '未命名')
             .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#64748B')
-            .margin({ top: 3 })
+            .fontSize(13)
+            .fontWeight(provider.isActive ? FontWeight.Bold : FontWeight.Medium)
+            .fontColor('#0F172A')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          Row() {
-            this.chip(this.categoryLabel(provider.category), '#EEF4FF', '#1D4ED8')
-            this.chip(this.wireApiLabel(provider.wireApi), '#F8FAFC', '#64748B')
-            this.chip(provider.healthStatus, this.healthBg(provider.healthStatus), this.healthColor(provider.healthStatus))
-            this.chip(provider.syncStatus, '#F8FAFC', '#64748B')
+          if (provider.isActive) {
+            Text('当前')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(9)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#1D4ED8')
+              .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+              .backgroundColor('#EAF2FF')
+              .border({ width: 1, color: '#C7DAFF' })
+              .borderRadius(999)
+              .margin({ left: 8 })
           }
-          .width('100%')
-          .margin({ top: 6 })
         }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
+        .width('100%')
+
+        Text(this.providerSecondaryText(provider))
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#94A3B8')
+          .margin({ top: 4 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Row() {
+          this.chip(this.categoryLabel(provider.category), '#F4F8FF', '#3563C8')
+          this.chip(this.wireApiLabel(provider.wireApi), '#F8FAFC', '#64748B')
+          this.chip(provider.healthStatus, this.healthBg(provider.healthStatus), this.healthColor(provider.healthStatus))
+        }
+        .margin({ top: 8 })
       }
-      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
 
-      Row() {
-        Button('编辑')
-          .height(26)
-          .fontSize(10)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(10)
-          .border({ width: 1, color: '#CBD5E1' })
-          .onClick(() => {
-            apiManagementVM.startEditing(provider);
-            this.editorExpanded = true;
-            this.activeSubTab = 'providers';
-          })
+      if (emphasized) {
+        Row() {
+          Button(provider.isActive ? '启用中' : '启用')
+            .height(30)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .padding({ left: 14, right: 14 })
+            .backgroundColor(provider.isActive ? '#2E8BFF' : '#F7FAFF')
+            .fontColor(provider.isActive ? '#FFFFFF' : '#2E6EEB')
+            .borderRadius(12)
+            .border({ width: provider.isActive ? 0 : 1, color: '#BFD3F7' })
+            .scale({ x: this.pressScale(`activate-${provider.id}`), y: this.pressScale(`activate-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`activate-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              if (!provider.isActive) {
+                apiManagementVM.activateProvider(provider.id);
+                this.triggerFeedback(`已切换到 ${provider.name.length > 0 ? provider.name : '该 Provider'}`, 'success');
+              } else {
+                this.notePending('重复启用');
+              }
+            })
 
-        Button(provider.isActive ? '已启用' : '激活')
-          .height(26)
-          .fontSize(10)
-          .margin({ left: 6 })
-          .backgroundColor(provider.isActive ? '#DBEAFE' : '#111827')
-          .fontColor(provider.isActive ? '#1D4ED8' : '#FFFFFF')
-          .borderRadius(10)
-          .onClick(() => {
-            if (!provider.isActive) {
-              apiManagementVM.activateProvider(provider.id);
-            }
-          })
+          Button('编辑')
+            .height(30)
+            .fontSize(11)
+            .fontColor('#64748B')
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .border({ width: 1, color: '#D9E2EE' })
+            .padding({ left: 12, right: 12 })
+            .scale({ x: this.pressScale(`edit-${provider.id}`), y: this.pressScale(`edit-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`edit-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              apiManagementVM.startEditing(provider);
+              this.editorExpanded = true;
+              this.activeSubTab = 'providers';
+              this.triggerFeedback(`正在编辑 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
+            })
 
-        Button('验证')
-          .height(26)
-          .fontSize(10)
-          .margin({ left: 6 })
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(10)
-          .border({ width: 1, color: '#CBD5E1' })
-          .onClick(() => {
-            apiManagementVM.validateProvider(provider);
-          })
+          Button('复制')
+            .height(30)
+            .fontSize(11)
+            .fontColor('#64748B')
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .border({ width: 1, color: '#D9E2EE' })
+            .padding({ left: 12, right: 12 })
+            .scale({ x: this.pressScale(`copy-${provider.id}`), y: this.pressScale(`copy-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`copy-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              this.notePending('复制 Provider');
+            })
 
-        Button('删除')
-          .height(26)
-          .fontSize(10)
-          .margin({ left: 6 })
-          .backgroundColor('#FFFFFF')
-          .fontColor('#B91C1C')
-          .borderRadius(10)
-          .border({ width: 1, color: '#FECACA' })
-          .onClick(() => {
-            apiManagementVM.deleteProvider(provider.id);
-          })
+          Button('验证')
+            .height(30)
+            .fontSize(11)
+            .fontColor('#64748B')
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .border({ width: 1, color: '#D9E2EE' })
+            .padding({ left: 12, right: 12 })
+            .scale({ x: this.pressScale(`validate-${provider.id}`), y: this.pressScale(`validate-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`validate-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              apiManagementVM.validateProvider(provider);
+              this.triggerFeedback(`正在验证 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
+            })
+
+          Button('模型')
+            .height(30)
+            .fontSize(11)
+            .fontColor('#94A3B8')
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .border({ width: 1, color: '#D9E2EE' })
+            .padding({ left: 12, right: 12 })
+            .scale({ x: this.pressScale(`models-${provider.id}`), y: this.pressScale(`models-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`models-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              apiManagementVM.discoverModels(provider);
+              this.showDiscoveredModels = true;
+              this.triggerFeedback(`开始获取 ${provider.name.length > 0 ? provider.name : 'Provider'} 的模型列表`, 'info');
+            })
+
+          Button('测速')
+            .height(30)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#475569')
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .border({ width: 1, color: '#D9E2EE' })
+            .padding({ left: 12, right: 12 })
+            .scale({ x: this.pressScale(`speed-${provider.id}`), y: this.pressScale(`speed-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`speed-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              apiManagementVM.testSpeed(provider, false);
+              this.showSpeedResults = true;
+              this.triggerFeedback(`开始测速 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
+            })
+
+          Button('删除')
+            .height(30)
+            .fontSize(11)
+            .fontColor('#B91C1C')
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .border({ width: 1, color: '#F4C9C9' })
+            .padding({ left: 12, right: 12 })
+            .scale({ x: this.pressScale(`delete-${provider.id}`), y: this.pressScale(`delete-${provider.id}`) })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed(`delete-${provider.id}`, event); })
+            .onClick(() => {
+              this.selectedProviderId = provider.id;
+              apiManagementVM.deleteProvider(provider.id);
+              this.triggerFeedback(`已删除 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'warning');
+            })
+        }
+        .margin({ left: 12 })
       }
-      .width('100%')
-      .margin({ top: 8 })
-
-      Row() {
-        Button('测速')
-          .height(24)
-          .fontSize(10)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#64748B')
-          .borderRadius(8)
-          .border({ width: 1, color: '#E5E7EB' })
-          .onClick(() => {
-            apiManagementVM.testSpeed(provider, false);
-            this.showSpeedResults = true;
-          })
-
-        Button('模型发现')
-          .height(24)
-          .fontSize(10)
-          .margin({ left: 4 })
-          .backgroundColor('#FFFFFF')
-          .fontColor('#64748B')
-          .borderRadius(8)
-          .border({ width: 1, color: '#E5E7EB' })
-          .onClick(() => {
-            apiManagementVM.discoverModels(provider);
-            this.showDiscoveredModels = true;
-          })
-
-        Button('用量')
-          .height(24)
-          .fontSize(10)
-          .margin({ left: 4 })
-          .backgroundColor('#FFFFFF')
-          .fontColor('#64748B')
-          .borderRadius(8)
-          .border({ width: 1, color: '#E5E7EB' })
-          .onClick(() => {
-            apiManagementVM.queryUsage(provider);
-            this.showUsageResult = true;
-          })
-      }
-      .width('100%')
-      .margin({ top: 6 })
     }
-    .alignItems(HorizontalAlign.Start)
+    .alignItems(VerticalAlign.Center)
     .width('100%')
-    .padding(12)
-    .backgroundColor(provider.isActive ? '#F0FDF4' : '#FFFFFF')
-    .border({ width: 1, color: provider.isActive ? '#BBF7D0' : '#E5E7EB' })
-    .borderRadius(14)
-    .margin({ bottom: 8 })
+    .padding({ left: 14, right: 14, top: 16, bottom: 16 })
+    .backgroundColor(this.providerCardBackground(provider))
+    .border({ width: emphasized ? 2 : 1, color: this.providerCardBorder(provider) })
+    .borderRadius(20)
+    .margin({ bottom: 12 })
+    .scale({ x: this.pressScale(`card-${provider.id}`), y: this.pressScale(`card-${provider.id}`) })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => { this.updatePressed(`card-${provider.id}`, event); })
+    .onClick(() => { this.selectedProviderId = provider.id; })
   }
 
   // ── Editor panel ──
@@ -815,6 +1009,38 @@ export struct ApiManagementPage {
   }
 
   @Builder
+  private toastHost() {
+    Column() {
+      ForEach(this.toasts, (toast: UiToastItem) => {
+        Row() {
+          Column()
+            .width(8)
+            .height(8)
+            .backgroundColor(this.toneColor(toast.tone))
+            .borderRadius(8)
+
+          Text(toast.message)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor('#0F172A')
+            .margin({ left: 10 })
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width(340)
+        .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+        .backgroundColor(this.toneBackground(toast.tone))
+        .border({ width: 1, color: '#FFFFFF' })
+        .borderRadius(18)
+        .margin({ top: 10 })
+      }, (toast: UiToastItem) => `${toast.id}`)
+    }
+    .alignItems(HorizontalAlign.End)
+    .position({ x: 640, y: 24 })
+  }
+
+  @Builder
   private exportDialog() {
     if (this.showExportDialog) {
       Column() {
@@ -902,67 +1128,88 @@ export struct ApiManagementPage {
   }
 
   build() {
-    Column() {
-      if (this.vm.statusText.trim().length > 0) {
-        Text(this.vm.statusText)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11).fontColor('#334155').lineHeight(18).margin({ top: 4, bottom: 4 })
-      }
-      if (this.vm.errorText.trim().length > 0) {
-        Text(this.vm.errorText)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11).fontColor('#B91C1C').lineHeight(18).margin({ top: 4, bottom: 4 })
-      }
+    Stack() {
+      Column() {
+        if (this.vm.statusText.trim().length > 0) {
+          Text(this.vm.statusText)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#334155').lineHeight(18).margin({ top: 4, bottom: 4 })
+        }
+        if (this.vm.errorText.trim().length > 0) {
+          Text(this.vm.errorText)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#B91C1C').lineHeight(18).margin({ top: 4, bottom: 4 })
+        }
 
-      if (this.vm.validating) {
-        Text('正在验证 API Key...')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
-      }
-      if (this.vm.speedTesting) {
-        Text('正在进行端点测速...')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
-      }
-      if (this.vm.discoveringModels) {
-        Text('正在获取模型列表...')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
-      }
+        if (this.vm.validating) {
+          Text('正在验证 API Key...')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
+        }
+        if (this.vm.speedTesting) {
+          Text('正在进行端点测速...')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
+        }
+        if (this.vm.discoveringModels) {
+          Text('正在获取模型列表...')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
+        }
 
-      this.addPresetDialog()
-      this.validationResultPanel()
-      this.speedResultsPanel()
-      this.discoveredModelsPanel()
-      this.usageResultPanel()
-      this.exportDialog()
-      this.importDialog()
+        this.addPresetDialog()
+        this.validationResultPanel()
+        this.speedResultsPanel()
+        this.discoveredModelsPanel()
+        this.usageResultPanel()
+        this.exportDialog()
+        this.importDialog()
 
-      Row() {
-        this.subTabChip('Provider 列表', 'providers')
-        this.subTabChip('预设库', 'presets')
-      }
-      .width('100%')
-      .margin({ top: 8 })
-
-      if (this.activeSubTab === 'presets') {
-        this.presetsPanel()
-      } else {
-        Column() {
-          this.providersPanel()
-          if (this.editorExpanded) {
-            Column() {
-              this.editorPanel()
-            }
-            .margin({ top: 10 })
+        Row() {
+          this.subTabChip('Provider 列表', 'providers')
+          this.subTabChip('预设库', 'presets')
+          Blank().layoutWeight(1)
+          Row() {
+            ForEach([0, 1, 2, 3, 4], (index: number) => {
+              Column()
+                .width(index % 2 === 0 ? 7 : 5)
+                .height(index % 2 === 0 ? 7 : 5)
+                .backgroundColor(index % 3 === 0 ? '#60A5FA' : (index % 3 === 1 ? '#34D399' : '#FBBF24'))
+                .borderRadius(12)
+                .opacity((this.sparkSeed + index) % 2 === 0 ? 0.92 : 0.34)
+                .scale({ x: (this.sparkSeed + index) % 2 === 0 ? 1.18 : 0.82, y: (this.sparkSeed + index) % 2 === 0 ? 1.18 : 0.82 })
+                .margin({ left: index === 0 ? 0 : 8, top: index % 2 === 0 ? 0 : 8 })
+                .animation({ duration: 220, curve: Curve.EaseOut })
+            })
           }
+          .margin({ right: 4 })
         }
         .width('100%')
-        .height('100%')
+        .margin({ top: 8, bottom: 6 })
+
+        if (this.activeSubTab === 'presets') {
+          this.presetsPanel()
+        } else {
+          Column() {
+            this.providersPanel()
+            if (this.editorExpanded) {
+              Column() {
+                this.editorPanel()
+              }
+              .margin({ top: 10 })
+            }
+          }
+          .width('100%')
+          .height('100%')
+        }
       }
+      .width('100%')
+      .height('100%')
+      .alignItems(HorizontalAlign.Start)
+
+      this.toastHost()
     }
     .width('100%')
     .height('100%')
-    .alignItems(HorizontalAlign.Start)
   }
 }

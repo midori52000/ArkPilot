@@ -1267,12 +1267,10 @@ struct Index {
       Button() {
         Row() {
           Text('⚙')
-            .copyOption(CopyOptions.LocalDevice)
             .fontSize(14)
             .fontColor('#64748B')
 
           Text('Settings')
-            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontColor('#64748B')
             .margin({ left: 6 })
