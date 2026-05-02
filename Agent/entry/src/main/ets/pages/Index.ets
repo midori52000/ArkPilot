@@ -87,7 +87,7 @@ class CodeDiffLine {
 @Component
 struct Index {
   private readonly workspaces: WorkspaceItem[] = [
-    new WorkspaceItem(1, '默认会话', '通用 Codex 对话线程'),
+    new WorkspaceItem(1, '默认会话', '通用 ArkPilot 对话线程'),
     new WorkspaceItem(2, 'Rust app-server 移植', '用于跟踪 codex-rs 的鸿蒙适配'),
     new WorkspaceItem(3, '鸿蒙前端适配', '用于跟踪 Agent ArkTS 改造')
   ];
@@ -105,7 +105,7 @@ struct Index {
     new SelectorOption('xhigh', 'xhigh')
   ];
   private readonly sidebarItems: SidebarItem[] = [
-    new SidebarItem('chat', 'Chat', '继续与内置 Codex 协作'),
+    new SidebarItem('chat', 'Chat', '继续与内置 ArkPilot 协作'),
     new SidebarItem('sessions', 'Sessions', '查看与切换项目会话'),
     new SidebarItem('usage', 'Usage', '查看当前工作台统计'),
     new SidebarItem('prompts', 'Prompts', '自定义指令管理')
@@ -134,7 +134,7 @@ struct Index {
   @State private connectionText: string = '未连接';
   @State private summaryTitle: string = '等待连接原生桥接后端';
   @State private summaryPoints: string[] = [
-    '应用启动时会自动拉起内置 Rust codex host。',
+    '应用启动时会自动拉起内置 Rust ArkPilot host。',
     '这里通过 libentry.so 同步调用原生桥接层，而不是本地 mock。',
     '发送消息后会刷新对话、计划和 diff。'
   ];
@@ -153,7 +153,7 @@ struct Index {
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
-      'Codex',
+      'ArkPilot',
       'assistant',
       '前端会自动连接应用内置 app-server。必要时你仍然可以手动重连或修改工作目录。',
       '刚刚'
@@ -1070,7 +1070,7 @@ struct Index {
 
       Column() {
         this.panelTitle('说明', '第一阶段先做本地派生统计，不做精确 token/cost 账单')
-        this.summaryBullet('统计来自 CodexBackend 内部线程快照，后续会继续收敛到原生桥接主链路。')
+        this.summaryBullet('统计来自 ArkPilot 内部线程快照，后续会继续收敛到原生桥接主链路。')
         this.summaryBullet('Provider / MCP / Skills 管理请通过左下角 Settings 按钮进入。')
       }
       .width('100%')
@@ -1402,7 +1402,7 @@ struct Index {
         .margin({ top: 8 })
 
         Row() {
-          TextInput({ text: this.draft, placeholder: '输入要发送给真实 Codex 的指令...' })
+          TextInput({ text: this.draft, placeholder: '输入要发送给真实 ArkPilot 的指令...' })
             .layoutWeight(1)
             .height(40)
             .fontSize(12)

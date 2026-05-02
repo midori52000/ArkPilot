@@ -80,7 +80,7 @@ class McpStatusListResponsePayload {
 
 class InitializeClientInfoPayload {
   name: string = 'codex_harmony_agent';
-  title: string = 'Codex Harmony Agent';
+  title: string = 'ArkPilot Harmony Agent';
   version: string = '0.1.0';
 }
 
@@ -311,7 +311,7 @@ class CodexThreadRecord {
   cwd: string = '';
   messages: CodexChatMessage[] = [];
   diffLines: CodexDiffLine[] = [];
-  summaryTitle: string = '等待 Codex 响应';
+  summaryTitle: string = '等待 ArkPilot 响应';
   summaryPoints: string[] = ['发送请求后会在这里显示计划、摘要和关键步骤。'];
   changedFiles: string = '尚未产生文件改动';
   diffStat: string = '+0 -0';
@@ -687,7 +687,7 @@ export class CodexBackend {
     thread.turnCount += 1;
     thread.lastTurnStatus = 'inProgress';
     thread.updatedAt = currentTimestamp();
-    thread.summaryTitle = '正在等待 Codex 响应';
+    thread.summaryTitle = '正在等待 ArkPilot 响应';
     thread.summaryPoints = ['已通过原生桥接发送请求，等待轮询结果。'];
     return this.snapshotForThread(thread, 'inProgress');
   }
@@ -718,7 +718,7 @@ export class CodexBackend {
         return new CodexChatMessage(
           typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
           index + 1,
-          typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'Codex' : '系统'),
+          typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'ArkPilot' : '系统'),
           role,
           typeof message['content'] === 'string' ? (message['content'] as string) : '',
           typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp()

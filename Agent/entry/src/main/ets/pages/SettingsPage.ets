@@ -156,7 +156,7 @@ struct SettingsPage {
     this.skillBackups = [
       new SkillBackupEntry(
         'backup-001',
-        'codex-home/skills/.backup/release-guard-001',
+        'arkpilot-home/skills/.backup/release-guard-001',
         Date.now() - 86400000,
         new InstalledSkill(
           'anthropics/release-guard:guard', 'Release Guard', '已归档的历史版本备份。', 'guard',
@@ -566,11 +566,9 @@ struct SettingsPage {
       Button() {
         Row() {
           Text('←')
-            .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontColor('#0F172A')
           Text('Back')
-            .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
