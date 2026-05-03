@@ -1,4 +1,4 @@
-import { ApiManagementService, apiManagementService } from './ApiManagementService';
+import { configManagerFacade, ConfigActionError } from '../backend/CodexBackend';
 import {
   ProviderRecord, ProviderPreset,
   ApiValidationResult, EndpointSpeedResult, UsageQueryResult,
@@ -27,12 +27,7 @@ export class ApiManagementState {
 }
 
 export class ApiManagementViewModel {
-  private service: ApiManagementService;
   state: ApiManagementState = new ApiManagementState();
-
-  constructor(service: ApiManagementService) {
-    this.service = service;
-  }
 
   get activeProvider(): ProviderRecord | null {
     const providers = this.state.providers;
@@ -50,7 +45,12 @@ export class ApiManagementViewModel {
   loadProviders(): void {
     this.state.loading = true;
     try {
-      this.state.providers = this.service.getProviders();
+      const result = configManagerFacade.listProviders();
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.state.providers = result.data;
       this.state.errorText = '';
     } catch (err) {
       this.state.errorText = this.describeError(err);
@@ -71,19 +71,19 @@ export class ApiManagementViewModel {
     }
 
     try {
-      const provider = this.service.createFromPreset(
-        this.state.selectedPresetId, this.state.newApiKey
+      const result = configManagerFacade.addProviderFromPreset(
+        this.state.selectedPresetId,
+        this.state.newApiKey
       );
-      const newProviders: ProviderRecord[] = [];
-      for (let i = 0; i < this.state.providers.length; i++) {
-        newProviders.push(this.state.providers[i]);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
       }
-      newProviders.push(provider);
-      this.state.providers = newProviders;
-      this.state.editingProvider = provider;
+      this.loadProviders();
+      this.state.editingProvider = result.data;
       this.state.showAddFromPreset = false;
       this.state.errorText = '';
-      this.state.statusText = `已从预设创建 "${provider.name}"`;
+      this.state.statusText = `已从预设创建 "${result.data.name}"`;
     } catch (err) {
       this.state.errorText = this.describeError(err);
     }
@@ -121,11 +121,15 @@ export class ApiManagementViewModel {
     if (editing === null) return;
 
     try {
-      this.service.saveProvider(editing);
-      this.state.providers = this.service.getProviders();
+      const result = configManagerFacade.saveProvider(editing);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.loadProviders();
       this.state.editingProvider = null;
       this.state.errorText = '';
-      this.state.statusText = `Provider "${editing.name}" 已保存`;
+      this.state.statusText = `Provider "${result.data.name}" 已保存`;
     } catch (err) {
       this.state.errorText = this.describeError(err);
     }
@@ -133,10 +137,14 @@ export class ApiManagementViewModel {
 
   activateProvider(id: string): void {
     try {
-      const activated = this.service.activateProvider(id);
-      this.state.providers = this.service.getProviders();
+      const result = configManagerFacade.setActiveProvider(id);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.loadProviders();
       this.state.errorText = '';
-      this.state.statusText = `已激活 Provider "${activated.name}"`;
+      this.state.statusText = `已激活 Provider "${result.data.name}"`;
     } catch (err) {
       this.state.errorText = this.describeError(err);
     }
@@ -152,8 +160,12 @@ export class ApiManagementViewModel {
           break;
         }
       }
-      this.service.deleteProvider(id);
-      this.state.providers = this.service.getProviders();
+      const result = configManagerFacade.removeProvider(id);
+      if (!result.ok) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.loadProviders();
       if (this.state.editingProvider !== null && this.state.editingProvider.id === id) {
         this.state.editingProvider = null;
       }
@@ -170,17 +182,15 @@ export class ApiManagementViewModel {
     this.state.validating = true;
     this.state.validationResult = null;
     try {
-      this.state.validationResult = await this.service.validateApiKey(
-        provider.baseUrl, provider.apiKey
-      );
-      if (this.state.validationResult.success) {
-        provider.healthStatus = 'healthy';
-        provider.healthLatencyMs = this.state.validationResult.latencyMs;
-        provider.lastValidatedAt = Date.now();
-        this.service.saveProvider(provider);
-        this.state.providers = this.service.getProviders();
+      const result = await configManagerFacade.validateProvider(provider);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        this.state.validationResult = new ApiValidationResult(false, 0, 0, this.state.errorText, 0, '');
+        return;
       }
-      this.state.errorText = '';
+      this.state.validationResult = result.data;
+      this.state.errorText = result.data.success ? '' : result.data.errorMessage;
+      this.state.statusText = result.data.success ? 'Provider 验证完成' : '';
     } catch (err) {
       this.state.errorText = this.describeError(err);
     } finally {
@@ -192,11 +202,15 @@ export class ApiManagementViewModel {
     this.state.speedTesting = true;
     this.state.speedResults = [];
     try {
-      this.state.speedResults = await this.service.testEndpointSpeed(provider, autoSelect);
-      if (autoSelect) {
-        this.state.providers = this.service.getProviders();
+      const result = await configManagerFacade.testProviderSpeed(provider, autoSelect);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
       }
+      this.state.speedResults = result.data;
+      this.loadProviders();
       this.state.errorText = '';
+      this.state.statusText = result.data.length > 0 ? 'Provider 测速完成' : '未获得测速结果';
     } catch (err) {
       this.state.errorText = this.describeError(err);
     } finally {
@@ -208,11 +222,15 @@ export class ApiManagementViewModel {
     this.state.discoveringModels = true;
     this.state.discoveredModels = [];
     try {
-      this.state.discoveredModels = await this.service.discoverModels(
-        provider.baseUrl, provider.apiKey
-      );
+      const result = await configManagerFacade.discoverProviderModels(provider);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        this.state.statusText = '';
+        return;
+      }
+      this.state.discoveredModels = result.data;
       this.state.errorText = '';
-      this.state.statusText = `发现 ${this.state.discoveredModels.length} 个模型`;
+      this.state.statusText = result.data.length > 0 ? `已发现 ${result.data.length} 个模型` : '未发现可用模型';
     } catch (err) {
       this.state.errorText = this.describeError(err);
     } finally {
@@ -224,8 +242,15 @@ export class ApiManagementViewModel {
     this.state.queryingUsage = true;
     this.state.usageResult = null;
     try {
-      this.state.usageResult = await this.service.queryUsage(provider);
-      this.state.errorText = '';
+      const result = await configManagerFacade.queryProviderUsage(provider);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        this.state.usageResult = new UsageQueryResult(false, provider.name, '', 0, 0, 0, '', '', Date.now(), this.state.errorText);
+        return;
+      }
+      this.state.usageResult = result.data;
+      this.state.errorText = result.data.success ? '' : result.data.errorMessage;
+      this.state.statusText = result.data.success ? '用量查询完成' : '';
     } catch (err) {
       this.state.errorText = this.describeError(err);
     } finally {
@@ -235,7 +260,13 @@ export class ApiManagementViewModel {
 
   exportProviders(): string {
     try {
-      return this.service.exportProviders();
+      const result = configManagerFacade.exportProviders();
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return '';
+      }
+      this.state.errorText = '';
+      return result.data;
     } catch (err) {
       this.state.errorText = this.describeError(err);
       return '';
@@ -244,9 +275,13 @@ export class ApiManagementViewModel {
 
   importProviders(json: string): void {
     try {
-      const count = this.service.importProviders(json);
-      this.state.providers = this.service.getProviders();
-      this.state.statusText = `已导入 ${count} 个 Provider`;
+      const result = configManagerFacade.importProviders(json);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.loadProviders();
+      this.state.statusText = `已导入 ${result.data} 个 Provider`;
       this.state.errorText = '';
     } catch (err) {
       this.state.errorText = this.describeError(err);
@@ -269,6 +304,13 @@ export class ApiManagementViewModel {
     );
   }
 
+  private describeActionError(error: ConfigActionError | null): string {
+    if (error === null) {
+      return '操作失败';
+    }
+    return error.message;
+  }
+
   private describeError(err: Object): string {
     if (err instanceof Error) {
       return err.message;
@@ -278,4 +320,4 @@ export class ApiManagementViewModel {
 }
 
 export const apiManagementVM: ApiManagementViewModel =
-  new ApiManagementViewModel(apiManagementService);
+  new ApiManagementViewModel();

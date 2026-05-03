@@ -93,6 +93,78 @@ export struct ApiManagementPage {
     this.showToast(message, tone);
   }
 
+  private showVmFeedback(successFallback: string = '', successTone: ToastTone = 'success', errorTone: ToastTone = 'error'): boolean {
+    if (this.vm.errorText.trim().length > 0) {
+      this.triggerFeedback(this.vm.errorText, errorTone);
+      return false;
+    }
+    const message = this.vm.statusText.trim().length > 0 ? this.vm.statusText : successFallback;
+    if (message.trim().length > 0) {
+      this.triggerFeedback(message, successTone);
+    }
+    return true;
+  }
+
+  private describeRuntimeError(err: Object): string {
+    if (err instanceof Error) {
+      return err.message;
+    }
+    return JSON.stringify(err);
+  }
+
+  private runValidateProvider(provider: ProviderRecord): void {
+    this.selectedProviderId = provider.id;
+    apiManagementVM.validateProvider(provider)
+      .then(() => {
+        const result = this.vm.validationResult;
+        const message = result !== null && result.errorMessage.trim().length > 0
+          ? result.errorMessage
+          : (this.vm.errorText.trim().length > 0 ? this.vm.errorText : '验证已完成。');
+        this.triggerFeedback(message, result !== null && result.success ? 'success' : 'warning');
+      })
+      .catch((err: Object) => {
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
+  }
+
+  private runDiscoverModels(provider: ProviderRecord): void {
+    this.selectedProviderId = provider.id;
+    this.showDiscoveredModels = true;
+    apiManagementVM.discoverModels(provider)
+      .then(() => {
+        if (this.vm.discoveredModels.length > 0) {
+          this.triggerFeedback(`发现 ${this.vm.discoveredModels.length} 个模型`, 'success');
+          return;
+        }
+        const message = this.vm.errorText.trim().length > 0 ? this.vm.errorText : '当前仅前端模拟。';
+        this.triggerFeedback(message, 'warning');
+      })
+      .catch((err: Object) => {
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
+  }
+
+  private runTestSpeed(provider: ProviderRecord): void {
+    this.selectedProviderId = provider.id;
+    this.showSpeedResults = true;
+    apiManagementVM.testSpeed(provider, false)
+      .then(() => {
+        const hasSuccess = this.vm.speedResults.some((result: EndpointSpeedResult) => result.success);
+        if (hasSuccess) {
+          this.triggerFeedback('端点测速已完成。', 'success');
+          return;
+        }
+        const firstFailure = this.vm.speedResults.length > 0 ? this.vm.speedResults[0].errorMessage : '';
+        const message = firstFailure.trim().length > 0
+          ? firstFailure
+          : (this.vm.errorText.trim().length > 0 ? this.vm.errorText : '当前仅前端模拟。');
+        this.triggerFeedback(message, 'warning');
+      })
+      .catch((err: Object) => {
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
+  }
+
   private showToast(message: string, tone: ToastTone = 'info', duration: number = 1800): void {
     const toastId = this.toastIdSeed;
     this.toastIdSeed += 1;
@@ -548,9 +620,9 @@ export struct ApiManagementPage {
               this.selectedProviderId = provider.id;
               if (!provider.isActive) {
                 apiManagementVM.activateProvider(provider.id);
-                this.triggerFeedback(`已切换到 ${provider.name.length > 0 ? provider.name : '该 Provider'}`, 'success');
+                this.showVmFeedback(`已切换到 ${provider.name.length > 0 ? provider.name : '该 Provider'}`);
               } else {
-                this.notePending('重复启用');
+                this.triggerFeedback('当前 Provider 已启用。', 'info');
               }
             })
 
@@ -604,9 +676,7 @@ export struct ApiManagementPage {
             .animation({ duration: 120, curve: Curve.EaseOut })
             .onTouch((event: TouchEvent) => { this.updatePressed(`validate-${provider.id}`, event); })
             .onClick(() => {
-              this.selectedProviderId = provider.id;
-              apiManagementVM.validateProvider(provider);
-              this.triggerFeedback(`正在验证 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
+              this.runValidateProvider(provider);
             })
 
           Button('模型')
@@ -622,10 +692,7 @@ export struct ApiManagementPage {
             .animation({ duration: 120, curve: Curve.EaseOut })
             .onTouch((event: TouchEvent) => { this.updatePressed(`models-${provider.id}`, event); })
             .onClick(() => {
-              this.selectedProviderId = provider.id;
-              apiManagementVM.discoverModels(provider);
-              this.showDiscoveredModels = true;
-              this.triggerFeedback(`开始获取 ${provider.name.length > 0 ? provider.name : 'Provider'} 的模型列表`, 'info');
+              this.runDiscoverModels(provider);
             })
 
           Button('测速')
@@ -642,10 +709,7 @@ export struct ApiManagementPage {
             .animation({ duration: 120, curve: Curve.EaseOut })
             .onTouch((event: TouchEvent) => { this.updatePressed(`speed-${provider.id}`, event); })
             .onClick(() => {
-              this.selectedProviderId = provider.id;
-              apiManagementVM.testSpeed(provider, false);
-              this.showSpeedResults = true;
-              this.triggerFeedback(`开始测速 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
+              this.runTestSpeed(provider);
             })
 
           Button('删除')
@@ -663,7 +727,7 @@ export struct ApiManagementPage {
             .onClick(() => {
               this.selectedProviderId = provider.id;
               apiManagementVM.deleteProvider(provider.id);
-              this.triggerFeedback(`已删除 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'warning');
+              this.showVmFeedback(`已删除 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'success');
             })
         }
         .margin({ left: 12 })
@@ -754,7 +818,9 @@ export struct ApiManagementPage {
             .backgroundColor('#111827').fontColor('#FFFFFF').borderRadius(12)
             .onClick(() => {
               apiManagementVM.saveEditing();
-              this.editorExpanded = false;
+              if (this.showVmFeedback('Provider 已保存')) {
+                this.editorExpanded = false;
+              }
             })
 
           Button('取消')
@@ -814,7 +880,10 @@ export struct ApiManagementPage {
         Row() {
           Button('确认添加')
             .height(32).fontSize(12).backgroundColor('#111827').fontColor('#FFFFFF').borderRadius(12)
-            .onClick(() => { apiManagementVM.confirmAddFromPreset(); })
+            .onClick(() => {
+              apiManagementVM.confirmAddFromPreset();
+              this.showVmFeedback('', 'success', 'error');
+            })
 
           Button('取消')
             .height(32).fontSize(12).margin({ left: 8 })
@@ -1102,8 +1171,10 @@ export struct ApiManagementPage {
             .onClick(() => {
               if (this.importJson.trim().length > 0) {
                 apiManagementVM.importProviders(this.importJson);
-                this.showImportDialog = false;
-                this.importJson = '';
+                if (this.showVmFeedback('导入完成')) {
+                  this.showImportDialog = false;
+                  this.importJson = '';
+                }
               }
             })
 

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cargo check *)",
+      "Bash(cargo check *)",
+      "Bash(Get-ChildItem D:\\\\code\\\\harmony\\\\ArkPilot\\\\libcodexhost-builder *)",
+      "PowerShell(& \"D:\\\\code\\\\harmony\\\\ArkPilot\\\\libcodexhost-builder\\\\build.ps1\" debug x86_64)"
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-import { SkillsBackendService, SkillError } from './SkillsBackendService';
+import { configManagerFacade, ConfigActionError } from '../backend/CodexBackend';
 import {
   InstalledSkill, DiscoverableSkill, UnmanagedSkill,
   SkillRepo, SkillUpdateInfo, SkillBackupEntry, SkillsShSearchResult
@@ -16,22 +16,16 @@ export class SkillsState {
   discoverableLoading: boolean = false;
   updatesLoading: boolean = false;
   backupsLoading: boolean = false;
+  statusText: string = '';
+  errorText: string = '';
 }
 
 export class SkillsViewModel {
-  private service: SkillsBackendService;
   state: SkillsState = new SkillsState();
 
-  // 缓存控制（对标 React Query staleTime: Infinity）
   private lastInstalledFetch: number = 0;
   private lastDiscoverableFetch: number = 0;
   private readonly STALE_TIME_MS: number = 5 * 60 * 1000;
-
-  constructor(service: SkillsBackendService) {
-    this.service = service;
-  }
-
-  // ========== 已安装 Skills ==========
 
   async loadInstalled(forceRefresh: boolean = false): Promise<void> {
     if (!forceRefresh && Date.now() - this.lastInstalledFetch < this.STALE_TIME_MS) {
@@ -40,7 +34,14 @@ export class SkillsViewModel {
 
     this.state.installedLoading = true;
     try {
-      this.state.installed = await this.service.getInstalled();
+      const result = await configManagerFacade.listInstalledSkills();
+      if (!result.ok || result.data === null) {
+        this.state.installed = [];
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.state.installed = result.data;
+      this.state.errorText = '';
       this.lastInstalledFetch = Date.now();
     } finally {
       this.state.installedLoading = false;
@@ -48,31 +49,40 @@ export class SkillsViewModel {
   }
 
   async installFromGithub(skill: DiscoverableSkill): Promise<void> {
-    const installed = await this.service.installFromGithub(skill);
-    this.state.installed = [...this.state.installed, installed];
+    const result = await configManagerFacade.installSkillMockOnly(skill);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    this.state.installed = [...this.state.installed, result.data];
+    this.state.errorText = '';
   }
 
   async uninstall(id: string): Promise<void> {
-    await this.service.uninstall(id);
+    const result = await configManagerFacade.removeInstalledSkill(id);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
     this.state.installed = this.state.installed.filter(s => s.id !== id);
+    this.state.errorText = '';
+    this.state.statusText = 'Skill 已卸载';
   }
 
   async toggleEnabled(id: string, enabled: boolean): Promise<void> {
-    const installed = await this.service.getInstalled();
-    const skill = installed.find(s => s.id === id);
-    if (!skill) {
+    const result = await configManagerFacade.setSkillEnabled(id, enabled);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
       return;
     }
 
-    skill.enabled = enabled;
-    await this.service.saveInstalled(installed);
-
+    const skill = result.data;
     this.state.installed = this.state.installed.map(s =>
       s.id === id ? skill : s
     );
+    this.state.errorText = '';
+    this.state.statusText = `${skill.name} 已${enabled ? '启用' : '禁用'}`;
   }
-
-  // ========== 发现 Skills ==========
 
   async loadDiscoverable(forceRefresh: boolean = false): Promise<void> {
     if (!forceRefresh && Date.now() - this.lastDiscoverableFetch < this.STALE_TIME_MS) {
@@ -81,100 +91,184 @@ export class SkillsViewModel {
 
     this.state.discoverableLoading = true;
     try {
-      this.state.discoverable = await this.service.discoverFromRepos();
+      const result = await configManagerFacade.discoverableSkillsMockOnly();
+      if (!result.ok || result.data === null) {
+        this.state.discoverable = [];
+        this.state.errorText = this.describeActionError(result.error);
+        this.lastDiscoverableFetch = 0;
+        return;
+      }
+      this.state.discoverable = result.data;
+      this.state.errorText = '';
       this.lastDiscoverableFetch = Date.now();
     } finally {
       this.state.discoverableLoading = false;
     }
   }
 
-  // ========== 未管理 Skills ==========
-
   async scanUnmanaged(): Promise<void> {
-    this.state.unmanaged = await this.service.scanUnmanaged();
+    const result = await configManagerFacade.scanUnmanagedSkills();
+    if (!result.ok || result.data === null) {
+      this.state.unmanaged = [];
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    this.state.unmanaged = result.data;
+    this.state.errorText = '';
   }
 
   async importFromLocal(directories: string[]): Promise<void> {
-    const imported = await this.service.importFromLocal(directories);
-    this.state.installed = [...this.state.installed, ...imported];
-
-    const importedDirs = new Set(imported.map(s => s.directory));
-    this.state.unmanaged = this.state.unmanaged.filter(
-      u => !importedDirs.has(u.directory)
-    );
+    const result = await configManagerFacade.importLocalSkills(directories);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    await this.loadInstalled(true);
+    this.state.errorText = '';
   }
-
-  // ========== 更新检测 ==========
 
   async checkUpdates(): Promise<void> {
     this.state.updatesLoading = true;
     try {
-      this.state.updates = await this.service.checkUpdates();
+      const result = await configManagerFacade.skillUpdatesMockOnly();
+      if (!result.ok || result.data === null) {
+        this.state.updates = [];
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.state.updates = result.data;
+      this.state.errorText = '';
     } finally {
       this.state.updatesLoading = false;
     }
   }
 
   async updateSkill(id: string): Promise<void> {
-    const updated = await this.service.update(id);
+    const result = await configManagerFacade.updateSkillMockOnly(id);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
     this.state.installed = this.state.installed.map(s =>
-      s.id === id ? updated : s
+      s.id === id ? result.data as InstalledSkill : s
     );
     this.state.updates = this.state.updates.filter(u => u.id !== id);
+    this.state.errorText = '';
   }
-
-  // ========== 备份管理 ==========
 
   async loadBackups(): Promise<void> {
     this.state.backupsLoading = true;
     try {
-      this.state.backups = await this.service.getBackups();
+      const result = await configManagerFacade.listSkillBackups();
+      if (!result.ok || result.data === null) {
+        this.state.backups = [];
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.state.backups = result.data;
+      this.state.errorText = '';
     } finally {
       this.state.backupsLoading = false;
     }
   }
 
   async deleteBackup(backupId: string): Promise<void> {
-    await this.service.removeBackup(backupId);
+    const result = await configManagerFacade.removeSkillBackup(backupId);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
     this.state.backups = this.state.backups.filter(b => b.backupId !== backupId);
+    this.state.errorText = '';
+    this.state.statusText = '备份已删除';
   }
 
   async restoreBackup(backupId: string): Promise<void> {
-    const restored = await this.service.restoreBackup(backupId);
-    this.state.installed = [...this.state.installed, restored];
+    const result = await configManagerFacade.restoreSkillBackup(backupId);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    const restored = result.data;
+    this.state.installed = [...this.state.installed.filter(s => s.id !== restored.id), restored];
+    await this.loadBackups();
+    this.state.errorText = '';
   }
 
-  // ========== 仓库管理 ==========
-
   async loadRepos(): Promise<void> {
-    this.state.repos = await this.service.getRepos();
+    const result = await configManagerFacade.listSkillRepos();
+    if (!result.ok || result.data === null) {
+      this.state.repos = [];
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    this.state.repos = result.data;
+    this.state.errorText = '';
   }
 
   async addRepo(repo: SkillRepo): Promise<void> {
-    await this.service.addRepo(repo);
+    const result = await configManagerFacade.addSkillRepo(repo);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
     await this.loadRepos();
-    await this.loadDiscoverable(true);
+    this.state.errorText = '';
+    this.state.statusText = `已添加仓库 ${repo.owner}/${repo.name}`;
+  }
+
+  async toggleRepoEnabled(owner: string, name: string, enabled: boolean): Promise<void> {
+    const result = await configManagerFacade.setSkillRepoEnabled(owner, name, enabled);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    this.state.repos = this.state.repos.map((repo: SkillRepo) =>
+      repo.owner === owner && repo.name === name ? result.data as SkillRepo : repo
+    );
+    this.state.errorText = '';
+    this.state.statusText = `${owner}/${name} 已切换到 ${enabled ? '启用' : '停用'} 状态`;
   }
 
   async removeRepo(owner: string, name: string): Promise<void> {
-    await this.service.removeRepo(owner, name);
+    const result = await configManagerFacade.removeSkillRepo(owner, name);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
     await this.loadRepos();
-    await this.loadDiscoverable(true);
+    this.state.errorText = '';
+    this.state.statusText = `已移除仓库 ${owner}/${name}`;
   }
-
-  // ========== skills.sh 搜索 ==========
 
   async searchSkillsSh(
     query: string, limit: number = 20, offset: number = 0
   ): Promise<SkillsShSearchResult> {
-    return this.service.searchSkillsSh(query, limit, offset);
+    const result = await configManagerFacade.searchSkillsSh(query, limit, offset);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return new SkillsShSearchResult([], 0, query);
+    }
+    this.state.errorText = '';
+    return result.data;
   }
 
-  // ========== ZIP 导入 ==========
+  async importFromZip(_zipPath: string): Promise<void> {
+    const result = await configManagerFacade.importSkillMockOnly();
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return;
+    }
+    this.state.installed = [...this.state.installed, ...result.data];
+    this.state.errorText = '';
+  }
 
-  async importFromZip(zipPath: string): Promise<void> {
-    // 解压 ZIP → 扫描 SKILL.md → 安装
-    // 需要完整的 ZIP 解析支持（zip.js 或 NAPI zip crate）
-    throw new Error('ZIP import requires full ZIP parsing support');
+  private describeActionError(error: ConfigActionError | null): string {
+    if (error === null) {
+      return '操作失败';
+    }
+    return error.message;
   }
 }
+
+export const skillsVM: SkillsViewModel = new SkillsViewModel();

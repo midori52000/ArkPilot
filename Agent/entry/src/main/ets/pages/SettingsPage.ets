@@ -1,7 +1,13 @@
 import router from '@ohos.router';
-import { McpServerRecord, SettingsTab, ProviderRecord, ProviderCategory, EndpointEntry, ApiWireFormat } from '../backend/ConsoleModels';
-import { ProviderPreset, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
+import { McpServerRecord, SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat } from '../backend/ConsoleModels';
+import { codexBackend } from '../backend/CodexBackend';
+import { BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
+import { apiManagementVM } from '../apim/ApiManagementViewModel';
 import { InstalledSkill, SkillRepo, SkillBackupEntry } from '../skills/SkillTypes';
+import { skillsVM } from '../skills/SkillsViewModel';
+import { PromptsViewModel } from '../prompts/PromptsViewModel';
+import { PromptsBackendService } from '../prompts/PromptsBackendService';
+import { PromptRecord } from '../prompts/PromptTypes';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 type SkillsSubTab = 'installed' | 'repos' | 'backups';
@@ -30,22 +36,6 @@ class UiToastItem {
     this.id = id;
     this.tone = tone;
     this.message = message;
-  }
-}
-
-class PromptMockItem {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  updatedAt: string;
-
-  constructor(id: string, name: string, description: string, enabled: boolean, updatedAt: string) {
-    this.id = id;
-    this.name = name;
-    this.description = description;
-    this.enabled = enabled;
-    this.updatedAt = updatedAt;
   }
 }
 
@@ -116,7 +106,7 @@ struct SettingsPage {
   @State private mcpUrlDraft: string = '';
   @State private mcpEnvDraft: string = '{}';
   @State private mcpEnabledDraft: boolean = true;
-  @State private mcpStatusText: string = 'Mock façade 已就绪，可先完成界面配置。';
+  @State private mcpStatusText: string = '等待 MCP backend 加载状态。';
 
   @State private installedSkills: InstalledSkill[] = [];
   @State private skillRepos: SkillRepo[] = [];
@@ -125,16 +115,19 @@ struct SettingsPage {
   @State private newRepoOwner: string = 'anthropics';
   @State private newRepoName: string = 'skills';
   @State private newRepoBranch: string = 'main';
-  @State private skillsStatusText: string = '当前列表为前端模拟数据。';
+  @State private skillsStatusText: string = '等待 Skills façade 加载状态。';
   @State private pendingDeleteSkillId: string = '';
   @State private pendingDeleteSkillName: string = '';
   @State private showSkillDeleteDialog: boolean = false;
 
-  @State private prompts: PromptMockItem[] = [];
+  @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
+  @State private prompts: PromptRecord[] = [];
   @State private selectedPromptId: string = '';
-  @State private promptDraftName: string = 'Release Guard';
-  @State private promptDraftSummary: string = '在危险操作前提醒二次确认，并保持回答简洁。';
-  @State private promptDraftContent: string = 'Before destructive actions, summarize impact in one sentence and ask for confirmation. Keep answers terse and actionable.';
+  @State private promptDraftName: string = '';
+  @State private promptDraftSummary: string = '';
+  @State private promptDraftContent: string = '';
+  @State private promptLiveContent: string = '';
+  @State private promptsStatusText: string = '等待 Prompts façade 加载状态。';
 
   @State private apiProviderName: string = 'OpenAI Gateway';
   @State private apiBaseUrl: string = 'https://api.openai.com/v1';
@@ -151,162 +144,18 @@ struct SettingsPage {
 
   aboutToAppear(): void {
     this.loadMockData();
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    if (codexHome.length > 0) {
+      this.promptsViewModel = new PromptsViewModel(new PromptsBackendService(codexHome));
+    }
+    this.syncMcpStateFromBackend();
+    this.syncApiStateFromViewModel();
+    this.syncSkillsStateFromViewModel();
+    this.syncPromptsStateFromViewModel();
+    this.loadSettingsFacadeState();
   }
 
   private loadMockData(): void {
-    this.mcpServers = [
-      new McpServerRecord(
-        'filesystem', 'Workspace Files', true, 'stdio', 'npx',
-        '["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]', '',
-        '{"READONLY":"false"}', 12, 4, 'ok', 'notRequired', '', 'synced', '2026-05-02 20:18:41'
-      ),
-      new McpServerRecord(
-        'github', 'GitHub Review', false, 'http', '', '[]', 'https://mcp.example.com/github',
-        '{"GITHUB_SCOPE":"repo"}', 8, 2, 'degraded', 'required', '等待 OAuth 完成', 'dirty', '2026-05-02 19:42:10'
-      ),
-      new McpServerRecord(
-        'design-proxy', 'Design Proxy', true, 'http', '', '[]', 'https://design-proxy.local/mcp',
-        '{}', 5, 1, 'unknown', 'pending', '', 'synced', '2026-05-02 18:11:03'
-      )
-    ];
-    this.selectedMcpServerId = this.mcpServers[0].id;
-    this.loadMcpDraft(this.selectedMcpServerId);
-
-    this.installedSkills = [
-      new InstalledSkill(
-        'anthropics/release-guard:guard', 'Release Guard', '在危险操作前插入确认提醒与变更摘要。', 'guard',
-        'github', 'anthropics', 'release-guard', 'main', '', true,
-        Date.now() - 86400000 * 2, '9d4f1c', Date.now() - 3600000 * 8
-      ),
-      new InstalledSkill(
-        'local:mobile-test', 'Mobile Smoke Test', '为移动端改动生成最小可执行验证清单。', 'mobile-test',
-        'local', '', '', '', '', false,
-        Date.now() - 86400000 * 5, 'e190ab', Date.now() - 3600000 * 18
-      ),
-      new InstalledSkill(
-        'anthropics/ui-polish:ui-polish', 'UI Polish', '强调视觉一致性、细节反馈与界面密度控制。', 'ui-polish',
-        'github', 'anthropics', 'ui-polish', 'main', '', true,
-        Date.now() - 86400000 * 10, '60a1ff', Date.now() - 3600000 * 26
-      )
-    ];
-
-    this.skillRepos = [
-      new SkillRepo('anthropics', 'skills', 'main', true),
-      new SkillRepo('team-design', 'studio-skills', 'preview', false)
-    ];
-
-    this.skillBackups = [
-      new SkillBackupEntry(
-        'backup-001',
-        'arkpilot-home/skills/.backup/release-guard-001',
-        Date.now() - 86400000,
-        new InstalledSkill(
-          'anthropics/release-guard:guard', 'Release Guard', '已归档的历史版本备份。', 'guard',
-          'github', 'anthropics', 'release-guard', 'main', '', true,
-          Date.now() - 86400000 * 6, '7ac0d1', Date.now() - 86400000 * 2
-        )
-      )
-    ];
-
-    this.prompts = [
-      new PromptMockItem('default', 'ArkPilot Default', '主会话默认提示词，强调控制台语义与操作准确性。', true, '2026-05-02 19:12'),
-      new PromptMockItem('release', 'Release Guard', '发布前检查项：签名、MCP、技能来源与灰度策略。', true, '2026-05-02 18:40'),
-      new PromptMockItem('ui', 'UI Review Lens', '用于审视布局密度、状态反馈与交互动效的辅助视角。', false, '2026-05-01 22:18')
-    ];
-    this.selectedPromptId = this.prompts[1].id;
-
-    this.apiEndpoints = [
-      new ApiEndpointMockItem('Primary', 'https://api.openai.com/v1', 'Healthy'),
-      new ApiEndpointMockItem('Fallback', 'https://gateway.example.com/v1', 'Standby'),
-      new ApiEndpointMockItem('Preview', 'https://preview.example.com/v1', 'Draft')
-    ];
-
-    this.apiProviders = [
-      new ProviderRecord(
-        'settings-openai',
-        'OpenAI Gateway',
-        'codex',
-        'exclusive',
-        'https://api.openai.com/v1',
-        'sk-live-************************',
-        'gpt-5.1',
-        true,
-        'synced',
-        '2026-05-02 20:18',
-        'apiKey',
-        [],
-        'responses',
-        'official',
-        '主路由，承担当前默认流量。',
-        'https://platform.openai.com',
-        'O',
-        '#00A67E',
-        [new EndpointEntry('https://api.openai.com/v1', Date.now(), Date.now(), 212, true)],
-        'healthy',
-        212,
-        Date.now(),
-        null,
-        Date.now()
-      ),
-      new ProviderRecord(
-        'settings-claude',
-        'Claude Official',
-        'codex',
-        'exclusive',
-        'https://api.anthropic.com/v1',
-        'sk-ant-************************',
-        'claude-sonnet-4-6',
-        false,
-        'dirty',
-        '2026-05-02 19:54',
-        'apiKey',
-        [],
-        'anthropic',
-        'official',
-        '保留作切换验证与模型对照。',
-        'https://console.anthropic.com',
-        'A',
-        '#D97757',
-        [new EndpointEntry('https://api.anthropic.com/v1', Date.now(), 0, 286, false)],
-        'degraded',
-        286,
-        Date.now() - 1000 * 60 * 40,
-        null,
-        Date.now() - 1000 * 60 * 60 * 2
-      ),
-      new ProviderRecord(
-        'settings-ark',
-        'Volcengine Ark',
-        'codex',
-        'exclusive',
-        'https://ark.cn-beijing.volces.com/api/v3',
-        'ark-************************',
-        'deepseek-v3-250324',
-        false,
-        'dirty',
-        '2026-05-02 18:26',
-        'apiKey',
-        [],
-        'chat',
-        'third_party',
-        '作为低成本补位与兼容测试。',
-        'https://console.volcengine.com/ark',
-        '火',
-        '#325AB4',
-        [
-          new EndpointEntry('https://ark.cn-beijing.volces.com/api/v3', Date.now(), 0, 430, false),
-          new EndpointEntry('https://preview.example.com/v1', Date.now(), 0, 0, false)
-        ],
-        'unknown',
-        0,
-        0,
-        null,
-        Date.now() - 1000 * 60 * 60 * 5
-      )
-    ];
-    this.selectedApiProviderId = this.apiProviders[0].id;
-    this.syncApiDraftFromProvider(this.apiProviders[0].id);
-
     const presets: ApiPresetMockItem[] = [];
     for (let index = 0; index < BUILTIN_PROVIDER_PRESETS.length; index += 1) {
       const preset = BUILTIN_PROVIDER_PRESETS[index];
@@ -330,16 +179,19 @@ struct SettingsPage {
       if (server.id !== serverId) {
         continue;
       }
-      this.selectedMcpServerId = server.id;
-      this.mcpTransportTypeDraft = server.transportType;
-      this.mcpCommandDraft = server.command;
-      this.mcpArgsDraft = server.argsText;
-      this.mcpUrlDraft = server.url;
-      this.mcpEnvDraft = server.envText;
-      this.mcpEnabledDraft = server.enabled;
-      this.mcpStatusText = `${server.name} 已切换到前端模拟配置。`;
+      this.applyMcpDraft(server);
       return;
     }
+  }
+
+  private applyMcpDraft(server: McpServerRecord): void {
+    this.selectedMcpServerId = server.id;
+    this.mcpTransportTypeDraft = server.transportType;
+    this.mcpCommandDraft = server.command;
+    this.mcpArgsDraft = server.argsText.trim().length > 0 ? server.argsText : '[]';
+    this.mcpUrlDraft = server.url;
+    this.mcpEnvDraft = server.envText.trim().length > 0 ? server.envText : '{}';
+    this.mcpEnabledDraft = server.enabled;
   }
 
   private selectedMcpServer(): McpServerRecord | null {
@@ -351,7 +203,7 @@ struct SettingsPage {
     return null;
   }
 
-  private selectedPrompt(): PromptMockItem | null {
+  private selectedPrompt(): PromptRecord | null {
     for (let index = 0; index < this.prompts.length; index += 1) {
       if (this.prompts[index].id === this.selectedPromptId) {
         return this.prompts[index];
@@ -363,6 +215,140 @@ struct SettingsPage {
   private triggerFeedback(message: string, tone: ToastTone = 'info'): void {
     this.sparkSeed += 1;
     this.showToast(message, tone);
+  }
+
+  private syncApiStateFromViewModel(): void {
+    this.apiProviders = [...apiManagementVM.state.providers];
+    if (this.apiProviders.length === 0) {
+      this.selectedApiProviderId = '';
+      this.apiEditorExpanded = false;
+      this.apiProviderName = '';
+      this.apiBaseUrl = '';
+      this.apiModel = '';
+      this.apiWireApi = 'responses';
+      this.apiAuthState = '';
+      this.apiEndpoints = [];
+      return;
+    }
+    const currentId = this.selectedApiProviderId.length > 0 ? this.selectedApiProviderId : this.apiProviders[0].id;
+    this.syncApiDraftFromProvider(currentId);
+  }
+
+  private syncSkillsStateFromViewModel(): void {
+    this.installedSkills = [...skillsVM.state.installed];
+    this.skillRepos = [...skillsVM.state.repos];
+    this.skillBackups = [...skillsVM.state.backups];
+    if (skillsVM.state.statusText.trim().length > 0) {
+      this.skillsStatusText = skillsVM.state.statusText;
+    } else if (skillsVM.state.errorText.trim().length > 0) {
+      this.skillsStatusText = skillsVM.state.errorText;
+    }
+  }
+
+  private syncMcpStateFromBackend(): void {
+    this.mcpServers = codexBackend.mcpServers();
+    const snapshot = codexBackend.snapshot();
+    this.mcpStatusText = snapshot.mcpErrorText.trim().length > 0
+      ? snapshot.mcpErrorText
+      : snapshot.mcpStatusText;
+    if (this.mcpServers.length === 0) {
+      this.selectedMcpServerId = '';
+      this.mcpTransportTypeDraft = 'stdio';
+      this.mcpCommandDraft = '';
+      this.mcpArgsDraft = '[]';
+      this.mcpUrlDraft = '';
+      this.mcpEnvDraft = '{}';
+      this.mcpEnabledDraft = true;
+      return;
+    }
+    const hasCurrent = this.selectedMcpServerId.length > 0
+      && this.mcpServers.some((server: McpServerRecord) => server.id === this.selectedMcpServerId);
+    const nextId = hasCurrent ? this.selectedMcpServerId : this.mcpServers[0].id;
+    const nextServer = this.mcpServers.find((server: McpServerRecord) => server.id === nextId);
+    if (nextServer !== undefined) {
+      this.applyMcpDraft(nextServer);
+    }
+  }
+
+  private syncPromptsStateFromViewModel(): void {
+    this.prompts = [...this.promptsViewModel.state.prompts];
+    this.promptLiveContent = this.promptsViewModel.state.liveContent;
+    if (this.prompts.length === 0) {
+      this.selectedPromptId = '';
+      this.promptDraftName = '';
+      this.promptDraftSummary = '';
+      this.promptDraftContent = '';
+      this.promptsStatusText = this.promptLiveContent.trim().length > 0
+        ? '当前 AGENTS.md 已有 live 内容。'
+        : '当前还没有 Prompt。';
+      return;
+    }
+    const hasCurrent = this.selectedPromptId.length > 0
+      && this.prompts.some((prompt: PromptRecord) => prompt.id === this.selectedPromptId);
+    const nextId = hasCurrent ? this.selectedPromptId : this.prompts[0].id;
+    this.selectedPromptId = nextId;
+    const prompt = this.selectedPrompt();
+    if (prompt !== null) {
+      this.promptDraftName = prompt.name;
+      this.promptDraftSummary = prompt.description;
+      this.promptDraftContent = prompt.content;
+    }
+    const activeName = this.promptsViewModel.activePromptName;
+    this.promptsStatusText = activeName !== 'None'
+      ? `当前启用：${activeName}`
+      : (this.promptLiveContent.trim().length > 0 ? '当前仅存在 live 内容，未绑定启用 Prompt。' : '当前没有启用 Prompt。');
+  }
+
+  private loadSettingsFacadeState(): void {
+    codexBackend.refreshMcpServers()
+      .then(() => {
+        this.syncMcpStateFromBackend();
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+    apiManagementVM.loadProviders();
+    this.syncApiStateFromViewModel();
+    skillsVM.loadInstalled(true)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+    skillsVM.loadRepos()
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+    skillsVM.loadBackups()
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+    this.promptsViewModel.loadAll()
+      .then(() => {
+        this.syncPromptsStateFromViewModel();
+      })
+      .catch((err: Object) => {
+        this.promptsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.promptsStatusText, 'error');
+      });
+  }
+
+  private describeRuntimeError(err: Object): string {
+    if (err instanceof Error) {
+      return err.message;
+    }
+    return JSON.stringify(err);
   }
 
   private showToast(message: string, tone: ToastTone = 'info', duration: number = 1800): void {
@@ -529,45 +515,84 @@ struct SettingsPage {
   }
 
   private saveMcpDraft(): void {
-    for (let index = 0; index < this.mcpServers.length; index += 1) {
-      if (this.mcpServers[index].id !== this.selectedMcpServerId) {
-        continue;
-      }
-      this.mcpServers[index].enabled = this.mcpEnabledDraft;
-      this.mcpServers[index].transportType = this.mcpTransportTypeDraft;
-      this.mcpServers[index].command = this.mcpCommandDraft;
-      this.mcpServers[index].argsText = this.mcpArgsDraft;
-      this.mcpServers[index].url = this.mcpUrlDraft;
-      this.mcpServers[index].envText = this.mcpEnvDraft;
-      this.mcpStatusText = `${this.mcpServers[index].name} 已保存到前端 mock。`;
-      break;
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可保存的 MCP server。', 'warning');
+      return;
     }
-    this.mcpServers = [...this.mcpServers];
-    this.triggerFeedback('MCP 配置已保存（前端模拟）。', 'success');
-    this.notePending('MCP 保存');
+    codexBackend.saveMcpServerConfig(
+      server.name,
+      this.mcpEnabledDraft,
+      this.mcpTransportTypeDraft,
+      this.mcpCommandDraft,
+      this.mcpArgsDraft,
+      this.mcpUrlDraft,
+      this.mcpEnvDraft
+    )
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已保存 ${server.name} 的 MCP 配置。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
   }
 
   private reloadMcpDraft(): void {
+    codexBackend.reloadMcpServers()
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        const server = this.selectedMcpServer();
+        this.triggerFeedback(server !== null ? `${server.name} 已完成 MCP 重载。` : 'MCP 配置已重载。', 'info');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private startSelectedMcpOauth(): void {
     const server = this.selectedMcpServer();
     if (server === null) {
+      this.triggerFeedback('当前没有可登录的 MCP server。', 'warning');
       return;
     }
-    this.loadMcpDraft(server.id);
-    this.triggerFeedback(`${server.name} 已刷新 mock 状态。`, 'info');
+    codexBackend.startMcpOAuthLogin(server.name)
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已为 ${server.name} 发起 OAuth 登录。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
   }
 
   private toggleSkillEnabled(skillId: string): void {
+    let nextEnabled: boolean | null = null;
     for (let index = 0; index < this.installedSkills.length; index += 1) {
       if (this.installedSkills[index].id !== skillId) {
         continue;
       }
-      this.installedSkills[index].enabled = !this.installedSkills[index].enabled;
-      this.installedSkills = [...this.installedSkills];
-      this.skillsStatusText = `${this.installedSkills[index].name} 已切换为 ${this.installedSkills[index].enabled ? '启用' : '停用'} 状态。`;
-      this.triggerFeedback(`${this.installedSkills[index].name} 已在前端 mock 中更新。`, 'success');
-      this.notePending('Skill 启停');
+      nextEnabled = !this.installedSkills[index].enabled;
+      break;
+    }
+    if (nextEnabled === null) {
       return;
     }
+    skillsVM.toggleEnabled(skillId, nextEnabled)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
   }
 
   private requestUninstallSkill(skillId: string): void {
@@ -594,13 +619,18 @@ struct SettingsPage {
     if (skillId.length === 0) {
       return;
     }
-    const before = this.installedSkills.length;
-    this.installedSkills = this.installedSkills.filter((skill: InstalledSkill) => skill.id !== skillId);
-    if (this.installedSkills.length !== before) {
-      this.skillsStatusText = 'Skill 已从前端列表移除。';
-      this.triggerFeedback('Skill 已卸载（前端模拟）。', 'warning');
-      this.notePending('Skill 卸载');
-    }
+    skillsVM.uninstall(skillId)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
   }
 
   private addSkillRepo(): void {
@@ -611,43 +641,75 @@ struct SettingsPage {
       this.triggerFeedback('仓库 owner 与 name 不能为空。', 'error');
       return;
     }
-    const exists = this.skillRepos.some((repo: SkillRepo) => repo.owner === owner && repo.name === name);
-    if (exists) {
-      this.triggerFeedback('仓库已存在，无需重复添加。', 'warning');
-      return;
-    }
-    this.skillRepos = [...this.skillRepos, new SkillRepo(owner, name, branch, true)];
-    this.skillsStatusText = `${owner}/${name} 已加入前端 mock 源列表。`;
-    this.triggerFeedback('仓库已添加（前端模拟）。', 'success');
-    this.notePending('Skill 仓库添加');
+    skillsVM.addRepo(new SkillRepo(owner, name, branch, true))
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
   }
 
   private toggleRepoEnabled(owner: string, name: string): void {
+    let nextEnabled: boolean | null = null;
     for (let index = 0; index < this.skillRepos.length; index += 1) {
-      if (this.skillRepos[index].owner !== owner || this.skillRepos[index].name !== name) {
+      const repo = this.skillRepos[index];
+      if (repo.owner !== owner || repo.name !== name) {
         continue;
       }
-      this.skillRepos[index].enabled = !this.skillRepos[index].enabled;
-      this.skillRepos = [...this.skillRepos];
-      this.skillsStatusText = `${owner}/${name} 已切换到 ${this.skillRepos[index].enabled ? '启用' : '停用'} 状态。`;
-      this.triggerFeedback('仓库状态已更新（前端模拟）。', 'success');
-      this.notePending('Skill 仓库切换');
+      nextEnabled = !repo.enabled;
+      break;
+    }
+    if (nextEnabled === null) {
       return;
     }
+    skillsVM.toggleRepoEnabled(owner, name, nextEnabled)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
   }
 
   private removeSkillRepo(owner: string, name: string): void {
-    this.skillRepos = this.skillRepos.filter((repo: SkillRepo) => !(repo.owner === owner && repo.name === name));
-    this.skillsStatusText = `${owner}/${name} 已从前端 mock 列表中移除。`;
-    this.triggerFeedback('仓库已移除（前端模拟）。', 'warning');
-    this.notePending('Skill 仓库移除');
+    skillsVM.removeRepo(owner, name)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
   }
 
   private removeSkillBackup(backupId: string): void {
-    this.skillBackups = this.skillBackups.filter((backup: SkillBackupEntry) => backup.backupId !== backupId);
-    this.skillsStatusText = '备份卡片已移除。';
-    this.triggerFeedback('备份已删除（前端模拟）。', 'warning');
-    this.notePending('Skill 备份删除');
+    skillsVM.deleteBackup(backupId)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
   }
 
   private selectPrompt(promptId: string): void {
@@ -656,34 +718,61 @@ struct SettingsPage {
     if (prompt !== null) {
       this.promptDraftName = prompt.name;
       this.promptDraftSummary = prompt.description;
-      this.promptDraftContent = `# ${prompt.name}\n\n${prompt.description}\n\n- 强调操作确认\n- 保持输出简洁\n- 在需要时给出下一步验证`;
-      this.triggerFeedback(`已载入 ${prompt.name} 的前端草稿。`, 'info');
+      this.promptDraftContent = prompt.content;
+      this.triggerFeedback(`已载入 ${prompt.name} 的真实草稿。`, 'info');
     }
   }
 
   private togglePromptEnabled(promptId: string): void {
-    for (let index = 0; index < this.prompts.length; index += 1) {
-      if (this.prompts[index].id !== promptId) {
-        continue;
-      }
-      this.prompts[index].enabled = !this.prompts[index].enabled;
-      this.prompts = [...this.prompts];
-      this.triggerFeedback(`${this.prompts[index].name} 已${this.prompts[index].enabled ? '启用' : '停用'}（前端模拟）。`, 'success');
-      this.notePending('Prompt 启停');
+    const prompt = this.prompts.find((item: PromptRecord) => item.id === promptId) ?? null;
+    if (prompt === null) {
       return;
     }
+    const wasEnabled = prompt.enabled;
+    const action = wasEnabled
+      ? this.promptsViewModel.disableAll()
+      : this.promptsViewModel.enablePrompt(promptId);
+    action
+      .then(() => {
+        this.syncPromptsStateFromViewModel();
+        this.triggerFeedback(`${prompt.name} 已${wasEnabled ? '停用' : '启用'}。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.promptsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.promptsStatusText, 'error');
+      });
   }
 
   private savePromptDraft(): void {
     const prompt = this.selectedPrompt();
-    if (prompt !== null) {
-      prompt.name = this.promptDraftName;
-      prompt.description = this.promptDraftSummary;
-      prompt.updatedAt = '刚刚';
-      this.prompts = [...this.prompts];
-    }
-    this.triggerFeedback('Prompt 草稿已保存（前端模拟）。', 'success');
-    this.notePending('Prompt 保存');
+    const draft = prompt !== null
+      ? new PromptRecord(
+          prompt.id,
+          this.promptDraftName,
+          this.promptDraftContent,
+          this.promptDraftSummary,
+          prompt.enabled,
+          prompt.createdAt,
+          prompt.updatedAt
+        )
+      : new PromptRecord(
+          `prompt-${Date.now()}`,
+          this.promptDraftName,
+          this.promptDraftContent,
+          this.promptDraftSummary,
+          false,
+          Date.now(),
+          0
+        );
+    this.promptsViewModel.savePrompt(draft)
+      .then(() => {
+        this.syncPromptsStateFromViewModel();
+        this.triggerFeedback('Prompt 草稿已保存。', 'success');
+      })
+      .catch((err: Object) => {
+        this.promptsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.promptsStatusText, 'error');
+      });
   }
 
   private selectedApiProvider(): ProviderRecord | null {
@@ -818,6 +907,12 @@ struct SettingsPage {
       }
       return;
     }
+    this.selectedApiProviderId = '';
+    this.apiProviderName = '';
+    this.apiBaseUrl = '';
+    this.apiModel = '';
+    this.apiAuthState = '';
+    this.apiEndpoints = [];
   }
 
   private selectApiProvider(providerId: string): void {
@@ -835,91 +930,69 @@ struct SettingsPage {
   }
 
   private activateApiProvider(providerId: string): void {
-    let activatedName = 'Provider';
-    for (let index = 0; index < this.apiProviders.length; index += 1) {
-      const provider = this.apiProviders[index];
-      provider.isActive = provider.id === providerId;
-      if (provider.isActive) {
-        activatedName = provider.name;
-      }
+    apiManagementVM.activateProvider(providerId);
+    this.syncApiStateFromViewModel();
+    if (apiManagementVM.state.errorText.trim().length > 0) {
+      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
+      return;
     }
-    this.apiProviders = [...this.apiProviders];
-    this.syncApiDraftFromProvider(providerId);
-    this.triggerFeedback(`已切换到 ${activatedName}（前端模拟）。`, 'success');
-    this.notePending('Provider 启用');
+    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
   private removeApiProvider(providerId: string): void {
-    const selectedId = this.selectedApiProviderId;
-    this.apiProviders = this.apiProviders.filter((provider: ProviderRecord) => provider.id !== providerId);
-    if (this.apiProviders.length === 0) {
-      this.selectedApiProviderId = '';
-      this.apiEditorExpanded = false;
-      this.triggerFeedback('Provider 卡片已移除（前端模拟）。', 'warning');
-      this.notePending('Provider 删除');
+    apiManagementVM.deleteProvider(providerId);
+    this.syncApiStateFromViewModel();
+    this.apiEditorExpanded = false;
+    if (apiManagementVM.state.errorText.trim().length > 0) {
+      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
     }
-    const nextId = selectedId === providerId ? this.apiProviders[0].id : selectedId;
-    this.syncApiDraftFromProvider(nextId);
-    this.apiEditorExpanded = false;
-    this.triggerFeedback('Provider 卡片已移除（前端模拟）。', 'warning');
-    this.notePending('Provider 删除');
+    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
   private startNewApiProvider(): void {
-    const provider = new ProviderRecord(
-      `settings-draft-${Date.now()}`,
-      'New Provider Draft',
-      'codex',
-      'exclusive',
-      'https://your-provider.example.com/v1',
-      'sk-draft-************************',
-      'gpt-5.1',
-      false,
-      'dirty',
-      '刚刚',
-      'apiKey',
-      [],
-      'responses',
-      'custom',
-      '等待接入真实后端前的本地草稿。',
-      '',
-      'N',
-      '#6366F1',
-      [new EndpointEntry('https://your-provider.example.com/v1', Date.now(), 0, 0, false)],
-      'unknown',
-      0,
-      0,
-      null,
-      Date.now()
-    );
-    this.apiProviders = [provider, ...this.apiProviders];
-    this.syncApiDraftFromProvider(provider.id);
+    apiManagementVM.startEditing(null);
+    const editing = apiManagementVM.state.editingProvider;
+    if (editing === null) {
+      return;
+    }
+    editing.name = 'New Provider Draft';
+    editing.baseUrl = 'https://your-provider.example.com/v1';
+    editing.apiKey = 'sk-draft-************************';
+    editing.model = 'gpt-5.1';
+    editing.description = '等待接入真实后端前的本地草稿。';
+    editing.icon = 'N';
+    editing.iconColor = '#6366F1';
+    apiManagementVM.saveEditing();
+    this.syncApiStateFromViewModel();
+    if (apiManagementVM.state.errorText.trim().length > 0) {
+      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
+      return;
+    }
+    if (apiManagementVM.state.providers.length > 0) {
+      const created = apiManagementVM.state.providers[apiManagementVM.state.providers.length - 1];
+      this.syncApiDraftFromProvider(created.id);
+    }
     this.apiEditorExpanded = true;
-    this.triggerFeedback('已创建新的 Provider 草稿（前端模拟）。', 'success');
-    this.notePending('Provider 添加');
+    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
   private applyApiPreset(presetId: string): void {
-    let matchedPreset: ProviderPreset | null = null;
-    for (let index = 0; index < BUILTIN_PROVIDER_PRESETS.length; index += 1) {
-      if (BUILTIN_PROVIDER_PRESETS[index].id === presetId) {
-        matchedPreset = BUILTIN_PROVIDER_PRESETS[index];
-        break;
-      }
-    }
-    if (matchedPreset === null) {
+    apiManagementVM.state.selectedPresetId = presetId;
+    apiManagementVM.state.newApiKey = 'sk-preset-************************';
+    apiManagementVM.confirmAddFromPreset();
+    this.syncApiStateFromViewModel();
+    if (apiManagementVM.state.errorText.trim().length > 0) {
+      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
     }
-    const provider = matchedPreset.toProviderRecord('sk-preset-************************');
-    provider.updatedAt = '刚刚';
-    provider.description = matchedPreset.description;
-    this.apiProviders = [provider, ...this.apiProviders];
+    if (apiManagementVM.state.providers.length > 0) {
+      const created = apiManagementVM.state.providers[apiManagementVM.state.providers.length - 1];
+      this.syncApiDraftFromProvider(created.id);
+    }
     this.apiActiveSubTab = 'providers';
-    this.syncApiDraftFromProvider(provider.id);
     this.apiEditorExpanded = true;
-    this.triggerFeedback(`已从 ${matchedPreset.name} 创建草稿。`, 'success');
-    this.notePending('预设落地');
+    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
   private filteredApiPresets(): ApiPresetMockItem[] {
@@ -937,22 +1010,48 @@ struct SettingsPage {
 
   private saveApiDraft(): void {
     const provider = this.selectedApiProvider();
-    if (provider !== null) {
-      provider.name = this.apiProviderName;
-      provider.baseUrl = this.apiBaseUrl;
-      provider.model = this.apiModel;
-      provider.wireApi = this.apiWireApi;
-      provider.apiKey = this.apiAuthState;
-      provider.updatedAt = '刚刚';
-      this.apiProviders = [...this.apiProviders];
+    if (provider === null) {
+      return;
     }
-    this.triggerFeedback('API 配置已保存（前端模拟）。', 'success');
-    this.notePending('API 保存');
+    apiManagementVM.startEditing(provider);
+    const editing = apiManagementVM.state.editingProvider;
+    if (editing === null) {
+      return;
+    }
+    editing.name = this.apiProviderName;
+    editing.baseUrl = this.apiBaseUrl;
+    editing.model = this.apiModel;
+    editing.wireApi = this.apiWireApi;
+    editing.apiKey = this.apiAuthState;
+    apiManagementVM.saveEditing();
+    this.syncApiStateFromViewModel();
+    if (apiManagementVM.state.errorText.trim().length > 0) {
+      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
+      return;
+    }
+    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
   private validateApiDraft(): void {
-    this.triggerFeedback('已生成前端校验结果：连接链路未实际发起。', 'info');
-    this.notePending('API 连通性校验');
+    const provider = this.selectedApiProvider();
+    if (provider === null) {
+      this.triggerFeedback('请先选择 Provider。', 'warning');
+      return;
+    }
+    apiManagementVM.validateProvider(provider)
+      .then(() => {
+        if (apiManagementVM.state.validationResult !== null && apiManagementVM.state.validationResult.errorMessage.trim().length > 0) {
+          this.triggerFeedback(apiManagementVM.state.validationResult.errorMessage, 'warning');
+          return;
+        }
+        const message = apiManagementVM.state.errorText.trim().length > 0
+          ? apiManagementVM.state.errorText
+          : '已生成前端校验结果。';
+        this.triggerFeedback(message, 'warning');
+      })
+      .catch((err: Object) => {
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
   }
 
   @Builder
@@ -1467,7 +1566,7 @@ struct SettingsPage {
     Column() {
       Row() {
         Column() {
-          this.sectionCard('Servers', '左侧快速切换工具通道，右侧编辑 mock 配置草稿。')
+          this.sectionCard('Servers', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
           Column() {
             ForEach(this.mcpServers, (server: McpServerRecord) => {
               this.mcpServerCard(server)
@@ -1550,12 +1649,12 @@ struct SettingsPage {
   @Builder
   private mcpEditorCard() {
     Column() {
-      this.sectionCard('Editor', '保留字段结构与最终后端对齐，但当前只操作前端 façade。')
+      this.sectionCard('Editor', '字段直接绑定 codexBackend MCP façade，保存后会写入真实配置。')
 
       Column() {
         Row() {
           this.pill(this.selectedMcpServer() !== null && this.selectedMcpServer()!.enabled ? 'Live Layout' : 'Draft Layout', '#EAF3FF', '#0A84FF')
-          this.pill('No backend write', '#FFF7ED', '#C2410C')
+          this.pill('Backend Connected', '#DCFCE7', '#166534')
         }
         .width('100%')
 
@@ -1618,8 +1717,9 @@ struct SettingsPage {
           .onChange((value: string) => { this.mcpEnvDraft = value; })
 
         Row() {
-          this.actionButton('Reload Mock', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
-          this.actionButton('Save Draft', 'mcp-save', true, () => { this.saveMcpDraft(); })
+          this.actionButton('OAuth Login', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
+          this.actionButton('Reload MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
+          this.actionButton('Save Config', 'mcp-save', true, () => { this.saveMcpDraft(); })
         }
         .width('100%')
         .justifyContent(FlexAlign.End)
@@ -1656,7 +1756,7 @@ struct SettingsPage {
       Text(this.skillsStatusText)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
-        .fontColor('#334155')
+        .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#334155')
         .margin({ top: 10 })
 
       if (this.skillsActiveSubTab === 'installed') {
@@ -1943,9 +2043,9 @@ struct SettingsPage {
         Column() {
           this.sectionCard('Prompt list', '通过卡片显式展示启用状态、更新时间与说明。')
           Column() {
-            ForEach(this.prompts, (prompt: PromptMockItem) => {
+            ForEach(this.prompts, (prompt: PromptRecord) => {
               this.promptCard(prompt)
-            }, (prompt: PromptMockItem) => prompt.id)
+            }, (prompt: PromptRecord) => prompt.id)
           }
           .width('100%')
           .margin({ top: 12 })
@@ -1966,7 +2066,7 @@ struct SettingsPage {
   }
 
   @Builder
-  private promptCard(prompt: PromptMockItem) {
+  private promptCard(prompt: PromptRecord) {
     Button() {
       Column() {
         Row() {
@@ -1990,7 +2090,7 @@ struct SettingsPage {
         }
         .width('100%')
 
-        Text(`updated ${prompt.updatedAt}`)
+        Text(`updated ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor('#64748B')
@@ -2013,16 +2113,23 @@ struct SettingsPage {
   @Builder
   private promptEditor() {
     Column() {
-      this.sectionCard('Prompt editor', '草稿区强调结构与说明文案，不在本轮真实写入 AGENTS.md。')
+      this.sectionCard('Prompt editor', '草稿区直接绑定 Prompt registry，启用后会同步更新 AGENTS.md。')
 
       Column() {
         Row() {
           if (this.selectedPrompt() !== null) {
             this.pill(this.selectedPrompt()!.enabled ? 'Session Ready' : 'Draft Only', this.selectedPrompt()!.enabled ? '#DCFCE7' : '#F1F5F9', this.selectedPrompt()!.enabled ? '#166534' : '#64748B')
           }
-          this.pill('No AGENTS.md write', '#FEF3C7', '#92400E')
+          this.pill(this.promptLiveContent.trim().length > 0 ? 'AGENTS.md Live' : 'AGENTS.md Empty', this.promptLiveContent.trim().length > 0 ? '#E0F2FE' : '#FEF3C7', this.promptLiveContent.trim().length > 0 ? '#0C4A6E' : '#92400E')
         }
         .width('100%')
+
+        Text(this.promptsStatusText)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .fontColor('#64748B')
+          .margin({ top: 10 })
+          .width('100%')
 
         this.formLabel('Name')
         TextInput({ text: this.promptDraftName, placeholder: 'Prompt 名称' })
@@ -2044,8 +2151,8 @@ struct SettingsPage {
           .margin({ top: 6 })
           .onChange((value: string) => { this.promptDraftSummary = value; })
 
-        this.formLabel('Preview content')
-        TextArea({ text: this.promptDraftContent, placeholder: 'Prompt content preview' })
+        this.formLabel('Prompt content')
+        TextArea({ text: this.promptDraftContent, placeholder: 'Prompt content' })
           .width('100%')
           .height(220)
           .backgroundColor('#F8FAFC')
@@ -2053,6 +2160,22 @@ struct SettingsPage {
           .padding(14)
           .margin({ top: 6 })
           .onChange((value: string) => { this.promptDraftContent = value; })
+
+        if (this.promptLiveContent.trim().length > 0) {
+          this.formLabel('Live AGENTS.md')
+          Text(this.promptLiveContent)
+            .copyOption(CopyOptions.LocalDevice)
+            .width('100%')
+            .fontSize(11)
+            .fontColor('#475569')
+            .lineHeight(18)
+            .padding(14)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(18)
+            .margin({ top: 6 })
+            .maxLines(10)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
 
         Row() {
           if (this.selectedPrompt() !== null) {
@@ -2221,7 +2344,7 @@ struct SettingsPage {
               if (!provider.isActive) {
                 this.activateApiProvider(provider.id);
               } else {
-                this.notePending('重复启用');
+                this.triggerFeedback('当前 Provider 已启用。', 'info');
               }
             })
 
@@ -2561,8 +2684,8 @@ struct SettingsPage {
   private apiPanel() {
     Column() {
       Row() {
-        this.summaryCard('Provider', this.apiProviderName, '#8B5CF6', '#F5F3FF')
-        this.summaryCard('Model', this.apiModel, '#0A84FF', '#EAF3FF')
+        this.summaryCard('Provider', this.apiProviderName.length > 0 ? this.apiProviderName : '未选择', '#8B5CF6', '#F5F3FF')
+        this.summaryCard('Model', this.apiModel.length > 0 ? this.apiModel : '未设置', '#0A84FF', '#EAF3FF')
         this.summaryCard('Wire API', this.apiWireApiLabel(this.apiWireApi), '#14B8A6', '#ECFDF5')
       }
       .width('100%')
@@ -2575,10 +2698,12 @@ struct SettingsPage {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
-            Text('统一卡片列表、顶部切换和添加入口，让 Settings 与独立页保持同一视觉语言。')
+            Text(apiManagementVM.state.errorText.trim().length > 0
+              ? apiManagementVM.state.errorText
+              : '统一卡片列表、顶部切换和添加入口，让 Settings 与独立页保持同一视觉语言。')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(11)
-              .fontColor('#64748B')
+              .fontColor(apiManagementVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
               .margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.Start)

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::net::SocketAddr;
@@ -19,11 +20,15 @@ use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::RemoteAppServerClient;
 use codex_app_server_client::RemoteAppServerConnectArgs;
 use codex_arg0::Arg0DispatchPaths;
-use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval;
+use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::ListMcpServerStatusParams;
+use codex_app_server_protocol::ListMcpServerStatusResponse;
+use codex_app_server_protocol::McpServerOauthLoginParams;
+use codex_app_server_protocol::McpServerOauthLoginResponse;
+use codex_app_server_protocol::McpServerRefreshResponse;
 use codex_app_server_protocol::RequestId;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
@@ -33,7 +38,11 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
+use codex_core::config::edit::ConfigEditsBuilder;
+use codex_core::config::load_global_mcp_servers;
+use codex_core::config::types::McpServerConfig;
 use codex_core::config_loader::LoaderOverrides;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_cli::CliConfigOverrides;
@@ -147,6 +156,47 @@ struct NativeTurnStartRequest {
     effort: Option<String>,
     approval_policy: Option<String>,
     sandbox_mode: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMcpStatusListRequest {
+    cursor: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMcpOauthStartRequest {
+    name: String,
+    #[serde(default)]
+    scopes: Option<Vec<String>>,
+    #[serde(default)]
+    timeout_secs: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMcpConfigReadRequest {
+    #[serde(default)]
+    include_layers: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMcpConfigBatchEditRequest {
+    key_path: String,
+    value: serde_json::Value,
+    merge_strategy: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMcpConfigBatchWriteRequest {
+    #[serde(default)]
+    edits: Vec<NativeMcpConfigBatchEditRequest>,
+    #[serde(default)]
+    reload_user_config: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1273,33 +1323,174 @@ pub extern "C" fn codex_ohos_host_approval_decline(_params_json: *const c_char) 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_mcp_status_list(_params_json: *const c_char) -> *const c_char {
-    write_cstring(&LAST_MCP_STATUS_JSON, "{\"data\":[],\"nextCursor\":null}")
+pub extern "C" fn codex_ohos_host_mcp_status_list(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeMcpStatusListRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let params = ListMcpServerStatusParams {
+            cursor: request.cursor.filter(|value| !value.trim().is_empty()),
+            limit: request.limit,
+        };
+
+        let response: ListMcpServerStatusResponse = handle
+            .request_typed(ClientRequest::McpServerStatusList { request_id, params })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        Ok::<ListMcpServerStatusResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => serde_json::to_string(&response)
+            .unwrap_or_else(|_| "{\"data\":[],\"nextCursor\":null}".to_string()),
+        Err(err) => {
+            set_host_message(format!("failed to list MCP status: {err}"));
+            "{\"data\":[],\"nextCursor\":null}".to_string()
+        }
+    };
+    write_cstring(&LAST_MCP_STATUS_JSON, &json)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_mcp_config_read(_params_json: *const c_char) -> *const c_char {
-    write_cstring(&LAST_MCP_CONFIG_JSON, "{\"config\":{}}")
+pub extern "C" fn codex_ohos_host_mcp_config_read(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let _request = serde_json::from_str::<NativeMcpConfigReadRequest>(&params_text).unwrap_or_default();
+    let codex_home = resolve_codex_home(None);
+
+    let json = match mcp_servers_to_config_json(&codex_home) {
+        Ok(json) => json,
+        Err(err) => {
+            set_host_message(format!("failed to read MCP config: {err}"));
+            "{\"config\":{}}".to_string()
+        }
+    };
+    write_cstring(&LAST_MCP_CONFIG_JSON, &json)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_mcp_config_write(_params_json: *const c_char) -> i32 {
-    0
+pub extern "C" fn codex_ohos_host_mcp_config_write(params_json: *const c_char) -> i32 {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = match serde_json::from_str::<NativeMcpConfigBatchEditRequest>(&params_text) {
+        Ok(request) => request,
+        Err(err) => {
+            set_host_message(format!("failed to parse MCP config write request: {err}"));
+            return 1;
+        }
+    };
+    let codex_home = resolve_codex_home(None);
+    match apply_mcp_batch_edits(&codex_home, vec![request]) {
+        Ok(()) => 0,
+        Err(err) => {
+            set_host_message(format!("failed to write MCP config: {err}"));
+            1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_mcp_config_batch_write(_params_json: *const c_char) -> i32 {
-    0
+pub extern "C" fn codex_ohos_host_mcp_config_batch_write(params_json: *const c_char) -> i32 {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = match serde_json::from_str::<NativeMcpConfigBatchWriteRequest>(&params_text) {
+        Ok(request) => request,
+        Err(err) => {
+            set_host_message(format!("failed to parse MCP batch write request: {err}"));
+            return 1;
+        }
+    };
+    let codex_home = resolve_codex_home(None);
+    match apply_mcp_batch_edits(&codex_home, request.edits) {
+        Ok(()) => 0,
+        Err(err) => {
+            set_host_message(format!("failed to batch write MCP config: {err}"));
+            1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_mcp_reload() -> i32 {
-    0
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let _response: McpServerRefreshResponse = handle
+            .request_typed(ClientRequest::McpServerRefresh {
+                request_id,
+                params: None,
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok::<(), anyhow::Error>(())
+    });
+
+    match response {
+        Ok(()) => 0,
+        Err(err) => {
+            set_host_message(format!("failed to reload MCP config: {err}"));
+            1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_mcp_oauth_start(_params_json: *const c_char) -> *const c_char {
-    write_cstring(&LAST_MCP_OAUTH_JSON, "{\"authorizationUrl\":\"\"}")
+pub extern "C" fn codex_ohos_host_mcp_oauth_start(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeMcpOauthStartRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let params = McpServerOauthLoginParams {
+            name: request.name,
+            scopes: request.scopes,
+            timeout_secs: request.timeout_secs,
+        };
+
+        let response: McpServerOauthLoginResponse = handle
+            .request_typed(ClientRequest::McpServerOauthLogin { request_id, params })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        Ok::<McpServerOauthLoginResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => serde_json::json!({
+            "authorizationUrl": response.authorization_url,
+        })
+        .to_string(),
+        Err(err) => {
+            set_host_message(format!("failed to start MCP OAuth login: {err}"));
+            "{\"authorizationUrl\":\"\"}".to_string()
+        }
+    };
+    write_cstring(&LAST_MCP_OAUTH_JSON, &json)
 }
 
 #[unsafe(no_mangle)]
@@ -1469,6 +1660,43 @@ fn parse_reasoning_effort(raw: Option<&str>) -> Result<Option<ReasoningEffort>> 
             .map(Some)
             .map_err(anyhow::Error::msg),
     }
+}
+
+fn mcp_servers_to_config_json(codex_home: &Path) -> Result<String> {
+    let servers = with_runtime_result(async { load_global_mcp_servers(codex_home).await.map_err(anyhow::Error::from) })?;
+    let config = serde_json::json!({ "config": { "mcp_servers": servers } });
+    serde_json::to_string(&config).map_err(anyhow::Error::from)
+}
+
+fn parse_mcp_server_value(value: serde_json::Value) -> Result<McpServerConfig> {
+    serde_json::from_value::<McpServerConfig>(value).map_err(anyhow::Error::from)
+}
+
+fn write_mcp_servers(codex_home: &Path, servers: &BTreeMap<String, McpServerConfig>) -> Result<()> {
+    ConfigEditsBuilder::new(codex_home)
+        .replace_mcp_servers(servers)
+        .apply_blocking()
+}
+
+fn apply_mcp_batch_edits(codex_home: &Path, edits: Vec<NativeMcpConfigBatchEditRequest>) -> Result<()> {
+    let mut servers = with_runtime_result(async { load_global_mcp_servers(codex_home).await.map_err(anyhow::Error::from) })?;
+    for edit in edits {
+        let key_path = edit.key_path.trim();
+        if !key_path.starts_with("mcp_servers.") {
+            anyhow::bail!("unsupported MCP config key path: {key_path}");
+        }
+        let server_name = key_path.trim_start_matches("mcp_servers.").trim();
+        if server_name.is_empty() || server_name.contains('.') {
+            anyhow::bail!("invalid MCP server key path: {key_path}");
+        }
+        let merge_strategy = edit.merge_strategy.unwrap_or_else(|| "replace".to_string());
+        if merge_strategy != "replace" {
+            anyhow::bail!("unsupported MCP merge strategy: {merge_strategy}");
+        }
+        let parsed = parse_mcp_server_value(edit.value)?;
+        servers.insert(server_name.to_string(), parsed);
+    }
+    write_mcp_servers(codex_home, &servers)
 }
 
 fn parse_approval_policy(raw: Option<&str>) -> Result<Option<AskForApproval>> {

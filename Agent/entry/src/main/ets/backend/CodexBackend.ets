@@ -16,15 +16,36 @@ import {
   turnStartNative
 } from './CodexNative';
 import {
+  CustomHeadersEntry,
+  EndpointEntry,
   McpAuthStatus,
   McpHealthStatus,
   McpServerRecord,
+  ProviderRecord,
   SessionSummary,
+  UsageScriptEntry,
   UsageSummary,
   WorkspaceAccessKind,
   WorkspaceDescriptor,
   WorkspacePermissionState
 } from './ConsoleModels';
+import {
+  ApiError,
+  ApiValidationResult,
+  EndpointSpeedResult,
+  UsageQueryResult
+} from '../apim/ApiTypes';
+import { apiManagementService } from '../apim/ApiManagementService';
+import {
+  DiscoverableSkill,
+  InstalledSkill,
+  SkillBackupEntry,
+  SkillRepo,
+  SkillsShSearchResult,
+  SkillUpdateInfo,
+  UnmanagedSkill
+} from '../skills/SkillTypes';
+import { SkillError, SkillsBackendService } from '../skills/SkillsBackendService';
 
 export type CodexMessageRole = 'user' | 'assistant' | 'system';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
@@ -40,6 +61,543 @@ const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
 const TURN_POLL_INTERVAL_MS: number = 800;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
+
+export type ConfigKind = 'provider' | 'skill';
+export type ConfigAction = 'list' | 'get' | 'add' | 'update' | 'remove' | 'enable' | 'disable' | 'setActive';
+export type SkillConfigScope = 'installed' | 'repos' | 'backups' | 'discoverable' | 'unmanaged' | 'updates';
+
+export class ConfigActionError {
+  code: string;
+  message: string;
+  details: string;
+
+  constructor(code: string, message: string, details: string = '') {
+    this.code = code;
+    this.message = message;
+    this.details = details;
+  }
+}
+
+export class ConfigActionResult<T> {
+  ok: boolean;
+  data: T | null;
+  error: ConfigActionError | null;
+
+  constructor(ok: boolean, data: T | null, error: ConfigActionError | null) {
+    this.ok = ok;
+    this.data = data;
+    this.error = error;
+  }
+}
+
+export class ConfigActionRequest {
+  kind: ConfigKind;
+  action: ConfigAction;
+  id: string;
+  scope: string;
+  payload: Object | null;
+
+  constructor(kind: ConfigKind, action: ConfigAction, id: string = '', scope: string = '', payload: Object | null = null) {
+    this.kind = kind;
+    this.action = action;
+    this.id = id;
+    this.scope = scope;
+    this.payload = payload;
+  }
+}
+
+function configSuccess<T>(data: T): ConfigActionResult<T> {
+  return new ConfigActionResult<T>(true, data, null);
+}
+
+function configFailure<T>(code: string, message: string, details: string = ''): ConfigActionResult<T> {
+  return new ConfigActionResult<T>(false, null, new ConfigActionError(code, message, details));
+}
+
+export class ConfigManagerFacade {
+  private providersLoaded: boolean = false;
+  private providerStore: ProviderRecord[] = [];
+  private skillsInstalledLoaded: boolean = false;
+  private skillInstalledStore: InstalledSkill[] = [];
+  private skillsReposLoaded: boolean = false;
+  private skillRepoStore: SkillRepo[] = [];
+  private skillsBackupsLoaded: boolean = false;
+  private skillBackupStore: SkillBackupEntry[] = [];
+
+  private skillsService(): SkillsBackendService {
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    return new SkillsBackendService(codexHome);
+  }
+
+  private reloadProviders(): ProviderRecord[] {
+    this.providerStore = this.cloneProviders(apiManagementService.getProviders());
+    this.providersLoaded = true;
+    return this.cloneProviders(this.providerStore);
+  }
+
+  private async reloadInstalledSkills(): Promise<InstalledSkill[]> {
+    this.skillInstalledStore = this.cloneInstalledSkills(await this.skillsService().getInstalled());
+    this.skillsInstalledLoaded = true;
+    return this.cloneInstalledSkills(this.skillInstalledStore);
+  }
+
+  private async reloadSkillRepos(): Promise<SkillRepo[]> {
+    this.skillRepoStore = this.cloneSkillRepos(await this.skillsService().getRepos());
+    this.skillsReposLoaded = true;
+    return this.cloneSkillRepos(this.skillRepoStore);
+  }
+
+  private async reloadSkillBackups(): Promise<SkillBackupEntry[]> {
+    this.skillBackupStore = this.cloneSkillBackups(await this.skillsService().getBackups());
+    this.skillsBackupsLoaded = true;
+    return this.cloneSkillBackups(this.skillBackupStore);
+  }
+
+  private configFailureFromError<T>(err: Object, fallbackCode: string, fallbackMessage: string): ConfigActionResult<T> {
+    if (err instanceof ApiError) {
+      return configFailure<T>(err.code, err.suggestion, err.context);
+    }
+    if (err instanceof SkillError) {
+      return configFailure<T>(err.code, err.suggestion, err.context);
+    }
+    if (err instanceof Error) {
+      return configFailure<T>(fallbackCode, err.message, err.stack ?? '');
+    }
+    return configFailure<T>(fallbackCode, fallbackMessage, JSON.stringify(err));
+  }
+
+  private ensureProvidersLoaded(): void {
+    if (this.providersLoaded) {
+      return;
+    }
+    try {
+      this.providerStore = this.cloneProviders(apiManagementService.getProviders());
+    } catch (_err) {
+      this.providerStore = [];
+    }
+    this.providersLoaded = true;
+  }
+
+  private async ensureInstalledSkillsLoaded(): Promise<void> {
+    if (this.skillsInstalledLoaded) {
+      return;
+    }
+    try {
+      this.skillInstalledStore = this.cloneInstalledSkills(await this.skillsService().getInstalled());
+    } catch (_err) {
+      this.skillInstalledStore = [];
+    }
+    this.skillsInstalledLoaded = true;
+  }
+
+  private async ensureSkillReposLoaded(): Promise<void> {
+    if (this.skillsReposLoaded) {
+      return;
+    }
+    try {
+      this.skillRepoStore = this.cloneSkillRepos(await this.skillsService().getRepos());
+    } catch (_err) {
+      this.skillRepoStore = [];
+    }
+    this.skillsReposLoaded = true;
+  }
+
+  private async ensureSkillBackupsLoaded(): Promise<void> {
+    if (this.skillsBackupsLoaded) {
+      return;
+    }
+    try {
+      this.skillBackupStore = this.cloneSkillBackups(await this.skillsService().getBackups());
+    } catch (_err) {
+      this.skillBackupStore = [];
+    }
+    this.skillsBackupsLoaded = true;
+  }
+
+  listProviders(): ConfigActionResult<ProviderRecord[]> {
+    this.ensureProvidersLoaded();
+    return configSuccess<ProviderRecord[]>(this.cloneProviders(this.providerStore));
+  }
+
+  addProviderFromPreset(presetId: string, apiKey: string): ConfigActionResult<ProviderRecord> {
+    try {
+      const provider = apiManagementService.createFromPreset(presetId, apiKey);
+      apiManagementService.saveProvider(provider);
+      const providers = this.reloadProviders();
+      const saved = providers.find((item: ProviderRecord) => item.id === provider.id);
+      return configSuccess<ProviderRecord>(saved ?? this.cloneProvider(provider));
+    } catch (err) {
+      return this.configFailureFromError<ProviderRecord>(err as Object, 'ADD_PROVIDER_FAILED', '新增 Provider 失败。');
+    }
+  }
+
+  saveProvider(provider: ProviderRecord): ConfigActionResult<ProviderRecord> {
+    try {
+      const next: ProviderRecord = this.cloneProvider(provider);
+      apiManagementService.saveProvider(next);
+      const providers = this.reloadProviders();
+      const saved = providers.find((item: ProviderRecord) => item.id === next.id);
+      return configSuccess<ProviderRecord>(saved ?? next);
+    } catch (err) {
+      return this.configFailureFromError<ProviderRecord>(err as Object, 'SAVE_PROVIDER_FAILED', '保存 Provider 失败。');
+    }
+  }
+
+  setActiveProvider(id: string): ConfigActionResult<ProviderRecord> {
+    try {
+      const activated = apiManagementService.activateProvider(id);
+      const providers = this.reloadProviders();
+      const saved = providers.find((item: ProviderRecord) => item.id === activated.id);
+      return configSuccess<ProviderRecord>(saved ?? this.cloneProvider(activated));
+    } catch (err) {
+      return this.configFailureFromError<ProviderRecord>(err as Object, 'SET_ACTIVE_PROVIDER_FAILED', '激活 Provider 失败。');
+    }
+  }
+
+  removeProvider(id: string): ConfigActionResult<string> {
+    try {
+      apiManagementService.deleteProvider(id);
+      this.reloadProviders();
+      return configSuccess<string>(id);
+    } catch (err) {
+      return this.configFailureFromError<string>(err as Object, 'REMOVE_PROVIDER_FAILED', '删除 Provider 失败。');
+    }
+  }
+
+  exportProviders(): ConfigActionResult<string> {
+    try {
+      return configSuccess<string>(apiManagementService.exportProviders());
+    } catch (err) {
+      return this.configFailureFromError<string>(err as Object, 'EXPORT_PROVIDER_FAILED', '导出 Provider 失败。');
+    }
+  }
+
+  importProviders(json: string): ConfigActionResult<number> {
+    try {
+      const count = apiManagementService.importProviders(json);
+      this.reloadProviders();
+      return configSuccess<number>(count);
+    } catch (err) {
+      return this.configFailureFromError<number>(err as Object, 'IMPORT_PROVIDER_FAILED', '导入 Provider 失败。');
+    }
+  }
+
+  async validateProvider(provider: ProviderRecord): Promise<ConfigActionResult<ApiValidationResult>> {
+    try {
+      const result = await apiManagementService.validateApiKey(provider.baseUrl, provider.apiKey);
+      return configSuccess<ApiValidationResult>(result);
+    } catch (err) {
+      return this.configFailureFromError<ApiValidationResult>(err as Object, 'VALIDATE_PROVIDER_FAILED', '验证 Provider 失败。');
+    }
+  }
+
+  async testProviderSpeed(provider: ProviderRecord, autoSelect: boolean): Promise<ConfigActionResult<EndpointSpeedResult[]>> {
+    try {
+      const results = await apiManagementService.testEndpointSpeed(this.cloneProvider(provider), autoSelect);
+      this.reloadProviders();
+      return configSuccess<EndpointSpeedResult[]>(results);
+    } catch (err) {
+      return this.configFailureFromError<EndpointSpeedResult[]>(err as Object, 'TEST_PROVIDER_SPEED_FAILED', 'Provider 测速失败。');
+    }
+  }
+
+  async discoverProviderModels(provider: ProviderRecord): Promise<ConfigActionResult<string[]>> {
+    try {
+      const models = await apiManagementService.discoverModels(provider.baseUrl, provider.apiKey);
+      return configSuccess<string[]>(models);
+    } catch (err) {
+      return this.configFailureFromError<string[]>(err as Object, 'DISCOVER_PROVIDER_MODELS_FAILED', '模型发现失败。');
+    }
+  }
+
+  async queryProviderUsage(provider: ProviderRecord): Promise<ConfigActionResult<UsageQueryResult>> {
+    try {
+      const usage = await apiManagementService.queryUsage(this.cloneProvider(provider));
+      return configSuccess<UsageQueryResult>(usage);
+    } catch (err) {
+      return this.configFailureFromError<UsageQueryResult>(err as Object, 'QUERY_PROVIDER_USAGE_FAILED', '用量查询失败。');
+    }
+  }
+
+  async listInstalledSkills(): Promise<ConfigActionResult<InstalledSkill[]>> {
+    await this.ensureInstalledSkillsLoaded();
+    return configSuccess<InstalledSkill[]>(this.cloneInstalledSkills(this.skillInstalledStore));
+  }
+
+  async setSkillEnabled(id: string, enabled: boolean): Promise<ConfigActionResult<InstalledSkill>> {
+    try {
+      const installed = await this.reloadInstalledSkills();
+      const target = installed.find((skill: InstalledSkill) => skill.id === id);
+      if (target === undefined) {
+        return configFailure<InstalledSkill>('NOT_FOUND', 'Skill 不存在。', id);
+      }
+      target.enabled = enabled;
+      target.updatedAt = Date.now();
+      await this.skillsService().saveInstalled(installed);
+      const reloaded = await this.reloadInstalledSkills();
+      const saved = reloaded.find((skill: InstalledSkill) => skill.id === id);
+      if (saved === undefined) {
+        return configFailure<InstalledSkill>('NOT_FOUND', 'Skill 不存在。', id);
+      }
+      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(saved));
+    } catch (err) {
+      return this.configFailureFromError<InstalledSkill>(err as Object, 'SET_SKILL_ENABLED_FAILED', '切换 Skill 启用状态失败。');
+    }
+  }
+
+  async removeInstalledSkill(id: string): Promise<ConfigActionResult<string>> {
+    try {
+      await this.skillsService().uninstall(id);
+      await this.reloadInstalledSkills();
+      await this.reloadSkillBackups();
+      return configSuccess<string>(id);
+    } catch (err) {
+      return this.configFailureFromError<string>(err as Object, 'REMOVE_SKILL_FAILED', '卸载 Skill 失败。');
+    }
+  }
+
+  async listSkillRepos(): Promise<ConfigActionResult<SkillRepo[]>> {
+    await this.ensureSkillReposLoaded();
+    return configSuccess<SkillRepo[]>(this.cloneSkillRepos(this.skillRepoStore));
+  }
+
+  async addSkillRepo(repo: SkillRepo): Promise<ConfigActionResult<SkillRepo>> {
+    try {
+      const owner: string = repo.owner.trim();
+      const name: string = repo.name.trim();
+      const branch: string = repo.branch.trim().length > 0 ? repo.branch.trim() : 'main';
+      if (owner.length === 0 || name.length === 0) {
+        return configFailure<SkillRepo>('INVALID_DRAFT', '仓库 owner 与 name 不能为空。');
+      }
+      const currentRepos = await this.reloadSkillRepos();
+      if (currentRepos.some((item: SkillRepo) => item.owner === owner && item.name === name)) {
+        return configFailure<SkillRepo>('DIRECTORY_CONFLICT', '仓库已存在，无需重复添加。', `${owner}/${name}`);
+      }
+      const next = new SkillRepo(owner, name, branch, repo.enabled);
+      await this.skillsService().addRepo(next);
+      const repos = await this.reloadSkillRepos();
+      const saved = repos.find((item: SkillRepo) => item.owner === owner && item.name === name);
+      return configSuccess<SkillRepo>(saved ?? next);
+    } catch (err) {
+      return this.configFailureFromError<SkillRepo>(err as Object, 'ADD_SKILL_REPO_FAILED', '添加 Skill 仓库失败。');
+    }
+  }
+
+  async setSkillRepoEnabled(owner: string, name: string, enabled: boolean): Promise<ConfigActionResult<SkillRepo>> {
+    try {
+      const repos = await this.reloadSkillRepos();
+      const target = repos.find((repo: SkillRepo) => repo.owner === owner && repo.name === name);
+      if (target === undefined) {
+        return configFailure<SkillRepo>('NOT_FOUND', '仓库不存在。', `${owner}/${name}`);
+      }
+      target.enabled = enabled;
+      await this.skillsService().saveRepos(repos);
+      const reloaded = await this.reloadSkillRepos();
+      const saved = reloaded.find((repo: SkillRepo) => repo.owner === owner && repo.name === name);
+      if (saved === undefined) {
+        return configFailure<SkillRepo>('NOT_FOUND', '仓库不存在。', `${owner}/${name}`);
+      }
+      return configSuccess<SkillRepo>(new SkillRepo(saved.owner, saved.name, saved.branch, saved.enabled));
+    } catch (err) {
+      return this.configFailureFromError<SkillRepo>(err as Object, 'SET_SKILL_REPO_ENABLED_FAILED', '切换 Skill 仓库状态失败。');
+    }
+  }
+
+  async removeSkillRepo(owner: string, name: string): Promise<ConfigActionResult<string>> {
+    try {
+      const repos = await this.reloadSkillRepos();
+      const exists = repos.some((repo: SkillRepo) => repo.owner === owner && repo.name === name);
+      if (!exists) {
+        return configFailure<string>('NOT_FOUND', '仓库不存在。', `${owner}/${name}`);
+      }
+      await this.skillsService().removeRepo(owner, name);
+      await this.reloadSkillRepos();
+      return configSuccess<string>(`${owner}/${name}`);
+    } catch (err) {
+      return this.configFailureFromError<string>(err as Object, 'REMOVE_SKILL_REPO_FAILED', '移除 Skill 仓库失败。');
+    }
+  }
+
+  async listSkillBackups(): Promise<ConfigActionResult<SkillBackupEntry[]>> {
+    await this.ensureSkillBackupsLoaded();
+    return configSuccess<SkillBackupEntry[]>(this.cloneSkillBackups(this.skillBackupStore));
+  }
+
+  async removeSkillBackup(backupId: string): Promise<ConfigActionResult<string>> {
+    try {
+      const backups = await this.reloadSkillBackups();
+      const exists = backups.some((backup: SkillBackupEntry) => backup.backupId === backupId);
+      if (!exists) {
+        return configFailure<string>('NOT_FOUND', '备份不存在。', backupId);
+      }
+      await this.skillsService().removeBackup(backupId);
+      await this.reloadSkillBackups();
+      return configSuccess<string>(backupId);
+    } catch (err) {
+      return this.configFailureFromError<string>(err as Object, 'REMOVE_SKILL_BACKUP_FAILED', '删除 Skill 备份失败。');
+    }
+  }
+
+  async discoverableSkillsMockOnly(): Promise<ConfigActionResult<DiscoverableSkill[]>> {
+    return configFailure<DiscoverableSkill[]>('NOT_IMPLEMENTED', 'Skill 发现暂未接入统一前端 façade。');
+  }
+
+  async scanUnmanagedSkills(): Promise<ConfigActionResult<UnmanagedSkill[]>> {
+    try {
+      const result = await this.skillsService().scanUnmanaged();
+      return configSuccess<UnmanagedSkill[]>(result);
+    } catch (err) {
+      return this.configFailureFromError<UnmanagedSkill[]>(err as Object, 'SCAN_UNMANAGED_SKILLS_FAILED', '扫描未管理 Skill 失败。');
+    }
+  }
+
+  async skillUpdatesMockOnly(): Promise<ConfigActionResult<SkillUpdateInfo[]>> {
+    return configFailure<SkillUpdateInfo[]>('NOT_IMPLEMENTED', 'Skill 更新检测暂未接入统一前端 façade。');
+  }
+
+  async installSkillMockOnly(_skill: DiscoverableSkill): Promise<ConfigActionResult<InstalledSkill>> {
+    return configFailure<InstalledSkill>('MOCK_ONLY', 'Skill 安装暂未接入后端，当前仅前端模拟。');
+  }
+
+  async importSkillMockOnly(): Promise<ConfigActionResult<InstalledSkill[]>> {
+    return configFailure<InstalledSkill[]>('MOCK_ONLY', 'ZIP Skill 导入暂未接入后端，当前仅前端模拟。');
+  }
+
+  async importLocalSkills(directories: string[]): Promise<ConfigActionResult<InstalledSkill[]>> {
+    try {
+      const imported = await this.skillsService().importFromLocal(directories);
+      await this.reloadInstalledSkills();
+      return configSuccess<InstalledSkill[]>(this.cloneInstalledSkills(imported));
+    } catch (err) {
+      return this.configFailureFromError<InstalledSkill[]>(err as Object, 'IMPORT_LOCAL_SKILLS_FAILED', '导入本地 Skill 失败。');
+    }
+  }
+
+  async updateSkillMockOnly(_id: string): Promise<ConfigActionResult<InstalledSkill>> {
+    return configFailure<InstalledSkill>('MOCK_ONLY', 'Skill 更新暂未接入后端，当前仅前端模拟。');
+  }
+
+  async restoreSkillBackup(backupId: string): Promise<ConfigActionResult<InstalledSkill>> {
+    try {
+      const restored = await this.skillsService().restoreBackup(backupId);
+      await this.reloadInstalledSkills();
+      await this.reloadSkillBackups();
+      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(restored));
+    } catch (err) {
+      return this.configFailureFromError<InstalledSkill>(err as Object, 'RESTORE_SKILL_BACKUP_FAILED', '恢复 Skill 备份失败。');
+    }
+  }
+
+  async searchSkillsSh(query: string, limit: number, offset: number): Promise<ConfigActionResult<SkillsShSearchResult>> {
+    try {
+      const result = await this.skillsService().searchSkillsSh(query, limit, offset);
+      return configSuccess<SkillsShSearchResult>(result);
+    } catch (err) {
+      return this.configFailureFromError<SkillsShSearchResult>(err as Object, 'SEARCH_SKILLS_SH_FAILED', '搜索 skills.sh 失败。');
+    }
+  }
+
+  private cloneProvider(provider: ProviderRecord): ProviderRecord {
+    const endpoints: EndpointEntry[] = [];
+    for (let index = 0; index < provider.endpoints.length; index += 1) {
+      const endpoint = provider.endpoints[index];
+      endpoints.push(new EndpointEntry(endpoint.url, endpoint.addedAt, endpoint.lastUsed, endpoint.latencyMs, endpoint.isActive));
+    }
+    let usageScript: UsageScriptEntry | null = null;
+    if (provider.usageScript !== null) {
+      const usageHeaders: CustomHeadersEntry[] = [];
+      for (let index = 0; index < provider.usageScript.headers.length; index += 1) {
+        const header = provider.usageScript.headers[index];
+        usageHeaders.push(new CustomHeadersEntry(header.key, header.value));
+      }
+      usageScript = new UsageScriptEntry(
+        provider.usageScript.enabled,
+        provider.usageScript.scriptType,
+        provider.usageScript.code,
+        provider.usageScript.queryUrl,
+        usageHeaders,
+        provider.usageScript.autoQueryIntervalMin
+      );
+    }
+    return new ProviderRecord(
+      provider.id,
+      provider.name,
+      provider.appType,
+      provider.mode,
+      provider.baseUrl,
+      provider.apiKey,
+      provider.model,
+      provider.isActive,
+      provider.syncStatus,
+      provider.updatedAt,
+      provider.authMode,
+      provider.copyHeaders(),
+      provider.wireApi,
+      provider.category,
+      provider.description,
+      provider.websiteUrl,
+      provider.icon,
+      provider.iconColor,
+      endpoints,
+      provider.healthStatus,
+      provider.healthLatencyMs,
+      provider.lastValidatedAt,
+      usageScript,
+      provider.createdAt
+    );
+  }
+
+  private cloneProviders(providers: ProviderRecord[]): ProviderRecord[] {
+    const cloned: ProviderRecord[] = [];
+    for (let index = 0; index < providers.length; index += 1) {
+      cloned.push(this.cloneProvider(providers[index]));
+    }
+    return cloned;
+  }
+
+  private cloneInstalledSkill(skill: InstalledSkill): InstalledSkill {
+    return new InstalledSkill(
+      skill.id,
+      skill.name,
+      skill.description,
+      skill.directory,
+      skill.source,
+      skill.repoOwner,
+      skill.repoName,
+      skill.repoBranch,
+      skill.readmeUrl,
+      skill.enabled,
+      skill.installedAt,
+      skill.contentHash,
+      skill.updatedAt
+    );
+  }
+
+  private cloneInstalledSkills(skills: InstalledSkill[]): InstalledSkill[] {
+    const cloned: InstalledSkill[] = [];
+    for (let index = 0; index < skills.length; index += 1) {
+      cloned.push(this.cloneInstalledSkill(skills[index]));
+    }
+    return cloned;
+  }
+
+  private cloneSkillRepos(repos: SkillRepo[]): SkillRepo[] {
+    const cloned: SkillRepo[] = [];
+    for (let index = 0; index < repos.length; index += 1) {
+      cloned.push(new SkillRepo(repos[index].owner, repos[index].name, repos[index].branch, repos[index].enabled));
+    }
+    return cloned;
+  }
+
+  private cloneSkillBackups(backups: SkillBackupEntry[]): SkillBackupEntry[] {
+    const cloned: SkillBackupEntry[] = [];
+    for (let index = 0; index < backups.length; index += 1) {
+      const backup = backups[index];
+      cloned.push(new SkillBackupEntry(backup.backupId, backup.backupPath, backup.createdAt, this.cloneInstalledSkill(backup.skill)));
+    }
+    return cloned;
+  }
+}
 
 class ThreadPayload {
   id: string = '';
@@ -1196,3 +1754,4 @@ export class CodexBackend {
 }
 
 export const codexBackend: CodexBackend = new CodexBackend();
+export const configManagerFacade: ConfigManagerFacade = new ConfigManagerFacade();
