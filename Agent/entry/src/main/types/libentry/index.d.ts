@@ -68,6 +68,11 @@ export interface EntryBridgeModule {
   writeAgentsMd: (codexHome?: string, content?: string) => number;
   initialize: (configJson?: string) => string;
   threadStart: (paramsJson?: string) => string;
+  threadList: (paramsJson?: string) => string;
+  threadRead: (paramsJson?: string) => string;
+  threadResume: (paramsJson?: string) => string;
+  threadNameSet: (paramsJson?: string) => string;
+  threadArchive: (paramsJson?: string) => string;
   turnStart: (paramsJson?: string) => string;
   turnEvents: (threadId?: string, turnId?: string) => string;
   turnPoll: (threadId?: string, turnId?: string) => string;

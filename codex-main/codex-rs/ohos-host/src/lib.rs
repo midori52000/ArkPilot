@@ -36,6 +36,17 @@ use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::SandboxPolicy;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::Thread;
+use codex_app_server_protocol::ThreadArchiveParams;
+use codex_app_server_protocol::ThreadArchiveResponse;
+use codex_app_server_protocol::ThreadListParams;
+use codex_app_server_protocol::ThreadListResponse;
+use codex_app_server_protocol::ThreadReadParams;
+use codex_app_server_protocol::ThreadReadResponse;
+use codex_app_server_protocol::ThreadResumeParams;
+use codex_app_server_protocol::ThreadResumeResponse;
+use codex_app_server_protocol::ThreadSetNameParams;
+use codex_app_server_protocol::ThreadSetNameResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
@@ -175,6 +186,47 @@ struct NativeTurnStartRequest {
     sandbox_mode: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadListRequest {
+    cursor: Option<String>,
+    limit: Option<u32>,
+    archived: Option<bool>,
+    cwd: Option<String>,
+    search_term: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadReadRequest {
+    thread_id: String,
+    #[serde(default)]
+    include_turns: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadResumeRequest {
+    thread_id: String,
+    cwd: Option<String>,
+    model: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadNameSetRequest {
+    thread_id: String,
+    name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadArchiveRequest {
+    thread_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceAccessStatus {
@@ -285,6 +337,18 @@ static LAST_INIT_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 });
 static LAST_THREAD_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_THREAD_LIST_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"data\":[],\"nextCursor\":null}").expect("empty cstring"))
+});
+static LAST_THREAD_READ_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_THREAD_RESUME_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_THREAD_MUTATION_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"ok\":false}").expect("empty cstring"))
 });
 static LAST_TURN_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{}").expect("empty cstring"))
@@ -1104,7 +1168,8 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
         params.sandbox = parse_thread_sandbox_mode(
             request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE))
         )?;
-        params.ephemeral = Some(true);
+        params.ephemeral = Some(false);
+        params.persist_extended_history = true;
 
         let response: ThreadStartResponse = handle
             .request_typed(ClientRequest::ThreadStart {
@@ -1141,6 +1206,262 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
         .to_string(),
     };
     write_cstring(&LAST_THREAD_RESULT_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_list(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeThreadListRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let params = ThreadListParams {
+            cursor: request.cursor.filter(|value| !value.trim().is_empty()),
+            limit: request.limit,
+            sort_key: Some(codex_app_server_protocol::ThreadSortKey::UpdatedAt),
+            model_providers: None,
+            source_kinds: None,
+            archived: request.archived,
+            cwd: request.cwd.filter(|value| !value.trim().is_empty()),
+            search_term: request.search_term.filter(|value| !value.trim().is_empty()),
+        };
+
+        let response: ThreadListResponse = handle
+            .request_typed(ClientRequest::ThreadList { request_id, params })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        Ok::<ThreadListResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => build_thread_list_payload(&response).to_string(),
+        Err(err) => serde_json::json!({
+            "data": [],
+            "nextCursor": null,
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_THREAD_LIST_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_read(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeThreadReadRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let response: ThreadReadResponse = handle
+            .request_typed(ClientRequest::ThreadRead {
+                request_id,
+                params: ThreadReadParams {
+                    thread_id: request.thread_id.clone(),
+                    include_turns: request.include_turns,
+                },
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        with_native_state(|state| {
+            upsert_thread_state_from_protocol(state, &response.thread, request.include_turns);
+        });
+
+        Ok::<ThreadReadResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => build_thread_read_payload(&response.thread).to_string(),
+        Err(err) => serde_json::json!({
+            "thread": { "id": request.thread_id },
+            "messages": [],
+            "diff": "",
+            "diffStat": "+0 -0",
+            "changedFiles": [],
+            "changedFilesText": "",
+            "summaryTitle": "会话读取失败",
+            "summary": [err.to_string()],
+            "lastTurnId": "",
+            "lastTurnStatus": "failed",
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_THREAD_READ_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_resume(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeThreadResumeRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let mut params = ThreadResumeParams::default();
+        params.thread_id = request.thread_id.clone();
+        params.cwd = request.cwd.filter(|value| !value.trim().is_empty());
+        params.model = request.model.filter(|value| !value.trim().is_empty());
+        params.model_provider = Some(CUSTOM_PROVIDER_ID.to_string());
+        params.approval_policy = parse_approval_policy(
+            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+        )?;
+        params.approvals_reviewer = Some(ApprovalsReviewer::User);
+        params.sandbox = parse_thread_sandbox_mode(
+            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE))
+        )?;
+        params.persist_extended_history = true;
+
+        let response: ThreadResumeResponse = handle
+            .request_typed(ClientRequest::ThreadResume { request_id, params })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        with_native_state(|state| {
+            upsert_thread_state_from_protocol(state, &response.thread, true);
+        });
+
+        Ok::<ThreadResumeResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => serde_json::json!({
+            "thread": build_thread_meta_payload(&response.thread),
+            "model": response.model,
+            "cwd": response.cwd.display().to_string(),
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "thread": { "id": request.thread_id },
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_THREAD_RESUME_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_name_set(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeThreadNameSetRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let _: ThreadSetNameResponse = handle
+            .request_typed(ClientRequest::ThreadSetName {
+                request_id,
+                params: ThreadSetNameParams {
+                    thread_id: request.thread_id.clone(),
+                    name: request.name.clone(),
+                },
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        Ok::<(), anyhow::Error>(())
+    });
+
+    let json = match response {
+        Ok(()) => serde_json::json!({
+            "ok": true,
+            "threadId": request.thread_id,
+            "name": request.name,
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "threadId": request.thread_id,
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_THREAD_MUTATION_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_archive(params_json: *const c_char) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeThreadArchiveRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let _: ThreadArchiveResponse = handle
+            .request_typed(ClientRequest::ThreadArchive {
+                request_id,
+                params: ThreadArchiveParams {
+                    thread_id: request.thread_id.clone(),
+                },
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        with_native_state(|state| {
+            state.threads.remove(&request.thread_id);
+            state.turns.retain(|_, turn| turn.thread_id != request.thread_id);
+        });
+
+        Ok::<(), anyhow::Error>(())
+    });
+
+    let json = match response {
+        Ok(()) => serde_json::json!({
+            "ok": true,
+            "threadId": request.thread_id,
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "threadId": request.thread_id,
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_THREAD_MUTATION_JSON, &json)
 }
 
 #[unsafe(no_mangle)]
@@ -2438,6 +2759,195 @@ fn build_turn_poll_payload(
         "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
         "diff": turn.diff,
     })
+}
+
+fn upsert_thread_state_from_protocol(
+    state: &mut NativeConversationState,
+    thread: &Thread,
+    refresh_messages: bool,
+) {
+    let entry = state
+        .threads
+        .entry(thread.id.clone())
+        .or_insert_with(|| NativeThreadState {
+            remote_thread_id: thread.id.clone(),
+            messages: Vec::new(),
+        });
+    entry.remote_thread_id = thread.id.clone();
+    if refresh_messages {
+        entry.messages = collect_thread_messages(&thread.turns);
+    }
+}
+
+fn build_thread_meta_payload(thread: &Thread) -> serde_json::Value {
+    serde_json::json!({
+        "id": thread.id.clone(),
+        "title": thread_title(thread),
+        "name": thread.name.clone(),
+        "preview": thread.preview.clone(),
+        "cwd": thread.cwd.display().to_string(),
+        "createdAt": thread.created_at,
+        "updatedAt": thread.updated_at,
+        "path": thread.path.as_ref().map(|path| path.display().to_string()),
+        "modelProvider": thread.model_provider.clone(),
+        "ephemeral": thread.ephemeral,
+        "status": serde_json::to_value(&thread.status).unwrap_or(serde_json::Value::Null),
+        "statusText": thread_status_text(&thread.status),
+    })
+}
+
+fn build_thread_list_payload(response: &ThreadListResponse) -> serde_json::Value {
+    let data = response
+        .data
+        .iter()
+        .map(build_thread_meta_payload)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "data": data,
+        "nextCursor": response.next_cursor.clone(),
+    })
+}
+
+fn build_thread_read_payload(thread: &Thread) -> serde_json::Value {
+    let (summary_title, summary_points, last_turn_id, last_turn_status) =
+        collect_thread_summary_from_turns(&thread.turns);
+    let diff = collect_thread_diff_from_turns(&thread.turns);
+    let changed_files = collect_thread_changed_files(&thread.turns);
+    let changed_files_text = if changed_files.is_empty() {
+        "尚未产生文件改动".to_string()
+    } else {
+        changed_files.join("、")
+    };
+
+    serde_json::json!({
+        "thread": build_thread_meta_payload(thread),
+        "messages": collect_thread_messages(&thread.turns),
+        "summaryTitle": summary_title,
+        "summary": summary_points,
+        "changedFiles": changed_files,
+        "changedFilesText": changed_files_text,
+        "diff": diff,
+        "diffStat": diff_stat_from_unified_diff(&diff),
+        "lastTurnId": last_turn_id,
+        "lastTurnStatus": last_turn_status,
+    })
+}
+
+fn collect_thread_summary_from_turns(
+    turns: &[codex_app_server_protocol::Turn],
+) -> (String, Vec<String>, String, String) {
+    let mut summary: Vec<String> = Vec::new();
+    for turn in turns.iter().rev() {
+        for item in turn.items.iter().rev() {
+            if let Some(line) = describe_completed_item(item) {
+                if !line.trim().is_empty() {
+                    summary.push(line);
+                }
+            }
+            if summary.len() >= 6 {
+                break;
+            }
+        }
+        if summary.len() >= 6 {
+            break;
+        }
+    }
+    summary.reverse();
+
+    let (last_turn_id, last_turn_status, summary_title) = if let Some(turn) = turns.last() {
+        let status_text = map_turn_status(&turn.status).to_string();
+        let title = match turn.status {
+            TurnStatus::Completed => "会话已恢复",
+            TurnStatus::Failed => "会话最后一轮失败",
+            TurnStatus::Interrupted => "会话最后一轮已中断",
+            TurnStatus::InProgress => "会话仍在执行中",
+        }
+        .to_string();
+        (turn.id.clone(), status_text, title)
+    } else {
+        (
+            String::new(),
+            "completed".to_string(),
+            "会话已恢复".to_string(),
+        )
+    };
+
+    if summary.is_empty() {
+        summary.push("历史会话已从 app-server rollout 恢复。".to_string());
+    }
+
+    (summary_title, summary, last_turn_id, last_turn_status)
+}
+
+fn collect_thread_changed_files(turns: &[codex_app_server_protocol::Turn]) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    for turn in turns {
+        for item in &turn.items {
+            if let codex_app_server_protocol::ThreadItem::FileChange { changes, .. } = item {
+                for change in changes {
+                    if !change.path.trim().is_empty()
+                        && !files.iter().any(|existing| existing == &change.path)
+                    {
+                        files.push(change.path.clone());
+                    }
+                }
+            }
+        }
+    }
+    files
+}
+
+fn collect_thread_diff_from_turns(turns: &[codex_app_server_protocol::Turn]) -> String {
+    let mut chunks: Vec<String> = Vec::new();
+    for turn in turns {
+        for item in &turn.items {
+            if let codex_app_server_protocol::ThreadItem::FileChange { changes, .. } = item {
+                for change in changes {
+                    if !change.diff.trim().is_empty() {
+                        chunks.push(change.diff.clone());
+                    }
+                }
+            }
+        }
+    }
+    chunks.join("\n")
+}
+
+fn diff_stat_from_unified_diff(diff: &str) -> String {
+    let mut adds: usize = 0;
+    let mut deletes: usize = 0;
+    for line in diff.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            adds += 1;
+        } else if line.starts_with('-') {
+            deletes += 1;
+        }
+    }
+    format!("+{} -{}", adds, deletes)
+}
+
+fn thread_status_text(status: &codex_app_server_protocol::ThreadStatus) -> &'static str {
+    match status {
+        codex_app_server_protocol::ThreadStatus::NotLoaded => "notLoaded",
+        codex_app_server_protocol::ThreadStatus::Idle => "idle",
+        codex_app_server_protocol::ThreadStatus::SystemError => "systemError",
+        codex_app_server_protocol::ThreadStatus::Active { .. } => "active",
+    }
+}
+
+fn thread_title(thread: &Thread) -> String {
+    if let Some(name) = &thread.name {
+        if !name.trim().is_empty() {
+            return name.clone();
+        }
+    }
+    if !thread.preview.trim().is_empty() {
+        return compact_text(&thread.preview, 80);
+    }
+    "未命名会话".to_string()
 }
 
 fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<NativeMessage> {

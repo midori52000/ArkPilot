@@ -406,6 +406,61 @@ export function threadStartNative(paramsJson: string): string {
   }
 }
 
+export function threadListNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"data":[],"nextCursor":null}';
+  }
+  try {
+    return nativeBridge!.threadList(paramsJson);
+  } catch (_err) {
+    return '{"data":[],"nextCursor":null}';
+  }
+}
+
+export function threadReadNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.threadRead(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function threadResumeNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.threadResume(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function threadNameSetNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"ok":false}';
+  }
+  try {
+    return nativeBridge!.threadNameSet(paramsJson);
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
+export function threadArchiveNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"ok":false}';
+  }
+  try {
+    return nativeBridge!.threadArchive(paramsJson);
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
 export function turnStartNative(paramsJson: string): string {
   if (nativeModuleUnavailable()) {
     return '{}';
