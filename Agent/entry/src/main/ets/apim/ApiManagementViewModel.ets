@@ -273,6 +273,21 @@ export class ApiManagementViewModel {
     }
   }
 
+  exportProvidersMasked(): string {
+    try {
+      const result = configManagerFacade.exportProvidersMasked();
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        return '';
+      }
+      this.state.errorText = '';
+      return result.data;
+    } catch (err) {
+      this.state.errorText = this.describeError(err);
+      return '';
+    }
+  }
+
   importProviders(json: string): void {
     try {
       const result = configManagerFacade.importProviders(json);

@@ -141,6 +141,7 @@ struct Index {
   @State private providerApiKey: string = '';
   @State private manualModel: string = '';
   @State private providerStatusText: string = 'Provider config not loaded yet.';
+  @State private providerName: string = '未选择';
   @State private isSavingProvider: boolean = false;
   @State private apiKey: string = '';
   @State private isAuthenticating: boolean = false;
@@ -499,6 +500,18 @@ struct Index {
     this.providerApiKey = config.apiKey;
     this.manualModel = config.model;
     this.providerStatusText = this.describeProviderConfig(config);
+    // 从 catalog 中获取当前激活的 provider 名称
+    let activeName: string = '未选择';
+    for (let i = 0; i < catalog.providers.length; i++) {
+      if (catalog.providers[i].isActive) {
+        activeName = catalog.providers[i].name;
+        break;
+      }
+    }
+    if (activeName === '未选择' && catalog.providers.length > 0) {
+      activeName = catalog.providers[0].name;
+    }
+    this.providerName = activeName;
     hilog.info(
       INDEX_DOMAIN,
       INDEX_TAG,
@@ -563,6 +576,20 @@ struct Index {
         'saveProviderConfig failed: %{public}s',
         this.describeError(err)
       );
+      hilog.error(
+        INDEX_DOMAIN,
+        INDEX_TAG,
+        'saveProviderConfig error details: %{public}s',
+        JSON.stringify(err)
+      );
+      if (err instanceof Error && err.stack !== undefined) {
+        hilog.error(
+          INDEX_DOMAIN,
+          INDEX_TAG,
+          'saveProviderConfig stack: %{public}s',
+          err.stack
+        );
+      }
       this.summaryTitle = 'Provider config failed';
       this.summaryPoints = [this.describeError(err)];
     } finally {
@@ -1200,6 +1227,8 @@ struct Index {
   @Builder
   private leftPanel() {
     Column() {
+    Scroll() {
+    Column() {
       Row() {
         Column() {
           Text('ArkPilot')
@@ -1215,11 +1244,6 @@ struct Index {
             .margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
-
-        Blank()
-          .layoutWeight(1)
-
-        this.chip(this.connectionText, this.connectionChipBackground(), this.connectionChipColor())
       }
       .width('100%')
 
@@ -1248,19 +1272,7 @@ struct Index {
 
       if (this.activeSidebarView === 'chat') {
         Column() {
-          this.panelTitle('Chat 上下文', '保留连接、当前会话与工作目录')
-
-          TextInput({ text: this.serverUrl, placeholder: 'ws://127.0.0.1:7456' })
-            .width('100%')
-            .height(38)
-            .margin({ top: 10 })
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .onChange((value: string) => {
-              this.serverUrl = value;
-            })
+          this.panelTitle('Chat 上下文', '查看当前会话、供应商与模型状态')
 
           Button(this.connectionButtonLabel())
             .height(34)
@@ -1273,8 +1285,8 @@ struct Index {
               void this.connectOrDisconnect();
             })
 
-          this.infoRow('认证', this.authStatusText)
-          this.infoRow('Provider', this.providerStatusText)
+          this.infoRow('供应商', this.providerName)
+          this.infoRow('当前模型', this.manualModel.length > 0 ? this.manualModel : '未设置')
 
           Row() {
             Text('会话')
@@ -1399,7 +1411,6 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .layoutWeight(1)
         .padding(12)
         .margin({ top: 10 })
         .backgroundColor('#FFFFFF')
@@ -1423,7 +1434,6 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .layoutWeight(1)
         .padding(12)
         .margin({ top: 10 })
         .backgroundColor('#FFFFFF')
@@ -1437,7 +1447,6 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .layoutWeight(1)
         .padding(12)
         .margin({ top: 10 })
         .backgroundColor('#FFFFFF')
@@ -1445,28 +1454,34 @@ struct Index {
         .borderRadius(18)
       }
 
-      // Settings button
-      Button() {
-        Row() {
-          Text('⚙')
-            .fontSize(14)
-            .fontColor('#64748B')
+    }
+    }
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Auto)
+    .layoutWeight(1)
+    .width('100%')
 
-          Text('Settings')
-            .fontSize(12)
-            .fontColor('#64748B')
-            .margin({ left: 6 })
-        }
+    Button() {
+      Row() {
+        Text('⚙')
+          .fontSize(14)
+          .fontColor('#64748B')
+
+        Text('Settings')
+          .fontSize(12)
+          .fontColor('#64748B')
+          .margin({ left: 6 })
       }
-      .height(38)
-      .width('100%')
-      .margin({ top: 8 })
-      .backgroundColor('#FFFFFF')
-      .borderRadius(16)
-      .border({ width: 1, color: '#E2E8F0' })
-      .onClick(() => {
-        router.pushUrl({ url: 'pages/SettingsPage' });
-      })
+    }
+    .height(38)
+    .width('100%')
+    .margin({ top: 8 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(16)
+    .border({ width: 1, color: '#E2E8F0' })
+    .onClick(() => {
+      router.pushUrl({ url: 'pages/SettingsPage' });
+    })
     }
     .height('100%')
     .width(this.leftPanelWidth)

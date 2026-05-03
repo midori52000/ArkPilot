@@ -272,6 +272,14 @@ export class ConfigManagerFacade {
     }
   }
 
+  exportProvidersMasked(): ConfigActionResult<string> {
+    try {
+      return configSuccess<string>(apiManagementService.exportProvidersMasked());
+    } catch (err) {
+      return this.configFailureFromError<string>(err as Object, 'EXPORT_PROVIDER_FAILED', '导出 Provider 失败。');
+    }
+  }
+
   importProviders(json: string): ConfigActionResult<number> {
     try {
       const count = apiManagementService.importProviders(json);

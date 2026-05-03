@@ -1,7 +1,7 @@
 import router from '@ohos.router';
 import { McpServerRecord, SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat } from '../backend/ConsoleModels';
 import { codexBackend } from '../backend/CodexBackend';
-import { BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
+import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult } from '../apim/ApiTypes';
 import { apiManagementVM } from '../apim/ApiManagementViewModel';
 import { InstalledSkill, SkillRepo, SkillBackupEntry } from '../skills/SkillTypes';
 import { skillsVM } from '../skills/SkillsViewModel';
@@ -86,13 +86,13 @@ class ApiPresetMockItem {
 @Component
 struct SettingsPage {
   private readonly navItems: SettingsNavItem[] = [
-    new SettingsNavItem('mcp', 'MCP', '桥接与工具通道', '#0A84FF'),
+    new SettingsNavItem('api', 'API', 'Provider 与模型接入', '#8B5CF6'),
     new SettingsNavItem('skills', 'Skills', '能力包与仓库源', '#14B8A6'),
     new SettingsNavItem('prompts', 'Prompts', '预设指令与工作约束', '#F59E0B'),
-    new SettingsNavItem('api', 'API', 'Provider 与模型接入', '#8B5CF6')
+    new SettingsNavItem('mcp', 'MCP', '桥接与工具通道', '#0A84FF')
   ];
 
-  @State private activeTab: SettingsTab = 'mcp';
+  @State private activeTab: SettingsTab = 'api';
   @State private pressedKey: string = '';
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
@@ -141,6 +141,10 @@ struct SettingsPage {
   @State private selectedApiProviderId: string = '';
   @State private apiEditorExpanded: boolean = false;
   @State private apiPresetCategory: string = 'all';
+  @State private apiSpeedTesting: boolean = false;
+  @State private apiSpeedResults: EndpointSpeedResult[] = [];
+  @State private apiShowSpeedResults: boolean = false;
+  @State private dragTargetName: string = '';
 
   aboutToAppear(): void {
     this.loadMockData();
@@ -153,6 +157,13 @@ struct SettingsPage {
     this.syncSkillsStateFromViewModel();
     this.syncPromptsStateFromViewModel();
     this.loadSettingsFacadeState();
+  }
+
+  onPageShow(): void {
+    apiManagementVM.loadProviders();
+    this.syncApiStateFromViewModel();
+    this.syncSkillsStateFromViewModel();
+    this.syncPromptsStateFromViewModel();
   }
 
   private loadMockData(): void {
@@ -851,6 +862,12 @@ struct SettingsPage {
     return 'P';
   }
 
+  private maskApiKey(key: string): string {
+    const trimmed = key.trim();
+    if (trimmed.length <= 8) return '***';
+    return trimmed.substring(0, 4) + '****' + trimmed.substring(trimmed.length - 4);
+  }
+
   private apiProviderSecondaryText(provider: ProviderRecord): string {
     if (provider.baseUrl.trim().length > 0) {
       return provider.baseUrl;
@@ -890,7 +907,7 @@ struct SettingsPage {
       this.apiBaseUrl = provider.baseUrl;
       this.apiModel = provider.model;
       this.apiWireApi = provider.wireApi;
-      this.apiAuthState = provider.apiKey;
+      this.apiAuthState = this.maskApiKey(provider.apiKey);
       if (provider.endpoints.length > 0) {
         const endpoints: ApiEndpointMockItem[] = [];
         for (let endpointIndex = 0; endpointIndex < provider.endpoints.length; endpointIndex += 1) {
@@ -930,8 +947,13 @@ struct SettingsPage {
   }
 
   private activateApiProvider(providerId: string): void {
+    for (let i = 0; i < this.apiProviders.length; i += 1) {
+      this.apiProviders[i].isActive = this.apiProviders[i].id === providerId;
+    }
+    this.apiProviders = [...this.apiProviders];
+
     apiManagementVM.activateProvider(providerId);
-    this.syncApiStateFromViewModel();
+
     if (apiManagementVM.state.errorText.trim().length > 0) {
       this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
@@ -940,9 +962,14 @@ struct SettingsPage {
   }
 
   private removeApiProvider(providerId: string): void {
-    apiManagementVM.deleteProvider(providerId);
-    this.syncApiStateFromViewModel();
+    this.apiProviders = this.apiProviders.filter((p: ProviderRecord) => p.id !== providerId);
+    if (this.selectedApiProviderId === providerId) {
+      this.selectedApiProviderId = this.apiProviders.length > 0 ? this.apiProviders[0].id : '';
+    }
     this.apiEditorExpanded = false;
+
+    apiManagementVM.deleteProvider(providerId);
+
     if (apiManagementVM.state.errorText.trim().length > 0) {
       this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
@@ -1052,6 +1079,107 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.triggerFeedback(this.describeRuntimeError(err), 'error');
       });
+  }
+
+  private runApiSpeedTest(provider: ProviderRecord): void {
+    this.apiSpeedTesting = true;
+    this.apiSpeedResults = [];
+    this.apiShowSpeedResults = true;
+    this.selectedApiProviderId = provider.id;
+    apiManagementVM.testSpeed(provider, false)
+      .then(() => {
+        this.apiSpeedResults = [...apiManagementVM.state.speedResults];
+        this.apiSpeedTesting = false;
+        this.apiProviders = [...apiManagementVM.state.providers];
+        const hasSuccess = this.apiSpeedResults.some((r: EndpointSpeedResult) => r.success);
+        if (hasSuccess) {
+          this.triggerFeedback('端点测速已完成。', 'success');
+          return;
+        }
+        const msg = apiManagementVM.state.errorText.trim().length > 0
+          ? apiManagementVM.state.errorText
+          : '测速未获得可用结果，请检查网络与 API Key。';
+        this.triggerFeedback(msg, 'warning');
+      })
+      .catch((err: Object) => {
+        this.apiSpeedTesting = false;
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
+  }
+
+  @Builder
+  private apiSpeedResultsPanel() {
+    if (this.apiShowSpeedResults && this.apiSpeedResults.length > 0) {
+      Column() {
+        Row() {
+          Text('端点测速结果')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#0F172A')
+          Blank()
+            .layoutWeight(1)
+          if (this.apiSpeedTesting) {
+            Text('测速中...')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(10)
+              .fontColor('#2563EB')
+              .margin({ right: 10 })
+          }
+          Button('关闭')
+            .height(26)
+            .fontSize(10)
+            .fontColor('#64748B')
+            .backgroundColor('#FFFFFF')
+            .borderRadius(8)
+            .border({ width: 1, color: '#E5E7EB' })
+            .onClick(() => { this.apiShowSpeedResults = false; })
+        }
+        .width('100%')
+
+        List({ space: 0 }) {
+          ForEach(this.apiSpeedResults, (r: EndpointSpeedResult) => {
+            ListItem() {
+              Row() {
+                Text(r.endpointUrl)
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#334155')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+                Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(r.success ? '#166534' : '#B91C1C')
+                  .margin({ left: 8, right: 8 })
+                Text(r.success ? 'OK' : 'ERR')
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(9)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(r.success ? '#166534' : '#B91C1C')
+                  .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+                  .backgroundColor(r.success ? '#DCFCE7' : '#FEE2E2')
+                  .borderRadius(8)
+              }
+              .width('100%')
+              .padding({ top: 6, bottom: 6 })
+            }
+          }, (r: EndpointSpeedResult) => r.endpointUrl)
+        }
+        .width('100%')
+        .margin({ top: 6 })
+        .height(140)
+        .scrollBar(BarState.Off)
+      }
+      .width('100%')
+      .padding(14)
+      .backgroundColor('#FFFFFF')
+      .border({ width: 1, color: '#E2EAF3' })
+      .borderRadius(18)
+      .margin({ top: 12 })
+    }
   }
 
   @Builder
@@ -1380,20 +1508,7 @@ struct SettingsPage {
             .margin({ top: 6 })
         }
         .alignItems(HorizontalAlign.Start)
-
-        Blank()
-          .layoutWeight(1)
-
-        this.heroSummaryCard()
       }
-
-      Row() {
-        this.summaryCard('Visual parity', '1:1 贴近设计稿', '#0A84FF', '#EAF3FF')
-        this.summaryCard('Action feedback', '按压缩放 + 轻粒子', '#14B8A6', '#ECFDF5')
-        this.summaryCard('Backend mode', '统一 mock façade', '#F59E0B', '#FFFBEB')
-      }
-      .width('100%')
-      .margin({ top: 16 })
     }
     .width('100%')
   }
@@ -1869,7 +1984,7 @@ struct SettingsPage {
         .border({ width: 1, color: skill.enabled ? '#D8EEE7' : '#E7ECF3' })
         .borderRadius(0)
         .margin({ top: 0 })
-      }, (skill: InstalledSkill) => skill.id)
+      }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
     }
     .width('100%')
     .backgroundColor('#FFFFFF')
@@ -2045,7 +2160,7 @@ struct SettingsPage {
           Column() {
             ForEach(this.prompts, (prompt: PromptRecord) => {
               this.promptCard(prompt)
-            }, (prompt: PromptRecord) => prompt.id)
+            }, (prompt: PromptRecord) => `${prompt.id}-${prompt.enabled}`)
           }
           .width('100%')
           .margin({ top: 12 })
@@ -2354,7 +2469,7 @@ struct SettingsPage {
             this.syncApiDraftFromProvider(provider.id);
             this.validateApiDraft();
           })
-          this.apiProviderActionButton('测速', `api-speed-${provider.id}`, false, () => { this.notePending('Provider 测速'); })
+          this.apiProviderActionButton('测速', `api-speed-${provider.id}`, false, () => { this.runApiSpeedTest(provider); })
           this.apiProviderActionButton('删除', `api-delete-${provider.id}`, true, () => { this.removeApiProvider(provider.id); })
         }
         .margin({ left: 12 })
@@ -2366,11 +2481,25 @@ struct SettingsPage {
     .backgroundColor(this.apiProviderCardBackground(provider))
     .border({ width: this.apiProviderEmphasized(provider) ? 2 : 1, color: this.apiProviderCardBorder(provider) })
     .borderRadius(20)
-    .margin({ bottom: 12 })
-    .scale({ x: this.pressScale(`api-card-${provider.id}`), y: this.pressScale(`api-card-${provider.id}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(`api-card-${provider.id}`, event); })
     .onClick(() => { this.selectApiProvider(provider.id); })
+  }
+
+  @Builder
+  private apiDragPreviewBuilder() {
+    Row() {
+      Text(this.dragTargetName.length > 0 ? this.dragTargetName : '未命名')
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#0F172A')
+    }
+    .width(260)
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .backgroundColor('#FFFFFF')
+    .border({ width: 2, color: '#2E8BFF' })
+    .borderRadius(16)
+    .opacity(0.92)
+    .shadow({ radius: 16, color: '#1E3A5F33', offsetX: 0, offsetY: 8 })
   }
 
   @Builder
@@ -2383,7 +2512,7 @@ struct SettingsPage {
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
-          Text('保持默认信息简洁，把高频操作收敛到激活态卡片右侧。')
+          Text('长按卡片拖动可调整顺序。')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#64748B')
@@ -2398,24 +2527,43 @@ struct SettingsPage {
       }
       .width('100%')
 
-      Column() {
-        ForEach(this.apiProviders, (provider: ProviderRecord) => {
-          this.apiProviderCard(provider)
-        }, (provider: ProviderRecord) => provider.id)
+      List({ space: 12 }) {
+        ForEach(this.apiProviders, (provider: ProviderRecord, index: number) => {
+          ListItem() {
+            Column() {
+              this.apiProviderCard(provider)
+              if (this.apiEditorExpanded && this.selectedApiProviderId === provider.id) {
+                this.apiEditorPanel()
+              }
+            }
+            .width('100%')
+          }
+        }, (provider: ProviderRecord) => `${provider.id}-${provider.isActive}`)
       }
       .width('100%')
+      .constraintSize({ minHeight: 300 })
+      .onItemDragStart((event: ItemDragInfo, itemIndex: number): CustomBuilder => {
+        this.dragTargetName = this.apiProviders[itemIndex].name;
+        return this.apiDragPreviewBuilder;
+      })
+      .onItemDrop((event: ItemDragInfo, itemIndex: number, insertIndex: number, isSuccess: boolean) => {
+        if (isSuccess && insertIndex !== itemIndex) {
+          const moved = this.apiProviders.splice(itemIndex, 1)[0];
+          const targetIndex = insertIndex > itemIndex ? insertIndex - 1 : insertIndex;
+          this.apiProviders.splice(targetIndex, 0, moved);
+          this.apiProviders = [...this.apiProviders];
+        }
+      })
       .margin({ top: 14 })
 
-      if (this.apiEditorExpanded && this.selectedApiProvider() !== null) {
-        this.apiEditorPanel()
-      } else {
+      if (!this.apiEditorExpanded || this.selectedApiProvider() === null) {
         Column() {
           Text('编辑器处于折叠状态')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
-          Text('点卡片右侧“编辑”，在当前面板下方展开前端草稿编辑区。')
+          Text('点卡片右侧”编辑”，在当前面板下方展开前端草稿编辑区。')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#64748B')
@@ -2683,13 +2831,6 @@ struct SettingsPage {
   @Builder
   private apiPanel() {
     Column() {
-      Row() {
-        this.summaryCard('Provider', this.apiProviderName.length > 0 ? this.apiProviderName : '未选择', '#8B5CF6', '#F5F3FF')
-        this.summaryCard('Model', this.apiModel.length > 0 ? this.apiModel : '未设置', '#0A84FF', '#EAF3FF')
-        this.summaryCard('Wire API', this.apiWireApiLabel(this.apiWireApi), '#14B8A6', '#ECFDF5')
-      }
-      .width('100%')
-
       Column() {
         Row() {
           Column() {
@@ -2737,6 +2878,7 @@ struct SettingsPage {
           this.apiPresetsPanel()
         } else {
           this.apiProvidersPanel()
+          this.apiSpeedResultsPanel()
         }
       }
       .width('100%')

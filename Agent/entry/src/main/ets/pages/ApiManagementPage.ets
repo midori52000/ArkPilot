@@ -1,5 +1,5 @@
 import { apiManagementVM, ApiManagementState } from '../apim/ApiManagementViewModel';
-import { ProviderRecord, ProviderPreset, EndpointSpeedResult, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
+import { ProviderRecord, ProviderPreset, EndpointSpeedResult, BUILTIN_PROVIDER_PRESETS, ApiWireFormat, ProviderCategory } from '../apim/ApiTypes';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -30,15 +30,49 @@ export struct ApiManagementPage {
   @State private showImportDialog: boolean = false;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
-  @State private pressedKey: string = '';
   @State private sparkSeed: number = 0;
   @State private selectedProviderId: string = '';
+  // Editor fields — isolated from full-page re-renders via local @State
+  @State private editorName: string = '';
+  @State private editorBaseUrl: string = '';
+  @State private editorApiKey: string = '';
+  @State private editorModel: string = '';
+  @State private editorDescription: string = '';
+  @State private editorWebsiteUrl: string = '';
+  @State private editorWireApi: ApiWireFormat = 'responses';
+  @State private editorCategory: ProviderCategory = 'custom';
+  @State private editorIdForEdit: string = '';
 
   aboutToAppear(): void {
     apiManagementVM.loadProviders();
     if (this.vm.providers.length > 0 && this.selectedProviderId.length === 0) {
       this.selectedProviderId = this.vm.providers[0].id;
     }
+  }
+
+  private syncEditorFromProvider(provider: ProviderRecord): void {
+    this.editorName = provider.name;
+    this.editorBaseUrl = provider.baseUrl;
+    this.editorApiKey = provider.apiKey;
+    this.editorModel = provider.model;
+    this.editorDescription = provider.description;
+    this.editorWebsiteUrl = provider.websiteUrl;
+    this.editorWireApi = provider.wireApi;
+    this.editorCategory = provider.category;
+    this.editorIdForEdit = provider.id;
+  }
+
+  private syncEditorToProvider(): void {
+    const editing = this.vm.editingProvider;
+    if (editing === null) return;
+    editing.name = this.editorName;
+    editing.baseUrl = this.editorBaseUrl;
+    editing.apiKey = this.editorApiKey;
+    editing.model = this.editorModel;
+    editing.description = this.editorDescription;
+    editing.websiteUrl = this.editorWebsiteUrl;
+    editing.wireApi = this.editorWireApi;
+    editing.category = this.editorCategory;
   }
 
   private categoryLabel(category: string): string {
@@ -182,18 +216,33 @@ export struct ApiManagementPage {
     this.triggerFeedback(`${action}暂未接入后端，当前仅前端模拟。`, 'warning');
   }
 
-  private updatePressed(key: string, event: TouchEvent): void {
-    if (event.type === TouchType.Down) {
-      this.pressedKey = key;
-      return;
+  private statusLineText(): string {
+    if (this.vm.validating) {
+      return '正在验证 API Key...';
     }
-    if (this.pressedKey === key) {
-      this.pressedKey = '';
+    if (this.vm.speedTesting) {
+      return '正在进行端点测速...';
     }
+    if (this.vm.discoveringModels) {
+      return '正在获取模型列表...';
+    }
+    if (this.vm.errorText.trim().length > 0) {
+      return this.vm.errorText;
+    }
+    if (this.vm.statusText.trim().length > 0) {
+      return this.vm.statusText;
+    }
+    return '';
   }
 
-  private pressScale(key: string): number {
-    return this.pressedKey === key ? 0.985 : 1;
+  private statusLineColor(): string {
+    if (this.vm.validating || this.vm.speedTesting || this.vm.discoveringModels) {
+      return '#1D4ED8';
+    }
+    if (this.vm.errorText.trim().length > 0) {
+      return '#B91C1C';
+    }
+    return '#334155';
   }
 
   private toneBackground(tone: ToastTone): string {
@@ -249,6 +298,15 @@ export struct ApiManagementPage {
       return provider.description;
     }
     return '未配置官方网址';
+  }
+
+  private activeProviderCount(): number {
+    let count = 0;
+    const providers = this.vm.providers;
+    for (let i = 0; i < providers.length; i++) {
+      if (providers[i].isActive) count++;
+    }
+    return count;
   }
 
   @Builder
@@ -322,12 +380,11 @@ export struct ApiManagementPage {
           (preset: ProviderPreset) => preset.id
         )
       }
-      .layoutWeight(1)
       .width('100%')
       .margin({ top: 8 })
       .scrollBar(BarState.Off)
+      .constraintSize({ minHeight: 200 })
     }
-    .height('100%')
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
@@ -397,8 +454,7 @@ export struct ApiManagementPage {
           .fontColor('#FFFFFF')
           .borderRadius(12)
           .onClick(() => {
-            this.vm.selectedPresetId = preset.id;
-            this.vm.showAddFromPreset = true;
+            router.pushUrl({ url: 'pages/AddProviderPage' });
           })
       }
       .width('100%')
@@ -442,7 +498,7 @@ export struct ApiManagementPage {
           .fontColor('#FFFFFF')
           .borderRadius(12)
           .onClick(() => {
-            apiManagementVM.startNewFromPreset();
+            router.pushUrl({ url: 'pages/AddProviderPage' });
           })
 
         Button('自定义')
@@ -454,9 +510,7 @@ export struct ApiManagementPage {
           .borderRadius(12)
           .border({ width: 1, color: '#CBD5E1' })
           .onClick(() => {
-            this.selectedProviderId = '';
-            apiManagementVM.startEditing(null);
-            this.editorExpanded = true;
+            router.pushUrl({ url: 'pages/AddProviderPage' });
           })
 
         Button('导出')
@@ -468,8 +522,9 @@ export struct ApiManagementPage {
           .borderRadius(12)
           .border({ width: 1, color: '#CBD5E1' })
           .onClick(() => {
-            this.exportJson = apiManagementVM.exportProviders();
+            this.exportJson = apiManagementVM.exportProvidersMasked();
             this.showExportDialog = true;
+            this.triggerFeedback('导出功能暂未接入后端，当前仅前端模拟。', 'warning');
           })
 
         Button('导入')
@@ -482,6 +537,7 @@ export struct ApiManagementPage {
           .border({ width: 1, color: '#CBD5E1' })
           .onClick(() => {
             this.showImportDialog = true;
+            this.triggerFeedback('导入功能暂未接入后端，当前仅前端模拟。', 'warning');
           })
       }
       .width('100%')
@@ -508,7 +564,6 @@ export struct ApiManagementPage {
         .backgroundColor('#F8FAFC')
         .border({ width: 1, color: '#E2E8F0' })
         .borderRadius(14)
-        .layoutWeight(1)
       } else {
         List({ space: 0 }) {
           ForEach(this.vm.providers, (provider: ProviderRecord) => {
@@ -517,13 +572,12 @@ export struct ApiManagementPage {
             }
           }, (provider: ProviderRecord) => provider.id)
         }
-        .layoutWeight(1)
         .width('100%')
         .margin({ top: 10 })
         .scrollBar(BarState.Off)
+        .constraintSize({ minHeight: 200 })
       }
     }
-    .height('100%')
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
@@ -569,6 +623,8 @@ export struct ApiManagementPage {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
+          this.chip(this.categoryLabel(provider.category), '#F4F8FF', '#3563C8')
+
           if (provider.isActive) {
             Text('当前')
               .copyOption(CopyOptions.LocalDevice)
@@ -579,25 +635,42 @@ export struct ApiManagementPage {
               .backgroundColor('#EAF2FF')
               .border({ width: 1, color: '#C7DAFF' })
               .borderRadius(999)
-              .margin({ left: 8 })
+              .margin({ left: 4 })
           }
         }
         .width('100%')
+        .alignItems(VerticalAlign.Center)
 
-        Text(this.providerSecondaryText(provider))
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#94A3B8')
-          .margin({ top: 4 })
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (provider.baseUrl.trim().length > 0) {
+          Text(provider.baseUrl)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor('#2563EB')
+            .margin({ top: 4 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        if (provider.description.trim().length > 0) {
+          Text(provider.description)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor('#94A3B8')
+            .margin({ top: 2 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
 
         Row() {
-          this.chip(this.categoryLabel(provider.category), '#F4F8FF', '#3563C8')
+          if (provider.model.trim().length > 0) {
+            this.chip(provider.model, '#F8FAFC', '#64748B')
+          }
           this.chip(this.wireApiLabel(provider.wireApi), '#F8FAFC', '#64748B')
-          this.chip(provider.healthStatus, this.healthBg(provider.healthStatus), this.healthColor(provider.healthStatus))
+          if (provider.healthStatus !== 'unknown') {
+            this.chip(provider.healthStatus, this.healthBg(provider.healthStatus), this.healthColor(provider.healthStatus))
+          }
         }
-        .margin({ top: 8 })
+        .margin({ top: 6 })
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
@@ -613,9 +686,6 @@ export struct ApiManagementPage {
             .fontColor(provider.isActive ? '#FFFFFF' : '#2E6EEB')
             .borderRadius(12)
             .border({ width: provider.isActive ? 0 : 1, color: '#BFD3F7' })
-            .scale({ x: this.pressScale(`activate-${provider.id}`), y: this.pressScale(`activate-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`activate-${provider.id}`, event); })
             .onClick(() => {
               this.selectedProviderId = provider.id;
               if (!provider.isActive) {
@@ -635,12 +705,13 @@ export struct ApiManagementPage {
             .borderRadius(10)
             .border({ width: 1, color: '#D9E2EE' })
             .padding({ left: 12, right: 12 })
-            .scale({ x: this.pressScale(`edit-${provider.id}`), y: this.pressScale(`edit-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`edit-${provider.id}`, event); })
             .onClick(() => {
               this.selectedProviderId = provider.id;
               apiManagementVM.startEditing(provider);
+              const editing = this.vm.editingProvider;
+              if (editing !== null) {
+                this.syncEditorFromProvider(editing);
+              }
               this.editorExpanded = true;
               this.activeSubTab = 'providers';
               this.triggerFeedback(`正在编辑 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
@@ -655,9 +726,6 @@ export struct ApiManagementPage {
             .borderRadius(10)
             .border({ width: 1, color: '#D9E2EE' })
             .padding({ left: 12, right: 12 })
-            .scale({ x: this.pressScale(`copy-${provider.id}`), y: this.pressScale(`copy-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`copy-${provider.id}`, event); })
             .onClick(() => {
               this.selectedProviderId = provider.id;
               this.notePending('复制 Provider');
@@ -672,9 +740,6 @@ export struct ApiManagementPage {
             .borderRadius(10)
             .border({ width: 1, color: '#D9E2EE' })
             .padding({ left: 12, right: 12 })
-            .scale({ x: this.pressScale(`validate-${provider.id}`), y: this.pressScale(`validate-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`validate-${provider.id}`, event); })
             .onClick(() => {
               this.runValidateProvider(provider);
             })
@@ -688,9 +753,6 @@ export struct ApiManagementPage {
             .borderRadius(10)
             .border({ width: 1, color: '#D9E2EE' })
             .padding({ left: 12, right: 12 })
-            .scale({ x: this.pressScale(`models-${provider.id}`), y: this.pressScale(`models-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`models-${provider.id}`, event); })
             .onClick(() => {
               this.runDiscoverModels(provider);
             })
@@ -705,9 +767,6 @@ export struct ApiManagementPage {
             .borderRadius(10)
             .border({ width: 1, color: '#D9E2EE' })
             .padding({ left: 12, right: 12 })
-            .scale({ x: this.pressScale(`speed-${provider.id}`), y: this.pressScale(`speed-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`speed-${provider.id}`, event); })
             .onClick(() => {
               this.runTestSpeed(provider);
             })
@@ -721,9 +780,6 @@ export struct ApiManagementPage {
             .borderRadius(10)
             .border({ width: 1, color: '#F4C9C9' })
             .padding({ left: 12, right: 12 })
-            .scale({ x: this.pressScale(`delete-${provider.id}`), y: this.pressScale(`delete-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`delete-${provider.id}`, event); })
             .onClick(() => {
               this.selectedProviderId = provider.id;
               apiManagementVM.deleteProvider(provider.id);
@@ -740,9 +796,6 @@ export struct ApiManagementPage {
     .border({ width: emphasized ? 2 : 1, color: this.providerCardBorder(provider) })
     .borderRadius(20)
     .margin({ bottom: 12 })
-    .scale({ x: this.pressScale(`card-${provider.id}`), y: this.pressScale(`card-${provider.id}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(`card-${provider.id}`, event); })
     .onClick(() => { this.selectedProviderId = provider.id; })
   }
 
@@ -757,66 +810,67 @@ export struct ApiManagementPage {
           '修改后点击保存'
         )
 
-        TextInput({ text: this.vm.editingProvider.name, placeholder: 'Provider 名称' })
+        TextInput({ text: this.editorName, placeholder: 'Provider 名称' })
           .width('100%').height(36).margin({ top: 8 }).fontSize(11)
           .backgroundColor('#FFFFFF').borderRadius(10)
           .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.name = value; } })
+          .onChange((value: string) => { this.editorName = value; })
 
-        TextInput({ text: this.vm.editingProvider.baseUrl, placeholder: 'https://api.openai.com/v1' })
+        TextInput({ text: this.editorBaseUrl, placeholder: 'https://api.openai.com/v1' })
           .width('100%').height(36).margin({ top: 8 }).fontSize(11)
           .backgroundColor('#FFFFFF').borderRadius(10)
           .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.baseUrl = value; } })
+          .onChange((value: string) => { this.editorBaseUrl = value; })
 
-        TextInput({ text: this.vm.editingProvider.apiKey, placeholder: 'sk-...' })
+        TextInput({ text: this.editorApiKey, placeholder: 'sk-...' })
           .width('100%').height(36).margin({ top: 8 }).fontSize(11)
           .backgroundColor('#FFFFFF').borderRadius(10)
           .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.apiKey = value; } })
+          .onChange((value: string) => { this.editorApiKey = value; })
 
-        TextInput({ text: this.vm.editingProvider.model, placeholder: '模型 ID（如 gpt-5.1）' })
+        TextInput({ text: this.editorModel, placeholder: '模型 ID（如 gpt-5.1）' })
           .width('100%').height(36).margin({ top: 8 }).fontSize(11)
           .backgroundColor('#FFFFFF').borderRadius(10)
           .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.model = value; } })
+          .onChange((value: string) => { this.editorModel = value; })
 
         Text('API 格式')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10).fontColor('#64748B').margin({ top: 10 })
         Row() {
-          this.optionChip('Responses', this.vm.editingProvider.wireApi === 'responses', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.wireApi = 'responses'; } })
-          this.optionChip('Chat', this.vm.editingProvider.wireApi === 'chat', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.wireApi = 'chat'; } })
-          this.optionChip('Anthropic', this.vm.editingProvider.wireApi === 'anthropic', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.wireApi = 'anthropic'; } })
+          this.optionChip('Responses', this.editorWireApi === 'responses', () => { this.editorWireApi = 'responses'; })
+          this.optionChip('Chat', this.editorWireApi === 'chat', () => { this.editorWireApi = 'chat'; })
+          this.optionChip('Anthropic', this.editorWireApi === 'anthropic', () => { this.editorWireApi = 'anthropic'; })
         }
 
         Text('分类')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10).fontColor('#64748B').margin({ top: 8 })
         Row() {
-          this.optionChip('官方', this.vm.editingProvider.category === 'official', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.category = 'official'; } })
-          this.optionChip('第三方', this.vm.editingProvider.category === 'third_party', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.category = 'third_party'; } })
-          this.optionChip('聚合', this.vm.editingProvider.category === 'aggregator', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.category = 'aggregator'; } })
-          this.optionChip('自定义', this.vm.editingProvider.category === 'custom', () => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.category = 'custom'; } })
+          this.optionChip('官方', this.editorCategory === 'official', () => { this.editorCategory = 'official'; })
+          this.optionChip('第三方', this.editorCategory === 'third_party', () => { this.editorCategory = 'third_party'; })
+          this.optionChip('聚合', this.editorCategory === 'aggregator', () => { this.editorCategory = 'aggregator'; })
+          this.optionChip('自定义', this.editorCategory === 'custom', () => { this.editorCategory = 'custom'; })
         }
 
-        TextInput({ text: this.vm.editingProvider.description, placeholder: '描述/备注' })
+        TextInput({ text: this.editorDescription, placeholder: '描述/备注' })
           .width('100%').height(36).margin({ top: 8 }).fontSize(11)
           .backgroundColor('#FFFFFF').borderRadius(10)
           .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.description = value; } })
+          .onChange((value: string) => { this.editorDescription = value; })
 
-        TextInput({ text: this.vm.editingProvider.websiteUrl, placeholder: '获取 API Key 的网址' })
+        TextInput({ text: this.editorWebsiteUrl, placeholder: '获取 API Key 的网址' })
           .width('100%').height(36).margin({ top: 8 }).fontSize(11)
           .backgroundColor('#FFFFFF').borderRadius(10)
           .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { if (this.vm.editingProvider !== null) { this.vm.editingProvider.websiteUrl = value; } })
+          .onChange((value: string) => { this.editorWebsiteUrl = value; })
 
         Row() {
           Button('保存')
             .height(32).fontSize(11)
             .backgroundColor('#111827').fontColor('#FFFFFF').borderRadius(12)
             .onClick(() => {
+              this.syncEditorToProvider();
               apiManagementVM.saveEditing();
               if (this.showVmFeedback('Provider 已保存')) {
                 this.editorExpanded = false;
@@ -899,7 +953,7 @@ export struct ApiManagementPage {
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E2E8F0' })
       .borderRadius(16)
-      .margin({ top: 8 })
+      .position({ x: 24, y: 160 })
     }
   }
 
@@ -939,7 +993,7 @@ export struct ApiManagementPage {
       .backgroundColor(this.vm.validationResult.success ? '#F0FDF4' : '#FEF2F2')
       .border({ width: 1, color: this.vm.validationResult.success ? '#BBF7D0' : '#FECACA' })
       .borderRadius(14)
-      .margin({ top: 8 })
+      .position({ x: 24, y: 320 })
     }
   }
 
@@ -990,7 +1044,7 @@ export struct ApiManagementPage {
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E5E7EB' })
       .borderRadius(14)
-      .margin({ top: 8 })
+      .position({ x: 24, y: 420 })
     }
   }
 
@@ -1031,7 +1085,7 @@ export struct ApiManagementPage {
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E5E7EB' })
       .borderRadius(14)
-      .margin({ top: 8 })
+      .position({ x: 24, y: 520 })
     }
   }
 
@@ -1073,7 +1127,7 @@ export struct ApiManagementPage {
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E5E7EB' })
       .borderRadius(14)
-      .margin({ top: 8 })
+      .position({ x: 24, y: 620 })
     }
   }
 
@@ -1140,6 +1194,7 @@ export struct ApiManagementPage {
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E2E8F0' })
       .borderRadius(16)
+      .position({ x: 24, y: 240 })
     }
   }
 
@@ -1195,51 +1250,23 @@ export struct ApiManagementPage {
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E2E8F0' })
       .borderRadius(16)
+      .position({ x: 24, y: 360 })
     }
   }
 
   build() {
     Stack() {
       Column() {
-        if (this.vm.statusText.trim().length > 0) {
-          Text(this.vm.statusText)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11).fontColor('#334155').lineHeight(18).margin({ top: 4, bottom: 4 })
-        }
-        if (this.vm.errorText.trim().length > 0) {
-          Text(this.vm.errorText)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11).fontColor('#B91C1C').lineHeight(18).margin({ top: 4, bottom: 4 })
-        }
-
-        if (this.vm.validating) {
-          Text('正在验证 API Key...')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
-        }
-        if (this.vm.speedTesting) {
-          Text('正在进行端点测速...')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
-        }
-        if (this.vm.discoveringModels) {
-          Text('正在获取模型列表...')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11).fontColor('#1D4ED8').margin({ bottom: 4 })
-        }
-
-        this.addPresetDialog()
-        this.validationResultPanel()
-        this.speedResultsPanel()
-        this.discoveredModelsPanel()
-        this.usageResultPanel()
-        this.exportDialog()
-        this.importDialog()
-
         Row() {
-          this.subTabChip('Provider 列表', 'providers')
-          this.subTabChip('预设库', 'presets')
-          Blank().layoutWeight(1)
+          Text(this.statusLineText())
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor(this.statusLineColor())
+            .lineHeight(18)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+
           Row() {
             ForEach([0, 1, 2, 3, 4], (index: number) => {
               Column()
@@ -1253,30 +1280,87 @@ export struct ApiManagementPage {
                 .animation({ duration: 220, curve: Curve.EaseOut })
             })
           }
-          .margin({ right: 4 })
         }
         .width('100%')
-        .margin({ top: 8, bottom: 6 })
+        .height(28)
+        .padding({ left: 4, right: 4 })
+        .alignItems(VerticalAlign.Center)
 
-        if (this.activeSubTab === 'presets') {
-          this.presetsPanel()
-        } else {
+        Row() {
+          this.subTabChip('Provider 列表', 'providers')
+          this.subTabChip('预设库', 'presets')
+          Blank().layoutWeight(1)
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4, top: 6, bottom: 6 })
+
+        Scroll() {
           Column() {
-            this.providersPanel()
-            if (this.editorExpanded) {
+            if (this.activeSubTab === 'presets') {
+              this.presetsPanel()
+            } else {
               Column() {
-                this.editorPanel()
+                this.providersPanel()
+                if (this.editorExpanded) {
+                  Column() {
+                    this.editorPanel()
+                  }
+                  .margin({ top: 10 })
+                }
               }
-              .margin({ top: 10 })
+              .width('100%')
             }
           }
           .width('100%')
-          .height('100%')
+          .alignItems(HorizontalAlign.Start)
         }
+        .layoutWeight(1)
+        .width('100%')
+        .scrollBar(BarState.Auto)
+        .scrollable(ScrollDirection.Vertical)
+
+        // Bottom status bar — pinned
+        Row() {
+          Text(`${this.vm.providers.length} 个配置 · ${this.activeProviderCount()} 个已启用`)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor('#64748B')
+
+          Blank().layoutWeight(1)
+
+          Button('新增 Provider')
+            .height(30)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .backgroundColor('#2E8BFF')
+            .fontColor('#FFFFFF')
+            .borderRadius(12)
+            .padding({ left: 16, right: 16 })
+            .onClick(() => {
+              router.pushUrl({ url: 'pages/AddProviderPage' });
+            })
+        }
+        .width('100%')
+        .height(44)
+        .padding({ left: 4, right: 4 })
+        .alignItems(VerticalAlign.Center)
+        .border({ width: { top: 1 }, color: '#E5E7EB' })
       }
       .width('100%')
       .height('100%')
       .alignItems(HorizontalAlign.Start)
+
+      Column() {
+        this.addPresetDialog()
+        this.validationResultPanel()
+        this.speedResultsPanel()
+        this.discoveredModelsPanel()
+        this.usageResultPanel()
+        this.exportDialog()
+        this.importDialog()
+      }
+      .width('100%')
+      .height('100%')
 
       this.toastHost()
     }

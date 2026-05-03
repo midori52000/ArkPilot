@@ -1,13 +1,14 @@
 import { http } from '@kit.NetworkKit';
 import {
-  getEmbeddedCodexProviderCatalog,
-  saveEmbeddedCodexProviderCatalog,
   saveEmbeddedCodexProviderConfig,
   CodexProviderConfig
 } from '../backend/CodexNative';
 import {
-  ProviderRecord, EndpointEntry, CustomHeadersEntry, ProviderCatalog
+  AiAppType, ProviderMode, ProviderSyncStatus, ApiWireFormat,
+  ProviderRecord, EndpointEntry, CustomHeadersEntry, ProviderCatalog,
+  ProviderDefinition
 } from '../backend/ConsoleModels';
+import { providerConfigStore } from '../backend/ProviderConfigStore';
 import {
   ProviderPreset, BUILTIN_PROVIDER_PRESETS, findPresetById,
   ApiValidationResult, EndpointSpeedResult, UsageQueryResult,
@@ -131,17 +132,58 @@ function cleanBaseUrl(url: string): string {
   return result;
 }
 
+// ── config store helpers ──
+
+function loadProvidersFromStore(): ProviderRecord[] {
+  const defs: ProviderDefinition[] = providerConfigStore.loadDefinitions();
+  const creds: Map<string, string> = providerConfigStore.loadCredentials();
+  const providers: ProviderRecord[] = [];
+  for (let i = 0; i < defs.length; i++) {
+    const def: ProviderDefinition = defs[i];
+    const apiKey: string = creds.get(def.id) ?? '';
+    providers.push(new ProviderRecord(
+      def.id, def.name, def.appType as AiAppType, def.mode as ProviderMode,
+      def.baseUrl, apiKey, def.model,
+      def.isActive, def.syncStatus as ProviderSyncStatus, def.updatedAt,
+      'apiKey', [], def.wireApi as ApiWireFormat,
+      'custom', '', '', '', '',
+      [], 'unknown', 0, 0, null, Date.now()
+    ));
+  }
+  return providers;
+}
+
+function saveProvidersToStore(providers: ProviderRecord[]): void {
+  const defs: ProviderDefinition[] = [];
+  const creds: Map<string, string> = new Map();
+  for (let i = 0; i < providers.length; i++) {
+    const rec: ProviderRecord = providers[i];
+    defs.push(new ProviderDefinition(
+      rec.id, rec.name, rec.baseUrl, rec.model,
+      rec.wireApi, rec.isActive, rec.appType, rec.mode,
+      rec.syncStatus, rec.updatedAt
+    ));
+    creds.set(rec.id, rec.apiKey);
+  }
+  let activeId: string = '';
+  for (let i = 0; i < providers.length; i++) {
+    if (providers[i].isActive) {
+      activeId = providers[i].id;
+      break;
+    }
+  }
+  providerConfigStore.saveDefinitions(defs, activeId);
+  providerConfigStore.saveCredentials(creds);
+  providerConfigStore.syncToNativeCatalog(defs, creds);
+}
+
 export class ApiManagementService {
   getProviders(): ProviderRecord[] {
-    const catalog: ProviderCatalog = getEmbeddedCodexProviderCatalog();
-    return catalog.providers;
+    return loadProvidersFromStore();
   }
 
   private saveProviders(providers: ProviderRecord[]): void {
-    const activeFound = findActiveId(providers);
-    const activeId = activeFound !== '' ? activeFound : '';
-    const catalog = new ProviderCatalog(2, activeId, providers, currentTimestamp());
-    saveEmbeddedCodexProviderCatalog(catalog);
+    saveProvidersToStore(providers);
   }
 
   createFromPreset(presetId: string, apiKey: string): ProviderRecord {
@@ -609,6 +651,29 @@ export class ApiManagementService {
     exportDoc.version = 1;
     exportDoc.exportedAt = new Date().toISOString();
     exportDoc.providers = providers;
+    return JSON.stringify(exportDoc, null, 2);
+  }
+
+  exportProvidersMasked(): string {
+    const providers = this.getProviders();
+    const masked: ProviderRecord[] = [];
+    for (let i = 0; i < providers.length; i++) {
+      const rec: ProviderRecord = providers[i];
+      masked.push(new ProviderRecord(
+        rec.id, rec.name, rec.appType, rec.mode,
+        rec.baseUrl, '***', rec.model,
+        rec.isActive, rec.syncStatus, rec.updatedAt,
+        rec.authMode, rec.copyHeaders(), rec.wireApi,
+        rec.category, rec.description, rec.websiteUrl,
+        rec.icon, rec.iconColor, rec.endpoints,
+        rec.healthStatus, rec.healthLatencyMs, rec.lastValidatedAt,
+        rec.usageScript, rec.createdAt
+      ));
+    }
+    const exportDoc: ProviderExportDoc = new ProviderExportDoc();
+    exportDoc.version = 1;
+    exportDoc.exportedAt = new Date().toISOString();
+    exportDoc.providers = masked;
     return JSON.stringify(exportDoc, null, 2);
   }
 

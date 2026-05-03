@@ -5,7 +5,11 @@ import {
   saveEmbeddedCodexProviderCatalog,
   saveEmbeddedCodexProviderConfig
 } from './CodexNative';
-import { ProviderCatalog, ProviderRecord, EndpointEntry, CustomHeadersEntry } from './ConsoleModels';
+import {
+  AiAppType, ProviderMode, ProviderSyncStatus, ApiWireFormat,
+  ProviderCatalog, ProviderRecord, ProviderDefinition, EndpointEntry, CustomHeadersEntry
+} from './ConsoleModels';
+import { providerConfigStore } from './ProviderConfigStore';
 
 function currentTimestamp(): string {
   const now: Date = new Date();
@@ -82,26 +86,63 @@ function buildRecordFromConfig(id: string, name: string, config: CodexProviderCo
   );
 }
 
+function defsAndCredsToCatalog(
+  defs: ProviderDefinition[],
+  creds: Map<string, string>,
+  activeId: string
+): ProviderCatalog {
+  const providers: ProviderRecord[] = [];
+  for (let i = 0; i < defs.length; i++) {
+    const def: ProviderDefinition = defs[i];
+    const apiKey: string = creds.get(def.id) ?? '';
+    providers.push(new ProviderRecord(
+      def.id, def.name, def.appType as AiAppType, def.mode as ProviderMode,
+      def.baseUrl, apiKey, def.model,
+      def.isActive, def.syncStatus as ProviderSyncStatus, def.updatedAt,
+      'apiKey', emptyHeaders(), def.wireApi as ApiWireFormat,
+      'custom', '', '', '', '',
+      emptyEndpoints(), 'unknown', 0, 0, null, Date.now()
+    ));
+  }
+  return new ProviderCatalog(2, activeId, providers, currentTimestamp());
+}
+
 export class ProviderCatalogService {
   private catalog: ProviderCatalog = new ProviderCatalog(1, '', [], currentTimestamp());
 
   load(): ProviderCatalog {
-    const catalog: ProviderCatalog = getEmbeddedCodexProviderCatalog();
-    this.catalog = this.ensureUsableCatalog(catalog);
+    if (providerConfigStore.hasExistingConfig()) {
+      const defs: ProviderDefinition[] = providerConfigStore.loadDefinitions();
+      const creds: Map<string, string> = providerConfigStore.loadCredentials();
+      let activeId: string = providerConfigStore.loadActiveId();
+      if (activeId.length === 0 && defs.length > 0) {
+        activeId = defs[0].id;
+      }
+      this.catalog = defsAndCredsToCatalog(defs, creds, activeId);
+    } else {
+      const catalog: ProviderCatalog = getEmbeddedCodexProviderCatalog();
+      this.catalog = this.ensureUsableCatalog(catalog);
+      providerConfigStore.migrateFromCatalog(this.catalog);
+    }
     return cloneCatalog(this.catalog);
   }
 
   importCurrentProvider(): ProviderCatalog {
+    console.info('[ProviderCatalogService] importCurrentProvider: start');
     const catalog: ProviderCatalog = this.load();
+    console.info('[ProviderCatalogService] importCurrentProvider: loaded catalog, providers=' + catalog.providers.length);
     const config: CodexProviderConfig = getEmbeddedCodexProviderConfig();
+    console.info('[ProviderCatalogService] importCurrentProvider: got config baseUrl=' + config.baseUrl + ' model=' + config.model + ' apiKeyLen=' + config.apiKey.length);
     if (catalog.providers.length > 0) {
       const activeProvider: ProviderRecord | null = this.activeProvider();
+      console.info('[ProviderCatalogService] importCurrentProvider: activeProvider=' + (activeProvider !== null ? activeProvider.id : 'null'));
       if (activeProvider !== null) {
         activeProvider.baseUrl = config.baseUrl.trim();
         activeProvider.apiKey = config.apiKey;
         activeProvider.model = config.model.trim();
         activeProvider.syncStatus = 'synced';
         activeProvider.updatedAt = currentTimestamp();
+        console.info('[ProviderCatalogService] importCurrentProvider: calling persistCatalog (update path)');
         return this.persistCatalog();
       }
     }
@@ -114,6 +155,7 @@ export class ProviderCatalogService {
     );
     this.catalog.providers = [imported];
     this.catalog.activeProviderId = imported.id;
+    console.info('[ProviderCatalogService] importCurrentProvider: calling persistCatalog (create path)');
     return this.persistCatalog();
   }
 
@@ -275,9 +317,29 @@ export class ProviderCatalogService {
   }
 
   private persistCatalog(): ProviderCatalog {
+    console.info('[ProviderCatalogService] persistCatalog: start');
     this.catalog.updatedAt = currentTimestamp();
-    const saved: ProviderCatalog = saveEmbeddedCodexProviderCatalog(this.catalog);
-    this.catalog = this.ensureUsableCatalog(saved);
+
+    const defs: ProviderDefinition[] = [];
+    const creds: Map<string, string> = new Map();
+    for (let i = 0; i < this.catalog.providers.length; i++) {
+      const rec: ProviderRecord = this.catalog.providers[i];
+      defs.push(new ProviderDefinition(
+        rec.id, rec.name, rec.baseUrl, rec.model,
+        rec.wireApi, rec.isActive, rec.appType, rec.mode,
+        rec.syncStatus, rec.updatedAt
+      ));
+      creds.set(rec.id, rec.apiKey);
+    }
+    console.info('[ProviderCatalogService] persistCatalog: calling saveDefinitions, defs=' + defs.length);
+    providerConfigStore.saveDefinitions(defs, this.catalog.activeProviderId);
+    console.info('[ProviderCatalogService] persistCatalog: calling saveCredentials');
+    providerConfigStore.saveCredentials(creds);
+    console.info('[ProviderCatalogService] persistCatalog: calling syncToNativeCatalog');
+    providerConfigStore.syncToNativeCatalog(defs, creds);
+    console.info('[ProviderCatalogService] persistCatalog: done');
+
+    this.catalog = this.ensureUsableCatalog(this.catalog);
     return cloneCatalog(this.catalog);
   }
 }

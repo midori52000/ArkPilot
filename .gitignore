@@ -6,7 +6,14 @@
 
 # Local working directories
 /ccmanage/
-/design/
-/CLAUDE.md
 
-# Keep design references versioned; ignore generated exports separately if needed later.
+# Design image assets (large binaries); design.md is tracked via explicit add
+/design/*.png
+/design/*.jpg
+/design/*.jpeg
+
+# Build outputs
+/Agent/entry/build/
+/Agent/.hvigor/
+/Agent/oh_modules/
+/Agent/.preview/

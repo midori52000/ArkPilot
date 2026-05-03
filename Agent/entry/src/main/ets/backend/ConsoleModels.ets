@@ -214,6 +214,64 @@ export class ProviderCatalog {
   }
 }
 
+export class ProviderDefinition {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  wireApi: string;
+  isActive: boolean;
+  appType: string;
+  mode: string;
+  syncStatus: string;
+  updatedAt: string;
+
+  constructor(
+    id: string, name: string, baseUrl: string, model: string,
+    wireApi: string, isActive: boolean, appType: string, mode: string,
+    syncStatus: string, updatedAt: string
+  ) {
+    this.id = id;
+    this.name = name;
+    this.baseUrl = baseUrl;
+    this.model = model;
+    this.wireApi = wireApi;
+    this.isActive = isActive;
+    this.appType = appType;
+    this.mode = mode;
+    this.syncStatus = syncStatus;
+    this.updatedAt = updatedAt;
+  }
+}
+
+export class ModelsCacheEntry {
+  slug: string;
+  displayName: string;
+  description: string;
+  contextWindow: number;
+
+  constructor(slug: string, displayName: string, description: string, contextWindow: number) {
+    this.slug = slug;
+    this.displayName = displayName;
+    this.description = description;
+    this.contextWindow = contextWindow;
+  }
+}
+
+export class ModelsCache {
+  fetchedAt: string;
+  etag: string;
+  providerId: string;
+  models: ModelsCacheEntry[];
+
+  constructor(fetchedAt: string, etag: string, providerId: string, models: ModelsCacheEntry[]) {
+    this.fetchedAt = fetchedAt;
+    this.etag = etag;
+    this.providerId = providerId;
+    this.models = models;
+  }
+}
+
 export class McpServerRecord {
   id: string;
   name: string;

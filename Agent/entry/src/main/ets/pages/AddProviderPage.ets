@@ -1,6 +1,7 @@
 import router from '@ohos.router';
 import { ProviderPreset, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
-import { ApiWireFormat, ProviderCategory } from '../backend/ConsoleModels';
+import { ApiWireFormat, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
+import { configManagerFacade } from '../backend/CodexBackend';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 type AddProviderMode = 'claude' | 'unified';
@@ -20,7 +21,6 @@ class UiToastItem {
 @Entry
 @Component
 struct AddProviderPage {
-  @State private pressedKey: string = '';
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
@@ -68,20 +68,6 @@ struct AddProviderPage {
 
   private notePending(action: string): void {
     this.triggerFeedback(`${action}暂未接入后端，当前仅前端模拟。`, 'warning');
-  }
-
-  private updatePressed(key: string, event: TouchEvent): void {
-    if (event.type === TouchType.Down) {
-      this.pressedKey = key;
-      return;
-    }
-    if (this.pressedKey === key) {
-      this.pressedKey = '';
-    }
-  }
-
-  private pressScale(key: string): number {
-    return this.pressedKey === key ? 0.985 : 1;
   }
 
   private toneBackground(tone: ToastTone): string {
@@ -248,8 +234,57 @@ struct AddProviderPage {
       this.triggerFeedback('请先填写请求地址。', 'error');
       return;
     }
-    this.triggerFeedback('添加草稿已整理完成。', 'success');
-    this.notePending('Provider 添加');
+
+    // 从预设获取 model / icon / category
+    let model = 'gpt-5.1';
+    let icon = '';
+    let iconColor = '#8B5CF6';
+    let category: ProviderCategory = 'custom';
+    if (this.selectedPresetId !== 'custom') {
+      const preset = this.selectedPreset();
+      if (preset !== null) {
+        model = preset.defaultModel;
+        icon = preset.icon;
+        iconColor = preset.iconColor.length > 0 ? preset.iconColor : '#8B5CF6';
+        category = preset.category;
+      }
+    }
+
+    const provider = new ProviderRecord(
+      `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      this.providerName.trim(),
+      'codex',
+      'exclusive',
+      this.baseUrl.trim(),
+      this.apiKey.trim(),
+      model,
+      false,
+      'dirty',
+      '',
+      'apiKey',
+      [],
+      this.wireApi,
+      category,
+      this.providerNote.trim(),
+      this.websiteUrl.trim(),
+      icon,
+      iconColor,
+      [],
+      'unknown',
+      0,
+      0,
+      null,
+      Date.now()
+    );
+
+    const result = configManagerFacade.saveProvider(provider);
+    if (!result.ok || result.error !== null) {
+      const message = result.error !== null ? result.error.message : '保存 Provider 失败。';
+      this.triggerFeedback(message, 'error');
+      return;
+    }
+    this.triggerFeedback(`已成功添加供应商 "${provider.name}"`, 'success');
+    router.back();
   }
 
   @Builder
@@ -312,9 +347,6 @@ struct AddProviderPage {
       .backgroundColor('#FFFFFF')
       .borderRadius(18)
       .border({ width: 1, color: '#D8E1EE' })
-      .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed('back', event); })
       .onClick(() => { router.back(); })
 
       Column() {
@@ -351,9 +383,6 @@ struct AddProviderPage {
       .fontColor(this.activeMode === mode ? '#FFFFFF' : '#94A3B8')
       .backgroundColor(this.activeMode === mode ? '#2284F6' : '#F4F6FB')
       .borderRadius(12)
-      .scale({ x: this.pressScale(`mode-${mode}`), y: this.pressScale(`mode-${mode}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(`mode-${mode}`, event); })
       .onClick(() => { this.switchMode(mode); })
   }
 
@@ -377,9 +406,6 @@ struct AddProviderPage {
       .borderRadius(14)
       .padding({ left: 14, right: 14 })
       .margin({ top: 8 })
-      .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onChange(onChange)
   }
 
@@ -406,9 +432,6 @@ struct AddProviderPage {
       .border({ width: selected ? 0 : 1, color: '#E1E7F0' })
       .padding({ left: 14, right: 14 })
       .margin({ right: 10, bottom: 10 })
-      .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onClick(onClick)
   }
 
@@ -425,9 +448,6 @@ struct AddProviderPage {
         .margin({ left: 6 })
     }
     .padding({ left: 4, right: 10, top: 4, bottom: 4 })
-    .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
     .onClick(onClick)
   }
 
@@ -448,9 +468,6 @@ struct AddProviderPage {
       .backgroundColor(enabled ? '#D946EF' : '#E5E7EB')
       .borderRadius(11)
     }
-    .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
     .onClick(onClick)
   }
 
@@ -571,9 +588,6 @@ struct AddProviderPage {
           .margin({ left: 8 })
       }
       .width('100%')
-      .scale({ x: this.pressScale('advanced-toggle'), y: this.pressScale('advanced-toggle') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed('advanced-toggle', event); })
       .onClick(() => { this.advancedExpanded = !this.advancedExpanded; })
 
       Text('包含 API 格式、认证字段、模型映射等配置。大多数场景下保持默认即可。')
@@ -621,9 +635,6 @@ struct AddProviderPage {
             .fontColor('#64748B')
             .margin({ left: 6 })
         }
-        .scale({ x: this.pressScale('write-general-config'), y: this.pressScale('write-general-config') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => { this.updatePressed('write-general-config', event); })
         .onClick(() => { this.writeGeneralConfig = !this.writeGeneralConfig; })
       }
       .width('100%')
@@ -779,9 +790,6 @@ struct AddProviderPage {
           .margin({ left: 8 })
       }
       .margin({ top: 18 })
-      .scale({ x: this.pressScale('format-json'), y: this.pressScale('format-json') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed('format-json', event); })
       .onClick(() => { this.notePending('JSON 格式化'); })
 
       this.collapseCard('模型测试配置', this.modelTestSingleConfig, 'model-test-switch', () => {
@@ -816,9 +824,6 @@ struct AddProviderPage {
         .borderRadius(14)
         .border({ width: 1, color: '#D5E0ED' })
         .padding({ left: 18, right: 18 })
-        .scale({ x: this.pressScale('cancel-add'), y: this.pressScale('cancel-add') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => { this.updatePressed('cancel-add', event); })
         .onClick(() => { router.back(); })
 
       Button('+ 添加')
@@ -830,9 +835,6 @@ struct AddProviderPage {
         .borderRadius(14)
         .padding({ left: 20, right: 20 })
         .margin({ left: 12 })
-        .scale({ x: this.pressScale('submit-add'), y: this.pressScale('submit-add') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => { this.updatePressed('submit-add', event); })
         .onClick(() => { this.submitAddProvider(); })
     }
     .width('100%')
