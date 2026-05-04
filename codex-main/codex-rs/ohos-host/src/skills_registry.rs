@@ -165,13 +165,12 @@ pub fn current_timestamp_string() -> String {
 
 /// 获取 SSOT 目录路径
 ///
-/// SSOT 位于 `{codex_home}/../.agents/skills`
+/// SSOT 位于 `{codex_home}/skills`
+/// 这与 Rust skill loader 的 deprecated User root (`$CODEX_HOME/skills`) 一致。
+/// 之前使用 `{codex_home}/../.agents/skills`，但 `dirs` crate v6 在 OHOS 上
+/// 不读取 `$HOME` 环境变量（改用 `/etc/passwd`），导致 `$HOME/.agents/skills` 路径错误。
 pub fn ssot_dir(codex_home: &Path) -> PathBuf {
-    codex_home
-        .parent()
-        .unwrap_or(codex_home)
-        .join(".agents")
-        .join("skills")
+    codex_home.join("skills")
 }
 
 /// 从 SKILL.md frontmatter 解析 name 和 description

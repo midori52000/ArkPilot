@@ -94,6 +94,18 @@ CMake 在 `Agent/entry/src/main/cpp/CMakeLists.txt` 中条件链接 `libcodex_oh
 - `codexHome` — 应用数据根目录，`EntryAbility.onCreate` 中设置为 `${filesDir}/codex-home`
 - `defaultWorkspaceRoot` — 默认工作区路径，`${filesDir}/workspace-default`
 
+## Error Experience
+
+### `dirs` crate v6 不读取 `$HOME` 环境变量（Skills 注入失败）
+- 问题：`dirs` crate v6 在 Linux/OHOS 上改用 `/etc/passwd`（`getpwuid_r`）获取 home 目录，忽略 `$HOME` 环境变量
+- 影响：`core-skills/src/loader.rs` 中 `dirs::home_dir()` 返回错误路径，`$HOME/.agents/skills` 无法被 Rust skill loader 发现
+- 解决：
+  1. 将 Skills SSOT 目录从 `{codexHome}/../.agents/skills` 改为 `{codexHome}/skills`
+  2. 在 `configure_environment()` 中设置 `CODEX_SKILLS_DIR` 环境变量
+  3. 在 `skill_roots_with_home_dir()` 中检查 `CODEX_SKILLS_DIR` 作为 fallback root
+  4. 在 `discover_skills_under_root()` 中添加 canonicalize 失败日志
+- 涉及文件：`ohos-host/src/lib.rs`、`ohos-host/src/skills_registry.rs`、`core-skills/src/loader.rs`、`SkillsBackendService.ets`、`BundledSkills.ets`
+
 ## Known Limitations
 
 - `SkillsBackendService.ets` 中 `extractZip()` 和 `importFromZip()` 仍为占位实现（直接抛错）

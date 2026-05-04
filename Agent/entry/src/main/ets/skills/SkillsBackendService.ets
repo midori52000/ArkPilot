@@ -98,7 +98,7 @@ export class SkillsBackendService {
   }
 
   getSsotDir(): string {
-    return `${this.codexHome}/../.agents/skills`;
+    return `${this.codexHome}/skills`;
   }
 
   getBackupDir(): string {

@@ -19,7 +19,6 @@ import {
 import { providerCatalogService } from '../backend/ProviderCatalogService';
 import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
-import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { picker } from '@kit.CoreFileKit';
@@ -134,8 +133,7 @@ struct Index {
   private readonly sidebarItems: SidebarItem[] = [
     new SidebarItem('chat', 'Chat', '继续与内置 ArkPilot 协作'),
     new SidebarItem('sessions', 'Sessions', '查看与切换项目会话'),
-    new SidebarItem('usage', 'Usage', '查看当前工作台统计'),
-    new SidebarItem('prompts', 'Prompts', '自定义指令管理')
+    new SidebarItem('usage', 'Usage', '查看当前工作台统计')
   ];
   private backendSubscriptionId: number = -1;
   private reconnectTimerId: number = -1;
@@ -2050,19 +2048,12 @@ struct Index {
   }
 
   @Builder
-  private promptsCenterView() {
-    PromptsPage({ codexHome: '' })
-  }
-
-  @Builder
   private centerPanel() {
     Column() {
       if (this.activeSidebarView === 'chat') {
         this.chatCenterView()
       } else if (this.activeSidebarView === 'sessions') {
         this.sessionsCenterView()
-      } else if (this.activeSidebarView === 'prompts') {
-        this.promptsCenterView()
       } else {
         this.usageCenterView()
       }
@@ -2129,16 +2120,6 @@ struct Index {
           this.infoRow('当前会话', this.activeWorkspace().title)
           this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
           this.infoRow('消息数', this.messages.length.toString())
-          this.infoRow('连接状态', this.connectionText)
-        }
-        .alignItems(HorizontalAlign.Start)
-        .height('100%')
-        .width('100%')
-      } else if (this.activeSidebarView === 'prompts') {
-        Column() {
-          this.panelTitle('Prompts 上下文', '管理自定义指令（AGENTS.md）')
-          this.infoRow('说明', '创建和切换 Prompt 版本，启用后写入 AGENTS.md')
-          this.infoRow('生效方式', '切换 Prompt 后需新建会话')
           this.infoRow('连接状态', this.connectionText)
         }
         .alignItems(HorizontalAlign.Start)

@@ -165,7 +165,37 @@ const BUNDLED_DEFS: BundledSkillDef[] = [
  * @param codexHome - 应用 codex-home 目录路径
  */
 export function installBundledSkills(codexHome: string): void {
-  const ssotDir = `${codexHome}/../.agents/skills`;
+  const ssotDir = `${codexHome}/skills`;
+
+  // 迁移：旧 SSOT 路径 `{codexHome}/../.agents/skills` → 新路径 `{codexHome}/skills`
+  const oldSsotDir = `${codexHome}/../.agents/skills`;
+  try {
+    const oldEntries = fileIo.listFileSync(oldSsotDir) as string[];
+    for (const entry of oldEntries) {
+      if (entry.startsWith('.')) {
+        continue;
+      }
+      const oldPath = `${oldSsotDir}/${entry}`;
+      const newPath = `${ssotDir}/${entry}`;
+      try {
+        const stat = fileIo.statSync(oldPath);
+        if (stat.isDirectory()) {
+          try {
+            fileIo.statSync(newPath);
+            // 新路径已存在，跳过
+          } catch (_) {
+            // 新路径不存在，移动
+            try {
+              fileIo.mkdirSync(ssotDir, true);
+            } catch (_) { /* 目录已存在 */ }
+            fileIo.renameSync(oldPath, newPath);
+          }
+        }
+      } catch (_) { /* skip */ }
+    }
+  } catch (_) {
+    // 旧目录不存在，无需迁移
+  }
 
   // 读取现有 registry
   let existing: InstalledSkill[] = [];

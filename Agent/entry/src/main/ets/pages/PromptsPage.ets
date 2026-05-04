@@ -35,7 +35,6 @@ export struct PromptsPage {
   }
 
   build() {
-    Stack() {
     Row() {
       // Left: Prompt list
       Column() {
@@ -46,13 +45,21 @@ export struct PromptsPage {
             .fontWeight(FontWeight.Bold)
             .fontColor('#0F172A')
           Blank()
-          Button('+')
-            .fontSize(18)
-            .width(32)
-            .height(32)
+          Button('刷新')
+            .fontSize(12)
+            .height(28)
+            .backgroundColor('#FFFFFF')
+            .fontColor('#334155')
+            .borderRadius(14)
+            .border({ width: 1, color: '#CBD5E1' })
+            .onClick(() => this.promptsViewModel.loadAll())
+            .margin({ right: 8 })
+          Button('新建')
+            .fontSize(12)
+            .height(28)
             .backgroundColor('#111827')
             .fontColor('#FFFFFF')
-            .borderRadius(16)
+            .borderRadius(14)
             .onClick(() => this.promptsViewModel.startEditing(null))
         }
         .width('100%')
@@ -442,6 +449,8 @@ export struct PromptsPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#FFFFFF')
+    .width('100%')
+    .height('100%')
 
     // Delete confirmation dialog
     if (this.showDeleteConfirm && this.deleteTarget !== null) {
@@ -503,8 +512,5 @@ export struct PromptsPage {
         this.deleteTarget = null;
       })
     }
-    }
-    .width('100%')
-    .height('100%')
   }
 }

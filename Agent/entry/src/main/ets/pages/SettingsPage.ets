@@ -859,6 +859,48 @@ struct SettingsPage {
       });
   }
 
+  private deletePromptById(promptId: string): void {
+    const prompt = this.prompts.find((item: PromptRecord) => item.id === promptId) ?? null;
+    if (prompt === null) {
+      return;
+    }
+    this.promptsViewModel.deletePrompt(promptId)
+      .then(() => {
+        this.syncPromptsStateFromViewModel();
+        this.triggerFeedback(`${prompt.name} 已删除。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.promptsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.promptsStatusText, 'error');
+      });
+  }
+
+  private createNewPrompt(): void {
+    const newId = `prompt-${Date.now()}`;
+    const newPrompt = new PromptRecord(
+      newId,
+      '',
+      '',
+      '',
+      false,
+      Date.now(),
+      0
+    );
+    this.promptsViewModel.savePrompt(newPrompt)
+      .then(() => {
+        this.syncPromptsStateFromViewModel();
+        this.selectedPromptId = newId;
+        this.promptDraftName = '';
+        this.promptDraftSummary = '';
+        this.promptDraftContent = '';
+        this.triggerFeedback('已创建新 Prompt，请编辑后保存。', 'success');
+      })
+      .catch((err: Object) => {
+        this.promptsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.promptsStatusText, 'error');
+      });
+  }
+
   private savePromptDraft(): void {
     const prompt = this.selectedPrompt();
     const draft = prompt !== null
@@ -2442,7 +2484,41 @@ struct SettingsPage {
     Column() {
       Row() {
         Column() {
+          Row() {
+            Button('刷新')
+              .fontSize(12)
+              .height(28)
+              .backgroundColor('#FFFFFF')
+              .fontColor('#334155')
+              .borderRadius(14)
+              .border({ width: 1, color: '#CBD5E1' })
+              .onClick(() => {
+                this.promptsViewModel.loadAll()
+                  .then(() => {
+                    this.syncPromptsStateFromViewModel();
+                    this.triggerFeedback('已刷新', 'success');
+                  })
+                  .catch((err: Object) => {
+                    this.promptsStatusText = this.describeRuntimeError(err);
+                    this.triggerFeedback(this.promptsStatusText, 'error');
+                  });
+              })
+            Button('新增')
+              .fontSize(12)
+              .height(28)
+              .backgroundColor('#F59E0B')
+              .fontColor('#FFFFFF')
+              .borderRadius(14)
+              .onClick(() => {
+                this.createNewPrompt();
+              })
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .margin({ bottom: 12 })
+
           this.sectionCard('Prompt list', '通过卡片显式展示启用状态、更新时间与说明。')
+
           Column() {
             ForEach(this.prompts, (prompt: PromptRecord) => {
               this.promptCard(prompt)
@@ -2491,11 +2567,47 @@ struct SettingsPage {
         }
         .width('100%')
 
-        Text(`updated ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
-          .fontColor('#64748B')
-          .margin({ top: 12 })
+        Row() {
+          Text(`updated ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#64748B')
+            .layoutWeight(1)
+
+          Button(prompt.enabled ? '禁用' : '启用')
+            .fontSize(10)
+            .height(24)
+            .backgroundColor(prompt.enabled ? '#FEF3C7' : '#DCFCE7')
+            .fontColor(prompt.enabled ? '#92400E' : '#166534')
+            .borderRadius(12)
+            .onClick(() => {
+              this.togglePromptEnabled(prompt.id);
+            })
+            .margin({ right: 6 })
+
+          Button('编辑')
+            .fontSize(10)
+            .height(24)
+            .backgroundColor('#E0F2FE')
+            .fontColor('#0C4A6E')
+            .borderRadius(12)
+            .onClick(() => {
+              this.selectPrompt(prompt.id);
+            })
+            .margin({ right: 6 })
+
+          Button('删除')
+            .fontSize(10)
+            .height(24)
+            .backgroundColor('#FEE2E2')
+            .fontColor('#991B1B')
+            .borderRadius(12)
+            .onClick(() => {
+              this.deletePromptById(prompt.id);
+            })
+        }
+        .width('100%')
+        .margin({ top: 12 })
       }
       .width('100%')
       .padding(16)

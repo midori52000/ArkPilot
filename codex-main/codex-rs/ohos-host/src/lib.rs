@@ -1233,6 +1233,11 @@ fn configure_environment(codex_home: &Path) {
         std::env::set_var("CODEX_HOME", codex_home);
         std::env::set_var("HOME", home_dir);
         std::env::set_var("CODEX_APP_SERVER_ALLOW_ORIGIN_HEADER", "1");
+        // Explicit skills directory for the skill loader. On OHOS, `dirs` crate
+        // v6+ uses `/etc/passwd` instead of `$HOME`, so the default
+        // `$HOME/.agents/skills` path is wrong. This env var is checked by
+        // `skill_roots_with_home_dir()` in core-skills as a fallback.
+        std::env::set_var("CODEX_SKILLS_DIR", codex_home.join("skills"));
     }
 }
 

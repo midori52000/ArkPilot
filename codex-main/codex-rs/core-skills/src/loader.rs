@@ -208,6 +208,21 @@ fn skill_roots_with_home_dir(
         scope: SkillScope::User,
     }));
     roots.extend(repo_agents_skill_roots(config_layer_stack, cwd));
+
+    // Explicit override: if CODEX_SKILLS_DIR is set, add it as a User root.
+    // This is used by the OHOS host where `dirs::home_dir()` (v6+) may not
+    // honor the `$HOME` environment variable, breaking the default
+    // `$HOME/.agents/skills` resolution.
+    if let Ok(skills_dir) = std::env::var("CODEX_SKILLS_DIR") {
+        let path = PathBuf::from(&skills_dir);
+        if path.is_dir() {
+            roots.push(SkillRoot {
+                path,
+                scope: SkillScope::User,
+            });
+        }
+    }
+
     dedupe_skill_roots_by_path(&mut roots);
     roots
 }
@@ -355,10 +370,18 @@ fn dedupe_skill_roots_by_path(roots: &mut Vec<SkillRoot>) {
 
 fn discover_skills_under_root(root: &Path, scope: SkillScope, outcome: &mut SkillLoadOutcome) {
     let Ok(root) = canonicalize_path(root) else {
+        tracing::warn!(
+            "skill root canonicalize failed (scope={scope:?}): {}",
+            root.display()
+        );
         return;
     };
 
     if !root.is_dir() {
+        tracing::warn!(
+            "skill root is not a directory (scope={scope:?}): {}",
+            root.display()
+        );
         return;
     }
 
