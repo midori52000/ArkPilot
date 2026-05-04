@@ -1,6 +1,6 @@
 import router from '@ohos.router';
 import { ProviderPreset, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
-import { ApiWireFormat, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
+import { ApiWireFormat, CustomHeadersEntry, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
 import { configManagerFacade } from '../backend/CodexBackend';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
@@ -251,49 +251,53 @@ struct AddProviderPage {
     }
 
     try {
-      if (this.selectedPresetId !== 'custom') {
-        const result = configManagerFacade.addProviderFromPreset(this.selectedPresetId, this.apiKey);
-        if (!result.ok || result.data === null) {
-          const msg = result.error !== null ? result.error.message : '新增 Provider 失败。';
-          this.triggerFeedback(msg, 'error');
-          return;
+      const preset: ProviderPreset | null = this.findPreset(this.selectedPresetId);
+      const category: ProviderCategory = preset !== null ? preset.category : 'custom';
+      const icon: string = preset !== null ? preset.icon : '';
+      const iconColor: string = preset !== null ? preset.iconColor : '';
+      const defaultModel: string = preset !== null ? preset.defaultModel : '';
+      const authMode: string = preset !== null ? preset.authMode : 'apiKey';
+      const headers: CustomHeadersEntry[] = [];
+      if (preset !== null) {
+        for (let hi: number = 0; hi < preset.customHeaders.length; hi += 1) {
+          const h = preset.customHeaders[hi];
+          headers.push(new CustomHeadersEntry(h.key, h.value));
         }
-        this.triggerFeedback(`已添加 "${result.data.name}"。`, 'success');
-      } else {
-        const provider = new ProviderRecord(
-          `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          this.providerName,
-          'codex',
-          'exclusive',
-          this.baseUrl,
-          this.apiKey,
-          '',
-          false,
-          'dirty',
-          '',
-          'apiKey',
-          [],
-          this.wireApi,
-          'custom',
-          this.providerNote,
-          this.websiteUrl,
-          '',
-          '',
-          [],
-          'unknown',
-          0,
-          0,
-          null,
-          Date.now()
-        );
-        const result = configManagerFacade.saveProvider(provider);
-        if (!result.ok || result.data === null) {
-          const msg = result.error !== null ? result.error.message : '保存 Provider 失败。';
-          this.triggerFeedback(msg, 'error');
-          return;
-        }
-        this.triggerFeedback(`已添加 "${result.data.name}"。`, 'success');
       }
+
+      const provider = new ProviderRecord(
+        `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        this.providerName,
+        'codex',
+        'exclusive',
+        this.baseUrl,
+        this.apiKey,
+        defaultModel,
+        false,
+        'dirty',
+        '',
+        authMode,
+        headers,
+        this.wireApi,
+        category,
+        this.providerNote,
+        this.websiteUrl,
+        icon,
+        iconColor,
+        [],
+        'unknown',
+        0,
+        0,
+        null,
+        Date.now()
+      );
+      const result = configManagerFacade.saveProvider(provider);
+      if (!result.ok || result.data === null) {
+        const msg = result.error !== null ? result.error.message : '保存 Provider 失败。';
+        this.triggerFeedback(msg, 'error');
+        return;
+      }
+      this.triggerFeedback(`已添加 "${result.data.name}"。`, 'success');
       setTimeout(() => {
         router.back();
       }, 600);

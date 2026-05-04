@@ -22,6 +22,12 @@ struct BaselineFileInfo {
     oid: String,
 }
 
+struct GitStatusEntry {
+    current_path: PathBuf,
+    original_path: Option<PathBuf>,
+    tracked: bool,
+}
+
 /// Tracks sets of changes to files and exposes the overall unified diff.
 /// Internally, the way this works is now:
 /// 1. Maintain an in-memory baseline snapshot of files when they are first seen.
@@ -124,6 +130,126 @@ impl TurnDiffTracker {
                 self.external_to_temp_name
                     .insert(dest.clone(), uuid_filename);
             };
+        }
+    }
+
+    /// Snapshot the current dirty worktree state before a shell-like command runs.
+    /// This preserves the user's pre-turn dirty files as the baseline so per-turn
+    /// diffs only reflect edits introduced after the command starts.
+    pub fn on_exec_begin(&mut self, cwd: &Path) {
+        if let Some(root) = self.find_git_root_cached(cwd) {
+            let Ok(entries) = git_status_entries(&root) else {
+                return;
+            };
+            for entry in entries {
+                let current_path = root.join(&entry.current_path);
+                if self.external_to_temp_name.contains_key(&current_path) {
+                    continue;
+                }
+                let baseline = self.current_baseline_for_path(&current_path);
+                let baseline_path = baseline.path.clone();
+                self.insert_baseline_snapshot(baseline_path, current_path, baseline);
+            }
+            return;
+        }
+
+        let Ok(paths) = walk_files_under(cwd) else {
+            return;
+        };
+        for path in paths {
+            if self.external_to_temp_name.contains_key(&path) {
+                continue;
+            }
+            let baseline = self.current_baseline_for_path(&path);
+            let baseline_path = baseline.path.clone();
+            self.insert_baseline_snapshot(baseline_path, path, baseline);
+        }
+    }
+
+    /// After a shell-like command runs, lazily add baselines for any files that
+    /// were clean at command start but became dirty by the end of the command.
+    pub fn on_exec_end(&mut self, cwd: &Path) {
+        if let Some(root) = self.find_git_root_cached(cwd) {
+            let Ok(entries) = git_status_entries(&root) else {
+                return;
+            };
+            for entry in entries {
+                let current_path = root.join(&entry.current_path);
+                if self.external_to_temp_name.contains_key(&current_path) {
+                    continue;
+                }
+
+                if !entry.tracked {
+                    self.insert_baseline_snapshot(
+                        current_path.clone(),
+                        current_path,
+                        missing_baseline(&entry.current_path),
+                    );
+                    continue;
+                }
+
+                let baseline_rel = entry.original_path.as_ref().unwrap_or(&entry.current_path);
+                if let Some(baseline) = git_index_baseline_for_path(&root, baseline_rel) {
+                    let baseline_path = root.join(baseline_rel);
+                    self.insert_baseline_snapshot(baseline_path, current_path, baseline);
+                }
+            }
+            return;
+        }
+
+        let Ok(paths) = walk_files_under(cwd) else {
+            return;
+        };
+        for path in paths {
+            if self.external_to_temp_name.contains_key(&path) {
+                continue;
+            }
+            self.insert_baseline_snapshot(path.clone(), path.clone(), missing_baseline(&path));
+        }
+    }
+
+    fn insert_baseline_snapshot(
+        &mut self,
+        baseline_path: PathBuf,
+        current_path: PathBuf,
+        baseline: BaselineFileInfo,
+    ) {
+        if self.external_to_temp_name.contains_key(&current_path) {
+            return;
+        }
+
+        let internal = Uuid::new_v4().to_string();
+        self.external_to_temp_name
+            .insert(current_path.clone(), internal.clone());
+        self.temp_name_to_current_path
+            .insert(internal.clone(), current_path);
+        self.baseline_file_info.insert(
+            internal,
+            BaselineFileInfo {
+                path: baseline_path,
+                ..baseline
+            },
+        );
+    }
+
+    fn current_baseline_for_path(&mut self, path: &Path) -> BaselineFileInfo {
+        let mode = file_mode_for_path(path).unwrap_or(FileMode::Regular);
+        let content = blob_bytes(path, mode).unwrap_or_default();
+        let oid = if path.exists() {
+            if mode == FileMode::Symlink {
+                format!("{:x}", git_blob_sha1_hex_bytes(&content))
+            } else {
+                self.git_blob_oid_for_path(path)
+                    .unwrap_or_else(|| format!("{:x}", git_blob_sha1_hex_bytes(&content)))
+            }
+        } else {
+            ZERO_OID.to_string()
+        };
+        BaselineFileInfo {
+            path: path.to_path_buf(),
+            content,
+            mode,
+            oid,
         }
     }
 
@@ -439,6 +565,153 @@ fn blob_bytes(path: &Path, mode: FileMode) -> Option<Vec<u8>> {
         contents.ok()
     } else {
         None
+    }
+}
+
+fn git_status_entries(root: &Path) -> Result<Vec<GitStatusEntry>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=no",
+        ])
+        .output()
+        .with_context(|| format!("failed to read git status for {}", root.display()))?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let stdout = output.stdout;
+    let mut idx = 0;
+    while idx < stdout.len() {
+        let Some(end) = stdout[idx..].iter().position(|b| *b == 0) else {
+            break;
+        };
+        let record = &stdout[idx..idx + end];
+        idx += end + 1;
+
+        if record.len() < 4 {
+            continue;
+        }
+
+        let status = &record[..2];
+        let current_path = PathBuf::from(String::from_utf8_lossy(&record[3..]).into_owned());
+        let needs_original_path = status.iter().any(|b| matches!(*b, b'R' | b'C'));
+        let original_path = if needs_original_path && idx < stdout.len() {
+            let Some(end) = stdout[idx..].iter().position(|b| *b == 0) else {
+                break;
+            };
+            let path = PathBuf::from(String::from_utf8_lossy(&stdout[idx..idx + end]).into_owned());
+            idx += end + 1;
+            Some(path)
+        } else {
+            None
+        };
+
+        entries.push(GitStatusEntry {
+            current_path,
+            original_path,
+            tracked: status != b"??",
+        });
+    }
+
+    Ok(entries)
+}
+
+fn git_index_baseline_for_path(root: &Path, relpath: &Path) -> Option<BaselineFileInfo> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--stage", "-z", "--"])
+        .arg(relpath)
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+
+    let nul = output.stdout.iter().position(|b| *b == 0)?;
+    let record = &output.stdout[..nul];
+    let tab = record.iter().position(|b| *b == b'\t')?;
+    let metadata = std::str::from_utf8(&record[..tab]).ok()?;
+    let mut parts = metadata.split_whitespace();
+    let mode = file_mode_from_git_mode(parts.next()?)?;
+    let oid = parts.next()?.to_string();
+
+    let content = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["cat-file", "-p", &oid])
+        .output()
+        .ok()?;
+    if !content.status.success() {
+        return None;
+    }
+
+    Some(BaselineFileInfo {
+        path: relpath.to_path_buf(),
+        content: content.stdout,
+        mode,
+        oid,
+    })
+}
+
+fn walk_files_under(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = Vec::new();
+
+    if root.exists() {
+        stack.push(root.to_path_buf());
+    }
+
+    while let Some(path) = stack.pop() {
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+
+        if meta.file_type().is_dir() && !meta.file_type().is_symlink() {
+            let entries = match fs::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    continue;
+                };
+                stack.push(entry.path());
+            }
+            continue;
+        }
+
+        out.push(path);
+    }
+
+    out.sort();
+    Ok(out)
+}
+
+fn missing_baseline(path: &Path) -> BaselineFileInfo {
+    BaselineFileInfo {
+        path: path.to_path_buf(),
+        content: vec![],
+        mode: FileMode::Regular,
+        oid: ZERO_OID.to_string(),
+    }
+}
+
+fn file_mode_from_git_mode(mode: &str) -> Option<FileMode> {
+    match mode {
+        "100644" => Some(FileMode::Regular),
+        #[cfg(unix)]
+        "100755" => Some(FileMode::Executable),
+        "120000" => Some(FileMode::Symlink),
+        _ => None,
     }
 }
 

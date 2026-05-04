@@ -7,6 +7,7 @@ use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::sandboxing::ExecRequest;
 use crate::tools::context::ExecCommandToolOutput;
+use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
 use codex_sandboxing::SandboxType;
@@ -102,8 +103,13 @@ async fn exec_command_with_tty(
             )
             .await?,
     );
-    let context =
-        UnifiedExecContext::new(Arc::clone(session), Arc::clone(turn), "call".to_string());
+    let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let context = UnifiedExecContext::new(
+        Arc::clone(session),
+        Arc::clone(turn),
+        tracker,
+        "call".to_string(),
+    );
     let started_at = Instant::now();
     let process_started_alive = !process.has_exited() && process.exit_code().is_none();
     if process_started_alive {

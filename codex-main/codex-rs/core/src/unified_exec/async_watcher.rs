@@ -18,6 +18,7 @@ use crate::protocol::EventMsg;
 use crate::protocol::ExecCommandOutputDeltaEvent;
 use crate::protocol::ExecCommandSource;
 use crate::protocol::ExecOutputStream;
+use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventFailure;
@@ -108,6 +109,7 @@ pub(crate) fn spawn_exit_watcher(
     process: Arc<UnifiedExecProcess>,
     session_ref: Arc<Session>,
     turn_ref: Arc<TurnContext>,
+    turn_diff_tracker: SharedTurnDiffTracker,
     call_id: String,
     command: Vec<String>,
     cwd: PathBuf,
@@ -127,6 +129,7 @@ pub(crate) fn spawn_exit_watcher(
             emit_failed_exec_end_for_unified_exec(
                 session_ref,
                 turn_ref,
+                turn_diff_tracker,
                 call_id,
                 command,
                 cwd,
@@ -141,6 +144,7 @@ pub(crate) fn spawn_exit_watcher(
             emit_exec_end_for_unified_exec(
                 session_ref,
                 turn_ref,
+                turn_diff_tracker,
                 call_id,
                 command,
                 cwd,
@@ -194,6 +198,7 @@ async fn process_chunk(
 pub(crate) async fn emit_exec_end_for_unified_exec(
     session_ref: Arc<Session>,
     turn_ref: Arc<TurnContext>,
+    turn_diff_tracker: SharedTurnDiffTracker,
     call_id: String,
     command: Vec<String>,
     cwd: PathBuf,
@@ -216,7 +221,7 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
         session_ref.as_ref(),
         turn_ref.as_ref(),
         &call_id,
-        /*turn_diff_tracker*/ None,
+        Some(&turn_diff_tracker),
     );
     let emitter = ToolEmitter::unified_exec(
         &command,
@@ -233,6 +238,7 @@ pub(crate) async fn emit_exec_end_for_unified_exec(
 pub(crate) async fn emit_failed_exec_end_for_unified_exec(
     session_ref: Arc<Session>,
     turn_ref: Arc<TurnContext>,
+    turn_diff_tracker: SharedTurnDiffTracker,
     call_id: String,
     command: Vec<String>,
     cwd: PathBuf,
@@ -259,7 +265,7 @@ pub(crate) async fn emit_failed_exec_end_for_unified_exec(
         session_ref.as_ref(),
         turn_ref.as_ref(),
         &call_id,
-        /*turn_diff_tracker*/ None,
+        Some(&turn_diff_tracker),
     );
     let emitter = ToolEmitter::unified_exec(
         &command,

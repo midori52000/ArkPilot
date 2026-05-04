@@ -185,7 +185,7 @@ impl UnifiedExecProcessManager {
             context.session.as_ref(),
             context.turn.as_ref(),
             &context.call_id,
-            /*turn_diff_tracker*/ None,
+            Some(&context.tracker),
         );
         let emitter = ToolEmitter::unified_exec(
             &request.command,
@@ -253,6 +253,7 @@ impl UnifiedExecProcessManager {
                 emit_failed_exec_end_for_unified_exec(
                     Arc::clone(&context.session),
                     Arc::clone(&context.turn),
+                    Arc::clone(&context.tracker),
                     context.call_id.clone(),
                     request.command.clone(),
                     cwd.clone(),
@@ -296,6 +297,7 @@ impl UnifiedExecProcessManager {
             emit_exec_end_for_unified_exec(
                 Arc::clone(&context.session),
                 Arc::clone(&context.turn),
+                Arc::clone(&context.tracker),
                 context.call_id.clone(),
                 request.command.clone(),
                 cwd.clone(),
@@ -570,6 +572,7 @@ impl UnifiedExecProcessManager {
             Arc::clone(&process),
             Arc::clone(&context.session),
             Arc::clone(&context.turn),
+            Arc::clone(&context.tracker),
             context.call_id.clone(),
             command.to_vec(),
             cwd,

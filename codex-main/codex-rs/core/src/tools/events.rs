@@ -409,6 +409,10 @@ async fn emit_exec_stage(
 ) {
     match stage {
         ToolEventStage::Begin => {
+            if let Some(tracker) = ctx.turn_diff_tracker {
+                let mut guard = tracker.lock().await;
+                guard.on_exec_begin(exec_input.cwd);
+            }
             emit_exec_command_begin(
                 ctx,
                 exec_input.command,
@@ -493,6 +497,19 @@ async fn emit_exec_end(
             }),
         )
         .await;
+
+    if let Some(tracker) = ctx.turn_diff_tracker {
+        let unified_diff = {
+            let mut guard = tracker.lock().await;
+            guard.on_exec_end(exec_input.cwd);
+            guard.get_unified_diff()
+        };
+        if let Ok(Some(unified_diff)) = unified_diff {
+            ctx.session
+                .send_event(ctx.turn, EventMsg::TurnDiff(TurnDiffEvent { unified_diff }))
+                .await;
+        }
+    }
 }
 
 async fn emit_patch_end(
@@ -528,5 +545,66 @@ async fn emit_patch_end(
                 .send_event(ctx.turn, EventMsg::TurnDiff(TurnDiffEvent { unified_diff }))
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codex::make_session_and_context_with_rx;
+    use crate::turn_diff_tracker::TurnDiffTracker;
+    use std::fs;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use tokio::sync::Mutex;
+    use tokio::time::Duration as TokioDuration;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn unified_exec_end_emits_turn_diff_for_created_file_in_non_git_dir() {
+        let temp = tempdir().expect("tempdir should create");
+        let file_path = temp.path().join("test_diff.txt");
+        let command = vec![
+            "/bin/sh".to_string(),
+            "-lc".to_string(),
+            "echo \"hello world\" > test_diff.txt".to_string(),
+        ];
+        let emitter = ToolEmitter::unified_exec(
+            &command,
+            temp.path().to_path_buf(),
+            ExecCommandSource::UnifiedExecStartup,
+            None,
+        );
+        let tracker = Arc::new(Mutex::new(TurnDiffTracker::new()));
+        let (session, turn, rx) = make_session_and_context_with_rx().await;
+        let ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), "call-1", Some(&tracker));
+
+        emitter.emit(ctx, ToolEventStage::Begin).await;
+        fs::write(&file_path, "hello world\n").expect("file write should succeed");
+        emitter
+            .emit(ctx, ToolEventStage::Success(ExecToolCallOutput::default()))
+            .await;
+
+        let mut saw_turn_diff = None;
+        for _ in 0..3 {
+            let event = timeout(TokioDuration::from_secs(2), rx.recv())
+                .await
+                .expect("event should arrive before timeout")
+                .expect("event channel should stay open");
+            if let EventMsg::TurnDiff(diff) = event.msg {
+                saw_turn_diff = Some(diff.unified_diff);
+                break;
+            }
+        }
+
+        let diff = saw_turn_diff.expect("expected TurnDiff event");
+        assert!(
+            diff.contains("diff --git a/") && diff.contains("test_diff.txt"),
+            "expected file diff header mentioning test_diff.txt, got {diff:?}"
+        );
+        assert!(
+            diff.contains("+hello world"),
+            "expected added file content, got {diff:?}"
+        );
     }
 }
