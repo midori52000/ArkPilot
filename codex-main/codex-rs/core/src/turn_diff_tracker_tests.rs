@@ -35,6 +35,27 @@ fn normalize_diff_for_test(input: &str, root: &Path) -> String {
     out
 }
 
+fn git(root: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "git {:?} failed in {}",
+        args,
+        root.display()
+    );
+}
+
+fn init_git_repo(root: &Path) {
+    git(root, &["init", "--quiet"]);
+    git(root, &["config", "user.email", "codex@example.com"]);
+    git(root, &["config", "user.name", "Codex"]);
+}
+
 #[test]
 fn accumulates_add_and_update() {
     let mut acc = TurnDiffTracker::new();
@@ -424,4 +445,133 @@ index {ZERO_OID}..{right_oid}
         )
     };
     assert_eq!(combined, expected_combined);
+}
+
+#[test]
+fn exec_tracking_emits_diff_for_untracked_file_created_by_shell() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+
+    let mut acc = TurnDiffTracker::new();
+    let file = dir.path().join("created.py");
+
+    acc.on_exec_begin(dir.path());
+    fs::write(&file, "print('hi')\n").unwrap();
+    acc.on_exec_end(dir.path());
+
+    let diff = acc.get_unified_diff().unwrap().unwrap();
+    let diff = normalize_diff_for_test(&diff, dir.path());
+    let expected = {
+        let mode = file_mode_for_path(&file).unwrap_or(FileMode::Regular);
+        let right_oid = git_blob_sha1_hex("print('hi')\n");
+        format!(
+            r#"diff --git a/created.py b/created.py
+new file mode {mode}
+index {ZERO_OID}..{right_oid}
+--- {DEV_NULL}
++++ b/created.py
+@@ -0,0 +1 @@
++print('hi')
+"#,
+        )
+    };
+    assert_eq!(diff, expected);
+}
+
+#[test]
+fn exec_tracking_emits_diff_for_clean_tracked_file_modified_by_shell() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+    let file = dir.path().join("tracked.txt");
+    fs::write(&file, "base\n").unwrap();
+    git(dir.path(), &["add", "tracked.txt"]);
+    git(dir.path(), &["commit", "-m", "init", "--quiet"]);
+
+    let mut acc = TurnDiffTracker::new();
+    acc.on_exec_begin(dir.path());
+    fs::write(&file, "base\nnext\n").unwrap();
+    acc.on_exec_end(dir.path());
+
+    let diff = acc.get_unified_diff().unwrap().unwrap();
+    let diff = normalize_diff_for_test(&diff, dir.path());
+    let expected = {
+        let left_oid = git_blob_sha1_hex("base\n");
+        let right_oid = git_blob_sha1_hex("base\nnext\n");
+        format!(
+            r#"diff --git a/tracked.txt b/tracked.txt
+index {left_oid}..{right_oid}
+--- a/tracked.txt
++++ b/tracked.txt
+@@ -1 +1,2 @@
+ base
++next
+"#,
+        )
+    };
+    assert_eq!(diff, expected);
+}
+
+#[test]
+fn exec_tracking_uses_dirty_worktree_state_as_baseline() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+    let file = dir.path().join("dirty.txt");
+    fs::write(&file, "base\n").unwrap();
+    git(dir.path(), &["add", "dirty.txt"]);
+    git(dir.path(), &["commit", "-m", "init", "--quiet"]);
+
+    // Simulate user edits that existed before the current turn started.
+    fs::write(&file, "user\n").unwrap();
+
+    let mut acc = TurnDiffTracker::new();
+    acc.on_exec_begin(dir.path());
+    fs::write(&file, "user\nagent\n").unwrap();
+    acc.on_exec_end(dir.path());
+
+    let diff = acc.get_unified_diff().unwrap().unwrap();
+    let diff = normalize_diff_for_test(&diff, dir.path());
+    let expected = {
+        let left_oid = git_blob_sha1_hex("user\n");
+        let right_oid = git_blob_sha1_hex("user\nagent\n");
+        format!(
+            r#"diff --git a/dirty.txt b/dirty.txt
+index {left_oid}..{right_oid}
+--- a/dirty.txt
++++ b/dirty.txt
+@@ -1 +1,2 @@
+ user
++agent
+"#,
+        )
+    };
+    assert_eq!(diff, expected);
+}
+
+#[test]
+fn exec_tracking_non_git_emits_diff_for_created_file() {
+    let dir = tempdir().unwrap();
+    let mut acc = TurnDiffTracker::new();
+    let file = dir.path().join("created.py");
+
+    acc.on_exec_begin(dir.path());
+    fs::write(&file, "print('hi')\n").unwrap();
+    acc.on_exec_end(dir.path());
+
+    let diff = acc.get_unified_diff().unwrap().unwrap();
+    let diff = normalize_diff_for_test(&diff, dir.path());
+    let expected = {
+        let mode = file_mode_for_path(&file).unwrap_or(FileMode::Regular);
+        let right_oid = git_blob_sha1_hex("print('hi')\n");
+        format!(
+            r#"diff --git a/<TMP>/created.py b/<TMP>/created.py
+new file mode {mode}
+index {ZERO_OID}..{right_oid}
+--- {DEV_NULL}
++++ b/<TMP>/created.py
+@@ -0,0 +1 @@
++print('hi')
+"#,
+        )
+    };
+    assert_eq!(diff, expected);
 }

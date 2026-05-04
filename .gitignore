@@ -12,6 +12,7 @@
 
 # Build outputs
 /Agent/entry/build/
+/Agent/entry/libs/
 /Agent/.hvigor/
 /Agent/oh_modules/
 /Agent/.preview/
