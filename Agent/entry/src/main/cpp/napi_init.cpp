@@ -49,6 +49,8 @@ struct BridgeApi {
     int32_t (*save_prompts_registry)(const char*, const char*) = nullptr;
     const char* (*read_agents_md)(const char*) = nullptr;
     int32_t (*write_agents_md)(const char*, const char*) = nullptr;
+    const char* (*enable_prompt)(const char*, const char*) = nullptr;
+    int32_t (*disable_all_prompts)(const char*) = nullptr;
     const char* (*initialize)(const char*) = nullptr;
     const char* (*thread_start)(const char*) = nullptr;
     const char* (*thread_list)(const char*) = nullptr;
@@ -66,6 +68,8 @@ struct BridgeApi {
     const char* (*mcp_config_read)(const char*) = nullptr;
     int32_t (*mcp_config_write)(const char*) = nullptr;
     int32_t (*mcp_config_batch_write)(const char*) = nullptr;
+    int32_t (*mcp_config_add)(const char*) = nullptr;
+    int32_t (*mcp_config_remove)(const char*) = nullptr;
     int32_t (*mcp_reload)(void) = nullptr;
     const char* (*mcp_oauth_start)(const char*) = nullptr;
     const char* (*account_login)(const char*) = nullptr;
@@ -110,6 +114,8 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_save_prompts_registry", &api->save_prompts_registry) &&
         LoadSymbol(api->handle, "codex_ohos_host_read_agents_md", &api->read_agents_md) &&
         LoadSymbol(api->handle, "codex_ohos_host_write_agents_md", &api->write_agents_md) &&
+        LoadSymbol(api->handle, "codex_ohos_host_enable_prompt", &api->enable_prompt) &&
+        LoadSymbol(api->handle, "codex_ohos_host_disable_all_prompts", &api->disable_all_prompts) &&
         LoadSymbol(api->handle, "codex_ohos_host_initialize", &api->initialize) &&
         LoadSymbol(api->handle, "codex_ohos_host_thread_start", &api->thread_start) &&
         LoadSymbol(api->handle, "codex_ohos_host_thread_list", &api->thread_list) &&
@@ -127,6 +133,8 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_mcp_config_read", &api->mcp_config_read) &&
         LoadSymbol(api->handle, "codex_ohos_host_mcp_config_write", &api->mcp_config_write) &&
         LoadSymbol(api->handle, "codex_ohos_host_mcp_config_batch_write", &api->mcp_config_batch_write) &&
+        LoadSymbol(api->handle, "codex_ohos_host_mcp_config_add", &api->mcp_config_add) &&
+        LoadSymbol(api->handle, "codex_ohos_host_mcp_config_remove", &api->mcp_config_remove) &&
         LoadSymbol(api->handle, "codex_ohos_host_mcp_reload", &api->mcp_reload) &&
         LoadSymbol(api->handle, "codex_ohos_host_mcp_oauth_start", &api->mcp_oauth_start) &&
         LoadSymbol(api->handle, "codex_ohos_host_account_login", &api->account_login) &&
@@ -496,6 +504,25 @@ napi_value WriteAgentsMd(napi_env env, napi_callback_info info) {
     UnloadBridgeApi(&api); return result;
 }
 
+napi_value EnablePrompt(napi_env env, napi_callback_info info) {
+    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char codex_home[MAX_HOME_ARG_LEN], prompt_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; prompt_id[0] = '\0';
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], prompt_id, sizeof(prompt_id))) { UnloadBridgeApi(&api); return nullptr; }
+    napi_value result = CreateUtf8String(env, api.enable_prompt(codex_home[0] == '\0' ? nullptr : codex_home, prompt_id[0] == '\0' ? nullptr : prompt_id));
+    UnloadBridgeApi(&api); return result;
+}
+
+napi_value DisableAllPrompts(napi_env env, napi_callback_info info) {
+    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    size_t argc = 1; napi_value args[1] = {nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char codex_home[MAX_HOME_ARG_LEN]; codex_home[0] = '\0';
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
+    napi_value result = CreateInt32(env, api.disable_all_prompts(codex_home[0] == '\0' ? nullptr : codex_home));
+    UnloadBridgeApi(&api); return result;
+}
+
 napi_value InitializeBridge(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->initialize); return result; }
 napi_value ThreadStart(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_start); return result; }
 napi_value ThreadList(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_list); return result; }
@@ -513,6 +540,8 @@ napi_value McpStatusList(napi_env env, napi_callback_info info) { BridgeApi api;
 napi_value McpConfigRead(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.mcp_config_read); UnloadBridgeApi(&api); return result; }
 napi_value McpConfigWrite(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_write); UnloadBridgeApi(&api); return result; }
 napi_value McpConfigBatchWrite(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_batch_write); UnloadBridgeApi(&api); return result; }
+napi_value McpConfigAdd(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_add); UnloadBridgeApi(&api); return result; }
+napi_value McpConfigRemove(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_remove); UnloadBridgeApi(&api); return result; }
 napi_value McpReload(napi_env env, napi_callback_info info) { (void)info; BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateInt32(env, api.mcp_reload()); UnloadBridgeApi(&api); return result; }
 napi_value McpOauthStart(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.mcp_oauth_start); UnloadBridgeApi(&api); return result; }
 napi_value AccountLogin(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.account_login); UnloadBridgeApi(&api); return result; }
@@ -560,6 +589,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"savePromptsRegistry", nullptr, SavePromptsRegistry, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"readAgentsMd", nullptr, ReadAgentsMd, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"writeAgentsMd", nullptr, WriteAgentsMd, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"enablePrompt", nullptr, EnablePrompt, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"disableAllPrompts", nullptr, DisableAllPrompts, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"initialize", nullptr, InitializeBridge, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"threadStart", nullptr, ThreadStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"threadList", nullptr, ThreadList, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -577,6 +608,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"mcpConfigRead", nullptr, McpConfigRead, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mcpConfigWrite", nullptr, McpConfigWrite, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mcpConfigBatchWrite", nullptr, McpConfigBatchWrite, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"mcpConfigAdd", nullptr, McpConfigAdd, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"mcpConfigRemove", nullptr, McpConfigRemove, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mcpReload", nullptr, McpReload, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mcpOauthStart", nullptr, McpOauthStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"accountLogin", nullptr, AccountLogin, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -5,7 +5,10 @@
       "Bash(cargo check *)",
       "Bash(Get-ChildItem D:\\\\code\\\\harmony\\\\ArkPilot\\\\libcodexhost-builder *)",
       "PowerShell(& \"D:\\\\code\\\\harmony\\\\ArkPilot\\\\libcodexhost-builder\\\\build.ps1\" debug x86_64)",
-      "PowerShell(Get-ChildItem *)"
+      "PowerShell(Get-ChildItem *)",
+      "Bash(Select-Object -Last 20)",
+      "Bash(git check-ignore *)",
+      "Bash(git rm *)"
     ]
   }
 }

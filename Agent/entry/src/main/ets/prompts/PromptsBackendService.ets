@@ -1,4 +1,4 @@
-import { getPromptsRegistry, savePromptsRegistry, readAgentsMd, writeAgentsMd } from '../backend/CodexNative';
+import { getPromptsRegistry, savePromptsRegistry, readAgentsMd, writeAgentsMd, enablePromptNative, disableAllPromptsNative } from '../backend/CodexNative';
 import { PromptRecord, PromptImportResult } from './PromptTypes';
 
 const MAX_NAME_LEN = 100;
@@ -12,19 +12,20 @@ export enum PromptErrorCode {
 
 export class PromptError extends Error {
   code: PromptErrorCode;
-  context: Record<string, string>;
+  context: Map<string, string>;
   suggestion: string;
 
-  constructor(code: PromptErrorCode, context: Record<string, string>, suggestion: string) {
+  constructor(code: PromptErrorCode, context: Map<string, string>, suggestion: string) {
     let ctxStr: string = '';
-    const keys: string[] = Object.keys(context);
-    for (let i: number = 0; i < keys.length; i++) {
-      if (i > 0) {
+    let first: boolean = true;
+    context.forEach((value: string, key: string) => {
+      if (!first) {
         ctxStr += ', ';
       }
-      ctxStr += keys[i] + '=' + context[keys[i]];
-    }
-    super(`[${code}] ${ctxStr}`);
+      ctxStr += key + '=' + value;
+      first = false;
+    });
+    super('[' + code + '] ' + ctxStr);
     this.name = 'PromptError';
     this.code = code;
     this.context = context;
@@ -32,14 +33,14 @@ export class PromptError extends Error {
   }
 }
 
-export const PROMPT_ERROR_MESSAGES: Record<PromptErrorCode, string> = {
-  [PromptErrorCode.INVALID_NAME]: '名称不合法，不能为空且不超过 100 个字符',
-  [PromptErrorCode.NOT_FOUND]: '未找到指定的 Prompt',
-  [PromptErrorCode.CANNOT_DELETE_ENABLED]: '无法删除当前已启用的 Prompt，请先切换到其他 Prompt',
-};
+export const PROMPT_ERROR_MESSAGES: Map<PromptErrorCode, string> = new Map([
+  [PromptErrorCode.INVALID_NAME, '名称不合法，不能为空且不超过 100 个字符'],
+  [PromptErrorCode.NOT_FOUND, '未找到指定的 Prompt'],
+  [PromptErrorCode.CANNOT_DELETE_ENABLED, '无法删除当前已启用的 Prompt，请先切换到其他 Prompt'],
+]);
 
-function makeErrorCtx(): Record<string, string> {
-  return {} as Record<string, string>;
+function makeErrorCtx(): Map<string, string> {
+  return new Map<string, string>();
 }
 
 export class PromptsBackendService {
@@ -72,8 +73,8 @@ export class PromptsBackendService {
   async savePrompt(prompt: PromptRecord): Promise<void> {
     const name: string = prompt.name.trim();
     if (name.length === 0 || name.length > MAX_NAME_LEN) {
-      const ctx: Record<string, string> = makeErrorCtx();
-      ctx['name'] = prompt.name;
+      const ctx: Map<string, string> = makeErrorCtx();
+      ctx.set('name', prompt.name);
       throw new PromptError(PromptErrorCode.INVALID_NAME, ctx, '名称不能为空且不超过 100 个字符');
     }
 
@@ -91,6 +92,10 @@ export class PromptsBackendService {
     }
 
     await this.savePrompts(prompts);
+
+    if (prompt.enabled) {
+      await this.enablePrompt(prompt.id);
+    }
   }
 
   async deletePrompt(id: string): Promise<void> {
@@ -98,14 +103,14 @@ export class PromptsBackendService {
     const prompt: PromptRecord | undefined = prompts.find((p: PromptRecord) => p.id === id);
 
     if (!prompt) {
-      const ctx: Record<string, string> = makeErrorCtx();
-      ctx['id'] = id;
+      const ctx: Map<string, string> = makeErrorCtx();
+      ctx.set('id', id);
       throw new PromptError(PromptErrorCode.NOT_FOUND, ctx, 'Prompt 不存在');
     }
     if (prompt.enabled) {
-      const ctx: Record<string, string> = makeErrorCtx();
-      ctx['id'] = id;
-      ctx['name'] = prompt.name;
+      const ctx: Map<string, string> = makeErrorCtx();
+      ctx.set('id', id);
+      ctx.set('name', prompt.name);
       throw new PromptError(PromptErrorCode.CANNOT_DELETE_ENABLED, ctx,
         '无法删除已启用的 Prompt，请先启用其他 Prompt 或全部禁用');
     }
@@ -115,63 +120,25 @@ export class PromptsBackendService {
   }
 
   async enablePrompt(id: string): Promise<void> {
-    const prompts: PromptRecord[] = await this.getPrompts();
-    const target: PromptRecord | undefined = prompts.find((p: PromptRecord) => p.id === id);
-
-    if (!target) {
-      const ctx: Record<string, string> = makeErrorCtx();
-      ctx['id'] = id;
+    const json: string = enablePromptNative(this.codexHome, id);
+    const parsed: Record<string, Object> = JSON.parse(json) as Record<string, Object>;
+    if (parsed['error'] !== undefined && parsed['error'] !== null) {
+      const ctx: Map<string, string> = makeErrorCtx();
+      ctx.set('id', id);
+      throw new PromptError(PromptErrorCode.NOT_FOUND, ctx, String(parsed['error']));
+    }
+    if (!parsed['id'] || String(parsed['id']).length === 0) {
+      const ctx: Map<string, string> = makeErrorCtx();
+      ctx.set('id', id);
       throw new PromptError(PromptErrorCode.NOT_FOUND, ctx, 'Prompt 不存在');
     }
-    if (target.enabled) {
-      return;
-    }
-
-    const currentEnabled: PromptRecord | undefined = prompts.find((p: PromptRecord) => p.enabled);
-    if (currentEnabled) {
-      const liveContent: string = readAgentsMd(this.codexHome);
-      if (liveContent.length > 0 && liveContent !== currentEnabled.content) {
-        currentEnabled.content = liveContent;
-        currentEnabled.updatedAt = Date.now();
-      }
-    } else {
-      const liveContent: string = readAgentsMd(this.codexHome);
-      if (liveContent.length > 0) {
-        const backupId: string = `auto-backup-${Date.now()}`;
-        const backup: PromptRecord = new PromptRecord(
-          backupId, 'Auto Backup', liveContent,
-          'AGENTS.md 自动备份', false, Date.now(), 0
-        );
-        prompts.push(backup);
-      }
-    }
-
-    for (let i: number = 0; i < prompts.length; i++) {
-      prompts[i].enabled = prompts[i].id === id;
-    }
-
-    writeAgentsMd(this.codexHome, target.content);
-    await this.savePrompts(prompts);
   }
 
   async disableAll(): Promise<void> {
-    const prompts: PromptRecord[] = await this.getPrompts();
-
-    const currentEnabled: PromptRecord | undefined = prompts.find((p: PromptRecord) => p.enabled);
-    if (currentEnabled) {
-      const liveContent: string = readAgentsMd(this.codexHome);
-      if (liveContent.length > 0) {
-        currentEnabled.content = liveContent;
-        currentEnabled.updatedAt = Date.now();
-      }
+    const ok: boolean = disableAllPromptsNative(this.codexHome);
+    if (!ok) {
+      throw new Error('Failed to disable all prompts');
     }
-
-    for (let i: number = 0; i < prompts.length; i++) {
-      prompts[i].enabled = false;
-    }
-
-    writeAgentsMd(this.codexHome, '');
-    await this.savePrompts(prompts);
   }
 
   async getLiveContent(): Promise<string> {
@@ -185,9 +152,9 @@ export class PromptsBackendService {
       return null;
     }
 
-    const id: string = `imported-${Date.now()}`;
+    const id: string = 'imported-' + Date.now();
     const firstLine: string = content.trimStart().split('\n')[0].replace(/^#\s*/, '');
-    const name: string = firstLine.length > 0 ? `Imported: ${firstLine.substring(0, 50)}` : 'Imported';
+    const name: string = firstLine.length > 0 ? 'Imported: ' + firstLine.substring(0, 50) : 'Imported';
 
     const prompt: PromptRecord = new PromptRecord(
       id, name, content,
@@ -212,7 +179,7 @@ export class PromptsBackendService {
       return;
     }
 
-    const id: string = `auto-imported-${Date.now()}`;
+    const id: string = 'auto-imported-' + Date.now();
     const firstLine: string = content.trimStart().split('\n')[0].replace(/^#\s*/, '');
     const name: string = firstLine.length > 0 ? firstLine.substring(0, 80) : 'Auto Imported';
 

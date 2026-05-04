@@ -17,3 +17,6 @@
 /Agent/.preview/
 
 # Keep design references versioned; ignore generated exports separately if needed later.
+
+# Native shared libraries (built artifacts)
+*.so

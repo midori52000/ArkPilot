@@ -107,6 +107,10 @@ struct SettingsPage {
   @State private mcpEnvDraft: string = '{}';
   @State private mcpEnabledDraft: boolean = true;
   @State private mcpStatusText: string = '等待 MCP backend 加载状态。';
+  @State private mcpNewServerName: string = '';
+  @State private showMcpAddDialog: boolean = false;
+  @State private showMcpDeleteDialog: boolean = false;
+  @State private pendingDeleteMcpName: string = '';
 
   @State private installedSkills: InstalledSkill[] = [];
   @State private skillRepos: SkillRepo[] = [];
@@ -452,6 +456,7 @@ struct SettingsPage {
       case 'pending':
       case 'required':
       case 'degraded':
+      case 'warning':
         return '#FEF3C7';
       case 'Draft':
       case 'unknown':
@@ -471,6 +476,7 @@ struct SettingsPage {
       case 'pending':
       case 'required':
       case 'degraded':
+      case 'warning':
         return '#92400E';
       case 'Draft':
       case 'unknown':
@@ -501,6 +507,8 @@ struct SettingsPage {
     switch (status) {
       case 'ok':
         return 'Healthy';
+      case 'warning':
+        return 'No Tools';
       case 'degraded':
         return 'Attention';
       case 'error':
@@ -560,6 +568,16 @@ struct SettingsPage {
       });
   }
 
+  private revertMcpDraft(): void {
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可还原的 MCP server。', 'warning');
+      return;
+    }
+    this.loadMcpDraft(server.id);
+    this.triggerFeedback(`已还原 ${server.name} 的草稿。`, 'info');
+  }
+
   private reloadMcpDraft(): void {
     codexBackend.reloadMcpServers()
       .then(() => {
@@ -583,6 +601,73 @@ struct SettingsPage {
       .then(() => {
         this.syncMcpStateFromBackend();
         this.triggerFeedback(`已为 ${server.name} 发起 OAuth 登录。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private openMcpAddDialog(): void {
+    this.mcpNewServerName = '';
+    this.showMcpAddDialog = true;
+  }
+
+  private cancelMcpAdd(): void {
+    this.showMcpAddDialog = false;
+    this.mcpNewServerName = '';
+  }
+
+  private confirmMcpAdd(): void {
+    const name: string = this.mcpNewServerName.trim();
+    if (name.length === 0) {
+      this.triggerFeedback('server 名称不能为空。', 'warning');
+      return;
+    }
+    for (let i: number = 0; i < this.mcpServers.length; i += 1) {
+      if (this.mcpServers[i].name === name) {
+        this.triggerFeedback('已存在同名 MCP server。', 'warning');
+        return;
+      }
+    }
+    codexBackend.addMcpServer(name, 'stdio', '', '[]', '', '{}')
+      .then(() => {
+        this.showMcpAddDialog = false;
+        this.mcpNewServerName = '';
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已添加 MCP server: ${name}`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private openMcpDeleteDialog(): void {
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可删除的 MCP server。', 'warning');
+      return;
+    }
+    this.pendingDeleteMcpName = server.name;
+    this.showMcpDeleteDialog = true;
+  }
+
+  private cancelMcpDelete(): void {
+    this.showMcpDeleteDialog = false;
+    this.pendingDeleteMcpName = '';
+  }
+
+  private confirmMcpDelete(): void {
+    const name: string = this.pendingDeleteMcpName;
+    this.cancelMcpDelete();
+    if (name.length === 0) {
+      return;
+    }
+    codexBackend.removeMcpServer(name)
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已删除 MCP server: ${name}`, 'success');
       })
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
@@ -1787,6 +1872,20 @@ struct SettingsPage {
       Row() {
         Column() {
           this.sectionCard('Servers', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
+          if (this.mcpServers.length === 0) {
+            Column() {
+              Text('暂无 MCP Server')
+                .fontSize(14)
+                .fontColor('#94A3B8')
+                .margin({ top: 24 })
+              Text('点击下方按钮添加第一个 MCP server')
+                .fontSize(12)
+                .fontColor('#CBD5E1')
+                .margin({ top: 8 })
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+          }
           Column() {
             ForEach(this.mcpServers, (server: McpServerRecord) => {
               this.mcpServerCard(server)
@@ -1794,6 +1893,21 @@ struct SettingsPage {
           }
           .width('100%')
           .margin({ top: 12 })
+
+          Button('+ Add Server')
+            .width('100%')
+            .height(40)
+            .margin({ top: 10 })
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#0A84FF')
+            .backgroundColor('#F0F7FF')
+            .borderRadius(16)
+            .border({ width: 1, color: '#BDD7FF' })
+            .scale({ x: this.pressScale('mcp-add'), y: this.pressScale('mcp-add') })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
+            .onClick(() => { this.openMcpAddDialog(); })
         }
         .width('34%')
 
@@ -1896,35 +2010,39 @@ struct SettingsPage {
           this.optionChip('false', !this.mcpEnabledDraft, 'mcp-enabled-false', () => { this.mcpEnabledDraft = false; })
         }
 
-        this.formLabel('Command')
-        TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / binary path' })
-          .width('100%')
-          .height(40)
-          .backgroundColor('#F8FAFC')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .margin({ top: 6 })
-          .onChange((value: string) => { this.mcpCommandDraft = value; })
+        if (this.mcpTransportTypeDraft === 'stdio') {
+          this.formLabel('Command')
+          TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / binary path' })
+            .width('100%')
+            .height(40)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12 })
+            .margin({ top: 6 })
+            .onChange((value: string) => { this.mcpCommandDraft = value; })
 
-        this.formLabel('Args JSON')
-        TextInput({ text: this.mcpArgsDraft, placeholder: '["--flag"]' })
-          .width('100%')
-          .height(40)
-          .backgroundColor('#F8FAFC')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .margin({ top: 6 })
-          .onChange((value: string) => { this.mcpArgsDraft = value; })
+          this.formLabel('Args JSON')
+          TextInput({ text: this.mcpArgsDraft, placeholder: '["--flag"]' })
+            .width('100%')
+            .height(40)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12 })
+            .margin({ top: 6 })
+            .onChange((value: string) => { this.mcpArgsDraft = value; })
+        }
 
-        this.formLabel('URL')
-        TextInput({ text: this.mcpUrlDraft, placeholder: 'https://example.com/mcp' })
-          .width('100%')
-          .height(40)
-          .backgroundColor('#F8FAFC')
-          .borderRadius(14)
-          .padding({ left: 12, right: 12 })
-          .margin({ top: 6 })
-          .onChange((value: string) => { this.mcpUrlDraft = value; })
+        if (this.mcpTransportTypeDraft === 'http') {
+          this.formLabel('URL')
+          TextInput({ text: this.mcpUrlDraft, placeholder: 'https://example.com/mcp' })
+            .width('100%')
+            .height(40)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12 })
+            .margin({ top: 6 })
+            .onChange((value: string) => { this.mcpUrlDraft = value; })
+        }
 
         this.formLabel('Environment')
         TextArea({ text: this.mcpEnvDraft, placeholder: '{"KEY":"VALUE"}' })
@@ -1937,6 +2055,8 @@ struct SettingsPage {
           .onChange((value: string) => { this.mcpEnvDraft = value; })
 
         Row() {
+          this.actionButton('Delete Server', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
+          this.actionButton('Revert', 'mcp-revert', false, () => { this.revertMcpDraft(); })
           this.actionButton('OAuth Login', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
           this.actionButton('Reload MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
           this.actionButton('Save Config', 'mcp-save', true, () => { this.saveMcpDraft(); })
@@ -1969,6 +2089,31 @@ struct SettingsPage {
         this.optionChip('Installed', this.skillsActiveSubTab === 'installed', 'skill-tab-installed', () => { this.skillsActiveSubTab = 'installed'; })
         this.optionChip('Repos', this.skillsActiveSubTab === 'repos', 'skill-tab-repos', () => { this.skillsActiveSubTab = 'repos'; })
         this.optionChip('Backups', this.skillsActiveSubTab === 'backups', 'skill-tab-backups', () => { this.skillsActiveSubTab = 'backups'; })
+
+        Blank().layoutWeight(1)
+
+        Button('刷新')
+          .height(30)
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#6366F1')
+          .backgroundColor('#EEF2FF')
+          .borderRadius(10)
+          .border({ width: 1, color: '#C7D2FE' })
+          .padding({ left: 12, right: 12 })
+          .scale({ x: this.pressScale('skill-refresh'), y: this.pressScale('skill-refresh') })
+          .animation({ duration: 120, curve: Curve.EaseOut })
+          .onTouch((event: TouchEvent) => { this.updatePressed('skill-refresh', event); })
+          .onClick(() => {
+            skillsVM.loadInstalled(true)
+              .then(() => {
+                this.syncSkillsStateFromViewModel();
+                this.triggerFeedback(`扫描完成，发现 ${this.installedSkills.length} 个 skill`, 'success');
+              })
+              .catch((err: Object) => {
+                this.triggerFeedback(this.describeRuntimeError(err), 'error');
+              });
+          })
       }
       .width('100%')
       .margin({ top: 16 })
@@ -3239,6 +3384,151 @@ struct SettingsPage {
     }
   }
 
+  @Builder
+  private mcpAddDialog() {
+    if (this.showMcpAddDialog) {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#0F172A')
+          .opacity(0.18)
+          .onClick(() => { this.cancelMcpAdd(); })
+
+        Column() {
+          Text('新增 MCP Server')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#0F172A')
+
+          Text('输入 server 名称，创建后可在编辑器中配置详细参数。')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(12)
+            .fontColor('#64748B')
+            .lineHeight(20)
+            .margin({ top: 10 })
+
+          TextInput({ text: this.mcpNewServerName, placeholder: '例如 my-mcp-server' })
+            .width('100%')
+            .height(40)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12 })
+            .margin({ top: 14 })
+            .onChange((value: string) => { this.mcpNewServerName = value; })
+
+          Row() {
+            Button('取消')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#475569')
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('mcp-add-cancel'), y: this.pressScale('mcp-add-cancel') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-cancel', event); })
+              .onClick(() => { this.cancelMcpAdd(); })
+
+            Button('创建')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#0A84FF')
+              .borderRadius(14)
+              .margin({ left: 12 })
+              .scale({ x: this.pressScale('mcp-add-confirm'), y: this.pressScale('mcp-add-confirm') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-confirm', event); })
+              .onClick(() => { this.confirmMcpAdd(); })
+          }
+          .width('100%')
+          .margin({ top: 20 })
+        }
+        .width(420)
+        .padding(22)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' })
+        .borderRadius(24)
+      }
+      .width('100%')
+      .height('100%')
+    }
+  }
+
+  @Builder
+  private mcpDeleteDialog() {
+    if (this.showMcpDeleteDialog) {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#0F172A')
+          .opacity(0.18)
+          .onClick(() => { this.cancelMcpDelete(); })
+
+        Column() {
+          Text('确认删除 MCP Server')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#0F172A')
+
+          Text(`将从配置中移除 "${this.pendingDeleteMcpName}"，此操作不可撤销。`)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(12)
+            .fontColor('#64748B')
+            .lineHeight(20)
+            .margin({ top: 10 })
+
+          Row() {
+            Button('取消')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#475569')
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('mcp-delete-cancel'), y: this.pressScale('mcp-delete-cancel') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-cancel', event); })
+              .onClick(() => { this.cancelMcpDelete(); })
+
+            Button('确认删除')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#F97373')
+              .borderRadius(14)
+              .margin({ left: 12 })
+              .scale({ x: this.pressScale('mcp-delete-confirm'), y: this.pressScale('mcp-delete-confirm') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-confirm', event); })
+              .onClick(() => { this.confirmMcpDelete(); })
+          }
+          .width('100%')
+          .margin({ top: 20 })
+        }
+        .width(420)
+        .padding(22)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' })
+        .borderRadius(24)
+      }
+      .width('100%')
+      .height('100%')
+    }
+  }
+
   private skillDetailSourceLabel(): string {
     if (this.selectedSkillDetail === null) {
       return '';
@@ -3402,6 +3692,8 @@ struct SettingsPage {
       this.toastHost()
       this.skillDeleteDialog()
       this.skillDetailDialog()
+      this.mcpAddDialog()
+      this.mcpDeleteDialog()
     }
     .width('100%')
     .height('100%')

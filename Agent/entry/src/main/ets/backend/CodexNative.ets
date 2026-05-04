@@ -431,6 +431,29 @@ export function writeAgentsMd(codexHome: string, content: string): boolean {
   }
 }
 
+export function enablePromptNative(codexHome: string, promptId: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    const result = nativeBridge!.enablePrompt(codexHome, promptId);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{}';
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function disableAllPromptsNative(codexHome: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.disableAllPrompts(codexHome) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
 export function initializeNative(configJson: string): string {
   if (nativeModuleUnavailable()) {
     return '{}';
@@ -613,6 +636,28 @@ export function mcpConfigBatchWriteNative(paramsJson: string): boolean {
   }
   try {
     return nativeBridge!.mcpConfigBatchWrite(paramsJson) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function mcpConfigAddNative(paramsJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.mcpConfigAdd(paramsJson) === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+export function mcpConfigRemoveNative(paramsJson: string): boolean {
+  if (nativeModuleUnavailable()) {
+    return false;
+  }
+  try {
+    return nativeBridge!.mcpConfigRemove(paramsJson) === 0;
   } catch (_err) {
     return false;
   }

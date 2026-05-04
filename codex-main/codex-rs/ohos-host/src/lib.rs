@@ -273,6 +273,19 @@ struct NativeMcpConfigBatchWriteRequest {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct NativeMcpConfigAddRequest {
+    name: String,
+    config: serde_json::Value,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeMcpConfigRemoveRequest {
+    name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NativeThreadArchiveRequest {
     thread_id: String,
 }
@@ -393,6 +406,9 @@ static LAST_PROMPTS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 });
 static LAST_AGENTS_MD_CONTENT: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("").expect("empty cstring"))
+});
+static LAST_ENABLE_PROMPT_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
 });
 static LAST_INIT_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{}").expect("empty cstring"))
@@ -817,6 +833,39 @@ pub extern "C" fn codex_ohos_host_write_agents_md(
             Ok(()) => 0,
             Err(_) => 1,
         },
+        Err(_) => 1,
+    }
+}
+
+// ========== Prompts Enable / DisableAll with AGENTS.md sync ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_enable_prompt(
+    codex_home: *const c_char,
+    prompt_id: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(id) = ffi_string(prompt_id) else {
+        return write_cstring(&LAST_ENABLE_PROMPT_RESULT_JSON, "{}");
+    };
+    match prompts_registry::enable_prompt_with_agents_md(&codex_home, &id) {
+        Ok(entry) => {
+            let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
+            write_cstring(&LAST_ENABLE_PROMPT_RESULT_JSON, &json)
+        }
+        Err(e) => {
+            write_cstring(&LAST_ENABLE_PROMPT_RESULT_JSON, &format!("{{\"error\":\"{}\"}}", e))
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_disable_all_prompts(
+    codex_home: *const c_char,
+) -> i32 {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    match prompts_registry::disable_all_with_agents_md(&codex_home) {
+        Ok(()) => 0,
         Err(_) => 1,
     }
 }
@@ -1858,6 +1907,81 @@ pub extern "C" fn codex_ohos_host_mcp_config_batch_write(params_json: *const c_c
         Ok(()) => 0,
         Err(err) => {
             set_host_message(format!("failed to batch write MCP config: {err}"));
+            1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_config_add(params_json: *const c_char) -> i32 {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = match serde_json::from_str::<NativeMcpConfigAddRequest>(&params_text) {
+        Ok(request) => request,
+        Err(err) => {
+            set_host_message(format!("failed to parse MCP config add request: {err}"));
+            return 1;
+        }
+    };
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        set_host_message("MCP server name cannot be empty".to_string());
+        return 1;
+    }
+    let codex_home = resolve_codex_home(None);
+    let result = (|| -> Result<()> {
+        let mut servers = with_runtime_result(async {
+            load_global_mcp_servers(&codex_home)
+                .await
+                .map_err(anyhow::Error::from)
+        })?;
+        if servers.contains_key(&name) {
+            anyhow::bail!("MCP server '{name}' already exists");
+        }
+        let parsed = parse_mcp_server_value(request.config)?;
+        servers.insert(name, parsed);
+        write_mcp_servers(&codex_home, &servers)
+    })();
+    match result {
+        Ok(()) => 0,
+        Err(err) => {
+            set_host_message(format!("failed to add MCP server: {err}"));
+            1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_mcp_config_remove(params_json: *const c_char) -> i32 {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = match serde_json::from_str::<NativeMcpConfigRemoveRequest>(&params_text) {
+        Ok(request) => request,
+        Err(err) => {
+            set_host_message(format!("failed to parse MCP config remove request: {err}"));
+            return 1;
+        }
+    };
+    let name = request.name.trim().to_string();
+    if name.is_empty() {
+        set_host_message("MCP server name cannot be empty".to_string());
+        return 1;
+    }
+    let codex_home = resolve_codex_home(None);
+    let result = (|| -> Result<()> {
+        let mut servers = with_runtime_result(async {
+            load_global_mcp_servers(&codex_home)
+                .await
+                .map_err(anyhow::Error::from)
+        })?;
+        if !servers.contains_key(&name) {
+            anyhow::bail!("MCP server '{name}' not found");
+        }
+        servers.remove(&name);
+        write_mcp_servers(&codex_home, &servers)
+    })();
+    match result {
+        Ok(()) => 0,
+        Err(err) => {
+            set_host_message(format!("failed to remove MCP server: {err}"));
             1
         }
     }

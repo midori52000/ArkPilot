@@ -70,6 +70,8 @@ export interface EntryBridgeModule {
   savePromptsRegistry: (codexHome?: string, registryJson?: string) => number;
   readAgentsMd: (codexHome?: string) => string;
   writeAgentsMd: (codexHome?: string, content?: string) => number;
+  enablePrompt: (codexHome?: string, promptId?: string) => string;
+  disableAllPrompts: (codexHome?: string) => number;
   initialize: (configJson?: string) => string;
   threadStart: (paramsJson?: string) => string;
   threadList: (paramsJson?: string) => string;
@@ -87,6 +89,8 @@ export interface EntryBridgeModule {
   mcpConfigRead: (paramsJson?: string) => string;
   mcpConfigWrite: (paramsJson?: string) => number;
   mcpConfigBatchWrite: (paramsJson?: string) => number;
+  mcpConfigAdd: (paramsJson?: string) => number;
+  mcpConfigRemove: (paramsJson?: string) => number;
   mcpReload: () => number;
   mcpOauthStart: (paramsJson?: string) => string;
   accountLogin: (paramsJson?: string) => string;

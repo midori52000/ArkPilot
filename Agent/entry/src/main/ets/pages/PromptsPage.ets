@@ -8,7 +8,6 @@ export struct PromptsPage {
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private showDeleteConfirm: boolean = false;
   @State private deleteTarget: PromptRecord | null = null;
-  @State private activeTab: string = 'preview';
 
   aboutToAppear(): void {
     if (this.codexHome.length > 0) {
@@ -36,6 +35,7 @@ export struct PromptsPage {
   }
 
   build() {
+    Stack() {
     Row() {
       // Left: Prompt list
       Column() {
@@ -59,7 +59,7 @@ export struct PromptsPage {
         .padding(12)
 
         Row() {
-          Text(`共 ${this.promptsViewModel.state.prompts.length} 个 · 已启用: ${this.promptsViewModel.activePromptName}`)
+          Text('共 ' + this.promptsViewModel.state.prompts.length + ' 个 · 已启用: ' + this.promptsViewModel.activePromptName)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#888')
@@ -92,13 +92,23 @@ export struct PromptsPage {
               .fontSize(12)
               .fontColor('#999')
               .margin({ top: 4 })
-            Button('+ 创建第一个 Prompt')
-              .fontSize(13)
-              .margin({ top: 16 })
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(14)
-              .onClick(() => this.promptsViewModel.startEditing(null))
+            Row() {
+              Button('+ 创建第一个 Prompt')
+                .fontSize(13)
+                .backgroundColor('#111827')
+                .fontColor('#FFFFFF')
+                .borderRadius(14)
+                .onClick(() => this.promptsViewModel.startEditing(null))
+              Button('从 AGENTS.md 导入')
+                .fontSize(13)
+                .backgroundColor('#FFFFFF')
+                .fontColor('#334155')
+                .borderRadius(14)
+                .border({ width: 1, color: '#CBD5E1' })
+                .margin({ left: 8 })
+                .onClick(() => this.promptsViewModel.importFromFile())
+            }
+            .margin({ top: 16 })
           }
           .width('100%')
           .layoutWeight(1)
@@ -167,8 +177,9 @@ export struct PromptsPage {
                 .border({ width: 1, color: prompt.enabled ? '#BBF7D0' : '#E5E7EB' })
                 .borderRadius(14)
                 .margin({ bottom: 8 })
+                .opacity(this.promptsViewModel.state.operating ? 0.6 : 1.0)
                 .onClick(() => {
-                  if (!prompt.enabled) {
+                  if (!prompt.enabled && !this.promptsViewModel.state.operating) {
                     this.promptsViewModel.enablePrompt(prompt.id);
                   }
                 })
@@ -180,6 +191,36 @@ export struct PromptsPage {
           .scrollBar(BarState.Off)
         }
 
+        if (this.promptsViewModel.state.statusMessage.length > 0) {
+          Row() {
+            Text(this.promptsViewModel.state.statusMessage)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(12)
+              .fontColor(this.promptsViewModel.state.statusType === 'error' ? '#B91C1C' :
+                this.promptsViewModel.state.statusType === 'success' ? '#15803D' : '#334155')
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+          .backgroundColor(this.promptsViewModel.state.statusType === 'error' ? '#FEF2F2' :
+            this.promptsViewModel.state.statusType === 'success' ? '#F0FDF4' : '#F8FAFC')
+          .borderRadius(8)
+          .margin({ top: 4 })
+        }
+
+        Row() {
+          Button('从 AGENTS.md 导入')
+            .fontSize(12)
+            .height(32)
+            .backgroundColor('#FFFFFF')
+            .fontColor('#334155')
+            .borderRadius(14)
+            .border({ width: 1, color: '#CBD5E1' })
+            .onClick(() => this.promptsViewModel.importFromFile())
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4, top: 4 })
+
         if (this.promptsViewModel.activePrompt !== null) {
           Button('禁用全部 Prompt')
             .fontSize(12)
@@ -188,8 +229,23 @@ export struct PromptsPage {
             .backgroundColor('#FFF3F3')
             .fontColor('#B91C1C')
             .borderRadius(14)
-            .margin({ top: 8 })
+            .margin({ top: 4 })
+            .enabled(!this.promptsViewModel.state.operating)
             .onClick(() => this.promptsViewModel.disableAll())
+        }
+
+        if (this.promptsViewModel.state.operating) {
+          Row() {
+            LoadingProgress().width(20).height(20)
+            Text('操作中...')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(12)
+              .fontColor('#999')
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .margin({ top: 4 })
         }
       }
       .width(280)
@@ -210,12 +266,13 @@ export struct PromptsPage {
               .fontWeight(FontWeight.Bold)
               .fontColor('#0F172A')
             Blank()
-            Button('保存')
+            Button(this.promptsViewModel.state.saving ? '保存中...' : '保存')
               .fontSize(13)
               .height(34)
               .backgroundColor('#111827')
               .fontColor('#FFFFFF')
               .borderRadius(14)
+              .enabled(!this.promptsViewModel.state.saving)
               .onClick(() => {
                 const editing = this.promptsViewModel.state.editingPrompt;
                 if (editing) {
@@ -332,7 +389,7 @@ export struct PromptsPage {
 
           if (this.promptsViewModel.activePrompt) {
             Row() {
-              Text(`当前启用: ${this.promptsViewModel.activePrompt.name}`)
+              Text('当前启用: ' + this.promptsViewModel.activePrompt.name)
                 .copyOption(CopyOptions.LocalDevice)
                 .fontSize(12)
                 .fontColor('#4ADE80')
@@ -385,5 +442,69 @@ export struct PromptsPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#FFFFFF')
+
+    // Delete confirmation dialog
+    if (this.showDeleteConfirm && this.deleteTarget !== null) {
+      Column() {
+        Column() {
+          Text('确认删除')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#0F172A')
+          Text('确定要删除 Prompt "' + (this.deleteTarget?.name ?? '') + '" 吗？')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(14)
+            .fontColor('#334155')
+            .margin({ top: 12 })
+          Row() {
+            Button('取消')
+              .fontSize(13)
+              .height(34)
+              .backgroundColor('#FFFFFF')
+              .fontColor('#334155')
+              .borderRadius(14)
+              .border({ width: 1, color: '#CBD5E1' })
+              .onClick(() => {
+                this.showDeleteConfirm = false;
+                this.deleteTarget = null;
+              })
+            Button('删除')
+              .fontSize(13)
+              .height(34)
+              .backgroundColor('#DC2626')
+              .fontColor('#FFFFFF')
+              .borderRadius(14)
+              .margin({ left: 12 })
+              .onClick(() => {
+                if (this.deleteTarget !== null) {
+                  this.promptsViewModel.deletePrompt(this.deleteTarget.id);
+                }
+                this.showDeleteConfirm = false;
+                this.deleteTarget = null;
+              })
+          }
+          .margin({ top: 20 })
+          .width('100%')
+          .justifyContent(FlexAlign.End)
+        }
+        .width(320)
+        .padding(24)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(16)
+        .shadow({ radius: 20, color: '#1A000000', offsetX: 0, offsetY: 4 })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#4D000000')
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => {
+        this.showDeleteConfirm = false;
+        this.deleteTarget = null;
+      })
+    }
+    }
+    .width('100%')
+    .height('100%')
   }
 }

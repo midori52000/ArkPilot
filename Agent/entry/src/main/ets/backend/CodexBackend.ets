@@ -6,8 +6,10 @@ import {
   approvalDeclineNative,
   approvalPollNative,
   initializeNative,
+  mcpConfigAddNative,
   mcpConfigBatchWriteNative,
   mcpConfigReadNative,
+  mcpConfigRemoveNative,
   mcpOauthStartNative,
   mcpReloadNative,
   mcpStatusListNative,
@@ -753,6 +755,15 @@ class McpConfigReadRequestPayload {
   includeLayers: boolean = false;
 }
 
+class McpConfigAddRequestPayload {
+  name: string = '';
+  config: Object = new Object() as Object;
+}
+
+class McpConfigRemoveRequestPayload {
+  name: string = '';
+}
+
 class ThreadStartRequestPayload {
   cwd?: string;
   model?: string;
@@ -1409,17 +1420,26 @@ export class CodexBackend {
     await this.ensureConnected();
     this.readMcpConfig();
     const statusListRequest: McpStatusListRequestPayload = new McpStatusListRequestPayload();
-    const response: McpStatusListResponsePayload = parseJsonText(mcpStatusListNative(JSON.stringify(statusListRequest)), new McpStatusListResponsePayload()) as McpStatusListResponsePayload;
+    const rawStatusJson: string = mcpStatusListNative(JSON.stringify(statusListRequest));
+    const response: McpStatusListResponsePayload = parseJsonText(rawStatusJson, new McpStatusListResponsePayload()) as McpStatusListResponsePayload;
     this.mcpServersCache = response.data.map((item: McpServerStatusPayload) => this.buildMcpServerRecord(item));
-    this.mcpStatusText = this.mcpServersCache.length > 0 ? `已加载 ${this.mcpServersCache.length} 个 MCP server` : '当前没有已配置的 MCP server';
-    this.mcpErrorText = '';
+    if (this.mcpServersCache.length === 0 && this.mcpConfigByName.size > 0) {
+      this.mcpStatusText = `配置中有 ${this.mcpConfigByName.size} 个 MCP server，但运行时状态获取失败`;
+      this.mcpErrorText = '无法获取 MCP server 运行状态，请尝试 Reload';
+    } else {
+      this.mcpStatusText = this.mcpServersCache.length > 0 ? `已加载 ${this.mcpServersCache.length} 个 MCP server` : '当前没有已配置的 MCP server';
+      this.mcpErrorText = '';
+    }
     this.notifyListeners();
     return this.mcpServers();
   }
 
   async reloadMcpServers(): Promise<void> {
     await this.ensureConnected();
-    mcpReloadNative();
+    const reloadOk: boolean = mcpReloadNative();
+    if (!reloadOk) {
+      throw new Error('MCP reload 失败');
+    }
     this.mcpStatusText = 'MCP 配置已重载';
     this.mcpErrorText = '';
     await this.refreshMcpServers();
@@ -1429,7 +1449,10 @@ export class CodexBackend {
     await this.ensureConnected();
     const batchWriteRequest: McpConfigBatchWriteRequestPayload = new McpConfigBatchWriteRequestPayload();
     batchWriteRequest.edits = edits;
-    mcpConfigBatchWriteNative(JSON.stringify(batchWriteRequest));
+    const ok: boolean = mcpConfigBatchWriteNative(JSON.stringify(batchWriteRequest));
+    if (!ok) {
+      throw new Error('MCP 配置写入失败');
+    }
     this.mcpStatusText = 'MCP 配置已保存';
     this.mcpErrorText = '';
     this.notifyListeners();
@@ -1455,6 +1478,57 @@ export class CodexBackend {
     edit.value = nextConfig;
     edit.mergeStrategy = 'replace';
     await this.batchWriteMcpConfig([edit]);
+    await this.reloadMcpServers();
+  }
+
+  async toggleMcpServerEnabled(serverName: string): Promise<void> {
+    await this.ensureConnected();
+    this.readMcpConfig();
+    const existingConfig: Record<string, Object> = (this.mcpConfigByName.get(serverName) as Record<string, Object> | undefined) ?? {};
+    const currentEnabled: boolean = this.readBooleanField(existingConfig, 'enabled', true);
+    const edit: McpConfigBatchEditPayload = new McpConfigBatchEditPayload();
+    edit.keyPath = `mcp_servers.${serverName}`;
+    const toggleConfig: Record<string, Object> = this.copyConfigObject(existingConfig);
+    toggleConfig['enabled'] = !currentEnabled;
+    edit.value = toggleConfig as Object;
+    edit.mergeStrategy = 'replace';
+    await this.batchWriteMcpConfig([edit]);
+    await this.reloadMcpServers();
+  }
+
+  async addMcpServer(serverName: string, transportType: string, command: string, argsText: string, url: string, envText: string): Promise<void> {
+    await this.ensureConnected();
+    const config: Record<string, Object> = {} as Record<string, Object>;
+    config['enabled'] = true;
+    config['args'] = parseJsonText(argsText, new Array<Object>() as Object);
+    config['env'] = parseJsonText(envText, new Object() as Object);
+    if (transportType === 'http') {
+      config['url'] = url.trim();
+    } else {
+      config['command'] = command.trim();
+    }
+    const request: McpConfigAddRequestPayload = new McpConfigAddRequestPayload();
+    request.name = serverName;
+    request.config = config as Object;
+    const ok: boolean = mcpConfigAddNative(JSON.stringify(request));
+    if (!ok) {
+      throw new Error('添加 MCP server 失败');
+    }
+    this.mcpStatusText = `已添加 MCP server: ${serverName}`;
+    this.mcpErrorText = '';
+    await this.reloadMcpServers();
+  }
+
+  async removeMcpServer(serverName: string): Promise<void> {
+    await this.ensureConnected();
+    const request: McpConfigRemoveRequestPayload = new McpConfigRemoveRequestPayload();
+    request.name = serverName;
+    const ok: boolean = mcpConfigRemoveNative(JSON.stringify(request));
+    if (!ok) {
+      throw new Error('删除 MCP server 失败');
+    }
+    this.mcpStatusText = `已删除 MCP server: ${serverName}`;
+    this.mcpErrorText = '';
     await this.reloadMcpServers();
   }
 
@@ -1501,9 +1575,6 @@ export class CodexBackend {
     }
     const parsed: Object | null = safeJsonParse(approvalPollNative());
     if (parsed === null) {
-      return;
-    }
-    if (parsed === null || parsed === undefined) {
       return;
     }
     const approval = this.buildApprovalFromNative(parsed as Record<string, Object>);
@@ -2158,7 +2229,8 @@ export class CodexBackend {
     const tools: Record<string, Object> = status.tools as Record<string, Object>;
     const toolCount: number = Object.keys(tools).length;
     const resourceCount: number = status.resources.length + status.resourceTemplates.length;
-    return new McpServerRecord(status.name, status.name, enabled, transportType, command, argsText, url, envText, toolCount, resourceCount, this.normalizeMcpHealthStatus('ready', null), this.normalizeMcpAuthStatus(status.authStatus), '', 'synced', currentTimestamp());
+    const inferredHealth: McpHealthStatus = toolCount > 0 ? 'ok' : 'warning';
+    return new McpServerRecord(status.name, status.name, enabled, transportType, command, argsText, url, envText, toolCount, resourceCount, inferredHealth, this.normalizeMcpAuthStatus(status.authStatus), '', 'synced', currentTimestamp());
   }
 
   private normalizeMcpAuthStatus(rawStatus: string): McpAuthStatus {

@@ -152,8 +152,71 @@ export class SkillsBackendService {
   async getInstalled(): Promise<InstalledSkill[]> {
     const json = getSkillsRegistry(this.codexHome);
     const parsed: SkillsRegistryJson = JSON.parse(json) as SkillsRegistryJson;
-    const skills: SkillEntryJson[] = parsed.skills ?? [];
+    let skills: SkillEntryJson[] = parsed.skills ?? [];
+
+    // 兜底：注册表为空时，尝试 reconcile（扫描 SSOT 目录自动注册）
+    if (skills.length === 0) {
+      try {
+        const reconcileJson = reconcileSkills(this.codexHome);
+        const reconcileResult = JSON.parse(reconcileJson) as ReconcileResult;
+        if (reconcileResult.registered.length > 0) {
+          const refreshedJson = getSkillsRegistry(this.codexHome);
+          const refreshed: SkillsRegistryJson = JSON.parse(refreshedJson) as SkillsRegistryJson;
+          skills = refreshed.skills ?? [];
+        }
+      } catch (_) {
+        // reconcile 失败，继续用空列表
+      }
+    }
+
+    // 兜底：如果 reconcile 也没结果（native 不可用），直接扫 SSOT 目录
+    if (skills.length === 0) {
+      const scanned = this.scanSsotDirectory();
+      return scanned;
+    }
+
     return skills.map((skill: SkillEntryJson) => InstalledSkill.fromJSON(skill));
+  }
+
+  private scanSsotDirectory(): InstalledSkill[] {
+    const ssotDir = this.getSsotDir();
+    const results: InstalledSkill[] = [];
+    let entries: string[];
+    try {
+      entries = fileIo.listFileSync(ssotDir) as string[];
+    } catch (_) {
+      return results;
+    }
+
+    for (const entry of entries) {
+      if (entry.startsWith('.')) {
+        continue;
+      }
+      const skillDir = `${ssotDir}/${entry}`;
+      try {
+        const stat = fileIo.statSync(skillDir);
+        if (!stat.isDirectory()) {
+          continue;
+        }
+      } catch (_) {
+        continue;
+      }
+
+      const skillMdPath = `${skillDir}/SKILL.md`;
+      try {
+        fileIo.statSync(skillMdPath);
+      } catch (_) {
+        continue;
+      }
+
+      const metadata = this.parseSkillMetadata(skillMdPath, entry);
+      results.push(new InstalledSkill(
+        `local:${entry}`, metadata.name, metadata.description, entry,
+        'local', '', '', '', '', true, Date.now(), '', 0
+      ));
+    }
+
+    return results;
   }
 
   async saveInstalled(skills: InstalledSkill[]): Promise<void> {
