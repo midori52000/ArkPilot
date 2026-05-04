@@ -17,7 +17,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
+import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
@@ -117,11 +117,7 @@ class CodeDiffLine {
 @Entry
 @Component
 struct Index {
-  private readonly workspaces: WorkspaceItem[] = [
-    new WorkspaceItem(1, '默认会话', '通用 ArkPilot 对话线程'),
-    new WorkspaceItem(2, 'Rust app-server 移植', '用于跟踪 codex-rs 的鸿蒙适配'),
-    new WorkspaceItem(3, '鸿蒙前端适配', '用于跟踪 Agent ArkTS 改造')
-  ];
+  private readonly workspaces: WorkspaceItem[] = [];
   private readonly quickActions: string[] = [
     '检查当前工作目录的变更',
     '总结最近一次改动',
@@ -271,6 +267,9 @@ struct Index {
   }
 
   private activeWorkspace(): WorkspaceItem {
+    if (this.workspaces.length === 0) {
+      this.ensurePlaceholderWorkspace();
+    }
     for (let index: number = 0; index < this.workspaces.length; index += 1) {
       if (this.workspaces[index].id === this.activeWorkspaceId) {
         return this.workspaces[index];
@@ -319,9 +318,208 @@ struct Index {
     this.refreshWorkspaceBindingState();
   }
 
+  private nextWorkspaceId(): number {
+    let nextId: number = this.activeWorkspaceId > 0 ? this.activeWorkspaceId + 1 : 1;
+    for (let index: number = 0; index < this.workspaces.length; index += 1) {
+      if (this.workspaces[index].id >= nextId) {
+        nextId = this.workspaces[index].id + 1;
+      }
+    }
+    this.workspaceIds.forEach((_workspaceId: string, key: number) => {
+      if (key >= nextId) {
+        nextId = key + 1;
+      }
+    });
+    return nextId;
+  }
+
+  private ensurePlaceholderWorkspace(preferredId?: number): WorkspaceItem {
+    if (this.workspaces.length > 0) {
+      return this.workspaces[0];
+    }
+    const workspaceId: number = preferredId !== undefined && preferredId > 0 ? preferredId : this.nextWorkspaceId();
+    const workspace: WorkspaceItem = new WorkspaceItem(
+      workspaceId,
+      `新会话 ${workspaceId}`,
+      '等待通过 app-server 创建真实会话',
+      `session:${workspaceId.toString()}`
+    );
+    this.workspaces.push(workspace);
+    this.workspaceIds.set(workspace.id, workspace.workspaceId);
+    return workspace;
+  }
+
+  private isRemoteThreadId(workspaceId: string): boolean {
+    const trimmedWorkspaceId: string = workspaceId.trim();
+    return trimmedWorkspaceId.length > 0 && !trimmedWorkspaceId.startsWith('session:');
+  }
+
+  private workspaceDescriptionFromSummary(summary: SessionSummary): string {
+    const changedFiles: string = summary.changedFiles.trim();
+    if (changedFiles.length > 0 && changedFiles !== '尚未产生文件改动') {
+      return changedFiles;
+    }
+    const summaryTitle: string = summary.summaryTitle.trim();
+    if (summaryTitle.length > 0) {
+      return summaryTitle;
+    }
+    return '已从 app-server 恢复的历史会话';
+  }
+
+  private resetConversationSurface(title: string, points?: string[]): void {
+    this.messages = [
+      new ChatMessage(
+        'welcome-1',
+        'ArkPilot',
+        'assistant',
+        '前端会自动连接应用内置 app-server。必要时你仍然可以手动重连或修改工作目录。',
+        '刚刚'
+      )
+    ];
+    this.codeLines = [
+      new CodeDiffLine('placeholder-1', '1', ' ', '等待 turn/diff/updated 通知。', 'context')
+    ];
+    this.summaryTitle = title;
+    this.summaryPoints = points ?? ['当前会话尚未产生历史消息。'];
+    this.changedFiles = '尚未产生文件改动';
+    this.diffStat = '+0 -0';
+  }
+
+  private async restoreSessionsFromBackend(preferredThreadId?: string): Promise<void> {
+    const sessions: SessionSummary[] = await codexBackend.loadPersistedSessions();
+    this.applySessionSummariesToWorkspaces(sessions, preferredThreadId);
+    await this.loadSelectedWorkspaceHistory();
+  }
+
+  private applySessionSummariesToWorkspaces(summaries: SessionSummary[], preferredThreadId?: string): void {
+    if (summaries.length === 0) {
+      this.workspaces.splice(0, this.workspaces.length);
+      const preferredId: number = this.activeWorkspaceId > 0 ? this.activeWorkspaceId : 1;
+      const workspace: WorkspaceItem = this.ensurePlaceholderWorkspace(preferredId);
+      this.activeWorkspaceId = workspace.id;
+      this.workspaceRoot = this.workspaceRoots.get(workspace.id) ?? this.workspaceRoot;
+      this.workspaceDraftText = this.workspaceRoot;
+      this.syncWorkspaceSelectionText();
+      this.refreshWorkspaceBindingState();
+      this.persistWorkspaceBindings();
+      return;
+    }
+
+    const currentWorkspaceByThreadId: Map<string, WorkspaceItem> = new Map();
+    for (let index: number = 0; index < this.workspaces.length; index += 1) {
+      const workspace: WorkspaceItem = this.workspaces[index];
+      if (this.isRemoteThreadId(workspace.workspaceId)) {
+        currentWorkspaceByThreadId.set(workspace.workspaceId, workspace);
+      }
+    }
+
+    const bindingSnapshot = workspaceBindingStore.load();
+    const bindingByThreadId: Map<string, StoredWorkspaceItem> = new Map();
+    for (let index: number = 0; index < bindingSnapshot.items.length; index += 1) {
+      const item: StoredWorkspaceItem = bindingSnapshot.items[index];
+      if (this.isRemoteThreadId(item.workspaceId)) {
+        bindingByThreadId.set(item.workspaceId, item);
+      }
+    }
+
+    const activeWorkspace: WorkspaceItem = this.activeWorkspace();
+    const activePlaceholderId: number = !this.isRemoteThreadId(activeWorkspace.workspaceId) ? activeWorkspace.id : 0;
+    const nextWorkspaces: WorkspaceItem[] = [];
+    const nextWorkspaceIds: Map<number, string> = new Map();
+    const nextWorkspaceRoots: Map<number, string> = new Map();
+    const nextWorkspaceUris: Map<number, string> = new Map();
+    const usedIds: Set<number> = new Set();
+    let nextIdSeed: number = this.nextWorkspaceId();
+    let nextActiveWorkspaceId: number = 0;
+
+    for (let index: number = 0; index < summaries.length; index += 1) {
+      const summary: SessionSummary = summaries[index];
+      let workspaceId: number | undefined = currentWorkspaceByThreadId.get(summary.sessionId)?.id;
+      if (workspaceId === undefined) {
+        workspaceId = bindingByThreadId.get(summary.sessionId)?.id;
+      }
+      if (workspaceId === undefined && preferredThreadId !== undefined && summary.sessionId === preferredThreadId && activePlaceholderId > 0) {
+        workspaceId = activePlaceholderId;
+      }
+      while (workspaceId === undefined || usedIds.has(workspaceId)) {
+        workspaceId = nextIdSeed;
+        nextIdSeed += 1;
+      }
+      usedIds.add(workspaceId);
+
+      const workspace: WorkspaceItem = new WorkspaceItem(
+        workspaceId,
+        summary.title,
+        this.workspaceDescriptionFromSummary(summary),
+        summary.sessionId
+      );
+      nextWorkspaces.push(workspace);
+      nextWorkspaceIds.set(workspace.id, summary.sessionId);
+
+      const existingRoot: string = this.workspaceRoots.get(workspace.id) ?? bindingByThreadId.get(summary.sessionId)?.workspaceRoot ?? '';
+      const nextRoot: string = existingRoot.trim().length > 0 ? existingRoot : summary.workspaceRoot.trim();
+      nextWorkspaceRoots.set(workspace.id, nextRoot);
+      nextWorkspaceUris.set(workspace.id, this.workspaceUris.get(workspace.id) ?? bindingByThreadId.get(summary.sessionId)?.workspaceUri ?? '');
+
+      if (summary.sessionId === preferredThreadId || (nextActiveWorkspaceId === 0 && summary.sessionId === this.activeWorkspaceBindingId)) {
+        nextActiveWorkspaceId = workspace.id;
+      }
+    }
+
+    if (nextActiveWorkspaceId === 0) {
+      const matched: WorkspaceItem | undefined = nextWorkspaces.find((item: WorkspaceItem) => item.id === this.activeWorkspaceId);
+      nextActiveWorkspaceId = matched?.id ?? nextWorkspaces[0].id;
+    }
+
+    this.workspaces.splice(0, this.workspaces.length, ...nextWorkspaces);
+    this.workspaceIds.clear();
+    this.workspaceRoots.clear();
+    this.workspaceUris.clear();
+    nextWorkspaceIds.forEach((value: string, key: number) => this.workspaceIds.set(key, value));
+    nextWorkspaceRoots.forEach((value: string, key: number) => this.workspaceRoots.set(key, value));
+    nextWorkspaceUris.forEach((value: string, key: number) => this.workspaceUris.set(key, value));
+    this.activeWorkspaceId = nextActiveWorkspaceId;
+    this.workspaceRoot = this.workspaceRoots.get(this.activeWorkspaceId) ?? '';
+    this.workspaceDraftText = this.workspaceRoot;
+    this.syncWorkspaceSelectionText();
+    this.refreshWorkspaceBindingState();
+    this.persistWorkspaceBindings();
+  }
+
+  private async loadSelectedWorkspaceHistory(): Promise<void> {
+    const workspace: WorkspaceItem = this.activeWorkspace();
+    if (!this.isRemoteThreadId(workspace.workspaceId)) {
+      this.resetConversationSurface('等待创建新会话', ['当前会话尚未在 app-server 中创建，发送第一条消息后会自动建立线程。']);
+      return;
+    }
+    try {
+      const result: CodexTurnResult = await codexBackend.loadThreadHistory(workspace.workspaceId);
+      this.applyBackendResult(result);
+    } catch (err) {
+      this.summaryTitle = '恢复会话失败';
+      this.summaryPoints = [this.describeError(err)];
+    }
+  }
+
+  private syncWorkspaceWithRemoteThreadId(remoteThreadId: string): void {
+    const trimmedThreadId: string = remoteThreadId.trim();
+    if (trimmedThreadId.length === 0) {
+      return;
+    }
+    const workspace: WorkspaceItem = this.activeWorkspace();
+    workspace.workspaceId = trimmedThreadId;
+    this.workspaceIds.set(workspace.id, trimmedThreadId);
+    this.activeWorkspaceBindingId = trimmedThreadId;
+    this.persistWorkspaceBindings();
+  }
+
   private restoreWorkspaceBindings(): void {
     const snapshot = workspaceBindingStore.load();
     const restoredItems: WorkspaceBindingDraft[] = [];
+    this.workspaceIds.clear();
+    this.workspaceRoots.clear();
+    this.workspaceUris.clear();
+    this.workspaces.splice(0, this.workspaces.length);
     for (let index: number = 0; index < snapshot.items.length; index += 1) {
       const item = snapshot.items[index];
       if (item.id <= 0) {
@@ -338,12 +536,14 @@ struct Index {
     }
 
     if (restoredItems.length === 0) {
+      this.activeWorkspaceId = snapshot.activeWorkspaceId > 0 ? snapshot.activeWorkspaceId : 1;
+      this.ensurePlaceholderWorkspace(this.activeWorkspaceId);
       this.initializeDefaultWorkspace();
+      this.syncWorkspaceSelectionText();
       this.persistWorkspaceBindings();
       return;
     }
 
-    this.workspaces.splice(0, this.workspaces.length);
     for (let index: number = 0; index < restoredItems.length; index += 1) {
       const restored: WorkspaceBindingDraft = restoredItems[index];
       const workspace: WorkspaceItem = new WorkspaceItem(restored.id, restored.title, restored.description, restored.workspaceId);
@@ -497,11 +697,12 @@ struct Index {
 
     const workspace: WorkspaceItem = this.activeWorkspace();
     const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
+    const threadKey: string = workspace.workspaceId.trim().length > 0 ? workspace.workspaceId : this.activeWorkspaceBindingId;
     this.applyEmbeddedHostStatus();
     try {
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(
-          workspace.id.toString(),
+          threadKey,
           workspace.title,
           this.activeWorkspaceBindingId,
           trimmedWorkspaceRoot,
@@ -527,6 +728,7 @@ struct Index {
   }
 
   private applyBackendResult(result: CodexTurnResult): void {
+    this.syncWorkspaceWithRemoteThreadId(result.threadId);
     this.messages = result.messages.map((item) => {
       return new ChatMessage(item.messageId, item.author, item.role, item.content, item.timestamp);
     });
@@ -572,6 +774,7 @@ struct Index {
     try {
       await codexBackend.connect();
       this.loadProviderConfig();
+      await this.restoreSessionsFromBackend();
       this.reconnectAttemptCount = 0;
       this.clearReconnectTimer();
       this.summaryTitle = '连接成功';
@@ -595,6 +798,7 @@ struct Index {
       codexBackend.configureServerUrl(this.serverUrl);
       await codexBackend.connect();
       this.loadProviderConfig();
+      await this.restoreSessionsFromBackend();
       this.summaryTitle = '应用内后端连接成功';
       this.summaryPoints = [
         'initialize / initialized 握手已经完成。',
@@ -757,7 +961,7 @@ struct Index {
     await codexBackend.declinePendingRequest();
   }
 
-  private selectWorkspace(item: WorkspaceItem): void {
+  private async selectWorkspace(item: WorkspaceItem): Promise<void> {
     this.activeWorkspaceId = item.id;
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
     this.workspaceDraftText = this.workspaceRoot;
@@ -765,20 +969,32 @@ struct Index {
     this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
     this.activeSidebarView = 'chat';
     this.persistWorkspaceBindings();
+    await this.loadSelectedWorkspaceHistory();
   }
 
-  private createWorkspace(): void {
-    let nextId: number = 1;
-    for (let index: number = 0; index < this.workspaces.length; index += 1) {
-      if (this.workspaces[index].id >= nextId) {
-        nextId = this.workspaces[index].id + 1;
-      }
+  private async createWorkspace(): Promise<void> {
+    const nextId: number = this.nextWorkspaceId();
+    const title: string = `新会话 ${nextId}`;
+    const trimmedWorkspaceRoot: string = this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText.trim() : this.workspaceRoot.trim();
+    this.summaryTitle = '正在创建会话';
+    this.summaryPoints = ['正在通过 app-server 创建新的线程。'];
+    try {
+      const session: SessionSummary = await codexBackend.createThreadSession(
+        title,
+        '',
+        trimmedWorkspaceRoot,
+        this.activeWorkspacePermissionState,
+        this.activeWorkspaceAccessKind,
+        trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
+        this.currentModelValue()
+      );
+      await this.restoreSessionsFromBackend(session.sessionId);
+      this.activeSidebarView = 'chat';
+      this.draft = `继续处理”${title}”，重点关注当前工作目录。`;
+    } catch (err) {
+      this.summaryTitle = '创建会话失败';
+      this.summaryPoints = [this.describeError(err)];
     }
-    const workspace: WorkspaceItem = new WorkspaceItem(nextId, `新会话 ${nextId}`, '从侧边栏创建的新线程');
-    this.workspaces.push(workspace);
-    this.workspaceUris.set(workspace.id, '');
-    this.selectWorkspace(workspace);
-    this.persistWorkspaceBindings();
   }
 
   private connectionButtonLabel(): string {
@@ -1011,7 +1227,7 @@ struct Index {
     })
     .borderRadius(14)
     .onClick(() => {
-      this.selectWorkspace(item);
+      void this.selectWorkspace(item);
     })
   }
 
@@ -1321,7 +1537,7 @@ struct Index {
           .fontColor('#FFFFFF')
           .borderRadius(16)
           .onClick(() => {
-            this.createWorkspace();
+            void this.createWorkspace();
           })
       }
       .width('100%')
@@ -1598,7 +1814,7 @@ struct Index {
             .fontColor('#FFFFFF')
             .borderRadius(16)
             .onClick(() => {
-              this.createWorkspace();
+              void this.createWorkspace();
             })
         }
         .alignItems(HorizontalAlign.Start)

@@ -47,6 +47,11 @@ struct BridgeApi {
     int32_t (*write_agents_md)(const char*, const char*) = nullptr;
     const char* (*initialize)(const char*) = nullptr;
     const char* (*thread_start)(const char*) = nullptr;
+    const char* (*thread_list)(const char*) = nullptr;
+    const char* (*thread_read)(const char*) = nullptr;
+    const char* (*thread_resume)(const char*) = nullptr;
+    const char* (*thread_name_set)(const char*) = nullptr;
+    const char* (*thread_archive)(const char*) = nullptr;
     const char* (*turn_start)(const char*) = nullptr;
     const char* (*turn_events)(const char*, const char*) = nullptr;
     const char* (*turn_poll)(const char*, const char*) = nullptr;
@@ -99,6 +104,11 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_write_agents_md", &api->write_agents_md) &&
         LoadSymbol(api->handle, "codex_ohos_host_initialize", &api->initialize) &&
         LoadSymbol(api->handle, "codex_ohos_host_thread_start", &api->thread_start) &&
+        LoadSymbol(api->handle, "codex_ohos_host_thread_list", &api->thread_list) &&
+        LoadSymbol(api->handle, "codex_ohos_host_thread_read", &api->thread_read) &&
+        LoadSymbol(api->handle, "codex_ohos_host_thread_resume", &api->thread_resume) &&
+        LoadSymbol(api->handle, "codex_ohos_host_thread_name_set", &api->thread_name_set) &&
+        LoadSymbol(api->handle, "codex_ohos_host_thread_archive", &api->thread_archive) &&
         LoadSymbol(api->handle, "codex_ohos_host_turn_start", &api->turn_start) &&
         LoadSymbol(api->handle, "codex_ohos_host_turn_events", &api->turn_events) &&
         LoadSymbol(api->handle, "codex_ohos_host_turn_poll", &api->turn_poll) &&
@@ -445,6 +455,11 @@ napi_value WriteAgentsMd(napi_env env, napi_callback_info info) {
 
 napi_value InitializeBridge(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->initialize); return result; }
 napi_value ThreadStart(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_start); return result; }
+napi_value ThreadList(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_list); return result; }
+napi_value ThreadRead(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_read); return result; }
+napi_value ThreadResume(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_resume); return result; }
+napi_value ThreadNameSet(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_name_set); return result; }
+napi_value ThreadArchive(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_archive); return result; }
 napi_value TurnStart(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->turn_start); return result; }
 napi_value TurnEvents(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_events); return result; }
 napi_value TurnPoll(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_poll); return result; }
@@ -500,6 +515,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"writeAgentsMd", nullptr, WriteAgentsMd, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"initialize", nullptr, InitializeBridge, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"threadStart", nullptr, ThreadStart, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"threadList", nullptr, ThreadList, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"threadRead", nullptr, ThreadRead, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"threadResume", nullptr, ThreadResume, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"threadNameSet", nullptr, ThreadNameSet, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"threadArchive", nullptr, ThreadArchive, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"turnStart", nullptr, TurnStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"turnEvents", nullptr, TurnEvents, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"turnPoll", nullptr, TurnPoll, nullptr, nullptr, nullptr, napi_default, nullptr},

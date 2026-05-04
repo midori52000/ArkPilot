@@ -11,6 +11,11 @@ import {
   mcpOauthStartNative,
   mcpReloadNative,
   mcpStatusListNative,
+  threadArchiveNative,
+  threadListNative,
+  threadNameSetNative,
+  threadReadNative,
+  threadResumeNative,
   threadStartNative,
   turnPollNative,
   turnStartNative
@@ -725,6 +730,36 @@ class ThreadStartRequestPayload {
   model?: string;
 }
 
+class ThreadListRequestPayload {
+  limit: number = 100;
+  archived: boolean = false;
+}
+
+class ThreadListResponsePayload {
+  data: Object[] = [];
+  nextCursor: string | null = null;
+}
+
+class ThreadReadRequestPayload {
+  threadId: string = '';
+  includeTurns: boolean = true;
+}
+
+class ThreadResumeRequestPayload {
+  threadId: string = '';
+  cwd?: string;
+  model?: string;
+}
+
+class ThreadNameSetRequestPayload {
+  threadId: string = '';
+  name: string = '';
+}
+
+class ThreadArchiveRequestPayload {
+  threadId: string = '';
+}
+
 class TurnPollResponsePayload {
 }
 
@@ -905,6 +940,7 @@ class CodexThreadRecord {
   localKey: string;
   title: string;
   remoteThreadId: string = '';
+  loaded: boolean = false;
   workspaceId: string = '';
   workspaceName: string = '';
   cwd: string = '';
@@ -1139,6 +1175,163 @@ export class CodexBackend {
     this.notifyListeners();
   }
 
+  async loadPersistedSessions(): Promise<SessionSummary[]> {
+    await this.ensureConnected();
+    const listRequest: ThreadListRequestPayload = new ThreadListRequestPayload();
+    const payload: Record<string, Object> = parseJsonText(
+      threadListNative(JSON.stringify(listRequest)),
+      new ThreadListResponsePayload() as Object
+    ) as Record<string, Object>;
+    const data: Object[] = Array.isArray(payload['data']) ? (payload['data'] as Object[]) : [];
+    for (let index: number = 0; index < data.length; index += 1) {
+      this.upsertThreadFromListPayload(data[index] as Record<string, Object>);
+    }
+    return this.sessionSummaries();
+  }
+
+  async loadThreadHistory(threadId: string): Promise<CodexTurnResult> {
+    await this.ensureConnected();
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0) {
+      throw new Error('thread/read requires a valid thread id.');
+    }
+    const readRequest: ThreadReadRequestPayload = new ThreadReadRequestPayload();
+    readRequest.threadId = trimmedThreadId;
+    readRequest.includeTurns = true;
+    const payload: Record<string, Object> = parseJsonText(
+      threadReadNative(JSON.stringify(readRequest)),
+      new Object() as Object
+    ) as Record<string, Object>;
+    const thread: CodexThreadRecord = this.ensureThreadRecordFromReadPayload(trimmedThreadId, payload);
+    return this.snapshotForThread(thread, thread.lastTurnStatus);
+  }
+
+  async createThreadSession(
+    title: string,
+    workspaceId: string,
+    workspaceRoot: string,
+    workspacePermissionState: WorkspacePermissionState,
+    workspaceAccessKind: WorkspaceAccessKind,
+    writableRoots: string[],
+    model: string
+  ): Promise<SessionSummary> {
+    await this.ensureConnected();
+    const threadStartRequest: ThreadStartRequestPayload = new ThreadStartRequestPayload();
+    const trimmedWorkspaceRoot: string = workspaceRoot.trim();
+    threadStartRequest.cwd = trimmedWorkspaceRoot.length > 0 ? trimmedWorkspaceRoot : undefined;
+    threadStartRequest.model = model !== 'default' ? model : undefined;
+    const payload: ThreadStartResultPayload = parseJsonText(
+      threadStartNative(JSON.stringify(threadStartRequest)),
+      new ThreadStartResultPayload()
+    ) as ThreadStartResultPayload;
+    const remoteThreadId: string = payload.thread?.id ?? '';
+    if (remoteThreadId.trim().length === 0) {
+      const message: string = payload.error?.message?.trim() ?? 'thread/start did not return a valid thread id.';
+      throw new Error(`threadStart failed: ${message}`);
+    }
+    if (title.trim().length > 0) {
+      const renameRequest: ThreadNameSetRequestPayload = new ThreadNameSetRequestPayload();
+      renameRequest.threadId = remoteThreadId;
+      renameRequest.name = title.trim();
+      const renamePayload: Record<string, Object> = parseJsonText(
+        threadNameSetNative(JSON.stringify(renameRequest)),
+        new Object() as Object
+      ) as Record<string, Object>;
+      if (renamePayload['ok'] === false) {
+        const errorRecord: Record<string, Object> | undefined = renamePayload['error'] as Record<string, Object> | undefined;
+        const errorMessage: string = typeof errorRecord?.['message'] === 'string' ? (errorRecord!['message'] as string) : '';
+        if (errorMessage.trim().length > 0) {
+          this.logInfo(`threadNameSet failed thread=${remoteThreadId} error=${errorMessage}`);
+        }
+      }
+    }
+
+    const thread: CodexThreadRecord = new CodexThreadRecord(remoteThreadId, title.trim().length > 0 ? title.trim() : '新会话');
+    thread.remoteThreadId = remoteThreadId;
+    thread.loaded = true;
+    this.bindWorkspaceForSession(
+      thread,
+      thread.title,
+      workspaceId.trim().length > 0 ? workspaceId : remoteThreadId,
+      trimmedWorkspaceRoot,
+      workspacePermissionState,
+      workspaceAccessKind,
+      writableRoots
+    );
+    thread.updatedAt = currentTimestamp();
+    this.threads.set(remoteThreadId, thread);
+    this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
+    return this.sessionSummaries().find((item: SessionSummary) => item.sessionId === remoteThreadId)
+      ?? new SessionSummary(
+        remoteThreadId,
+        thread.title,
+        thread.workspaceId,
+        thread.workspaceName,
+        thread.cwd,
+        thread.workspacePermissionState,
+        thread.workspaceAccessKind,
+        thread.messages.length,
+        thread.updatedAt,
+        thread.summaryTitle,
+        thread.lastTurnStatus,
+        thread.changedFiles
+      );
+  }
+
+  async renameSession(threadId: string, title: string): Promise<void> {
+    await this.ensureConnected();
+    const trimmedThreadId: string = threadId.trim();
+    const trimmedTitle: string = title.trim();
+    if (trimmedThreadId.length === 0 || trimmedTitle.length === 0) {
+      return;
+    }
+    const renameRequest: ThreadNameSetRequestPayload = new ThreadNameSetRequestPayload();
+    renameRequest.threadId = trimmedThreadId;
+    renameRequest.name = trimmedTitle;
+    const payload: Record<string, Object> = parseJsonText(
+      threadNameSetNative(JSON.stringify(renameRequest)),
+      new Object() as Object
+    ) as Record<string, Object>;
+    if (payload['ok'] === false) {
+      const errorRecord: Record<string, Object> | undefined = payload['error'] as Record<string, Object> | undefined;
+      const errorMessage: string = typeof errorRecord?.['message'] === 'string' ? (errorRecord!['message'] as string) : '';
+      throw new Error(errorMessage.trim().length > 0 ? errorMessage : 'thread/name/set failed');
+    }
+    const thread: CodexThreadRecord | undefined = this.threads.get(trimmedThreadId);
+    if (thread !== undefined) {
+      thread.title = trimmedTitle;
+      if (thread.workspaceId.length > 0) {
+        const descriptor: WorkspaceDescriptor | undefined = this.workspaceCatalog.get(thread.workspaceId);
+        if (descriptor !== undefined) {
+          descriptor.name = trimmedTitle;
+          descriptor.lastCheckedAt = Date.now();
+          this.workspaceCatalog.set(thread.workspaceId, descriptor);
+        }
+      }
+    }
+  }
+
+  async archiveSession(threadId: string): Promise<void> {
+    await this.ensureConnected();
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0) {
+      return;
+    }
+    const archiveRequest: ThreadArchiveRequestPayload = new ThreadArchiveRequestPayload();
+    archiveRequest.threadId = trimmedThreadId;
+    const payload: Record<string, Object> = parseJsonText(
+      threadArchiveNative(JSON.stringify(archiveRequest)),
+      new Object() as Object
+    ) as Record<string, Object>;
+    if (payload['ok'] === false) {
+      const errorRecord: Record<string, Object> | undefined = payload['error'] as Record<string, Object> | undefined;
+      const errorMessage: string = typeof errorRecord?.['message'] === 'string' ? (errorRecord!['message'] as string) : '';
+      throw new Error(errorMessage.trim().length > 0 ? errorMessage : 'thread/archive failed');
+    }
+    this.threads.delete(trimmedThreadId);
+    this.threadKeysByRemoteId.delete(trimmedThreadId);
+  }
+
   async startTurn(request: CodexTurnRequest, onUpdate?: CodexTurnUpdateHandler): Promise<CodexTurnResult> {
     await this.ensureConnected();
     if (this.requiresOpenAIAuth && this.authMode === 'none') {
@@ -1295,7 +1488,15 @@ export class CodexBackend {
     if (existing !== undefined && existing.remoteThreadId.length > 0) {
       existing.title = request.title;
       this.bindWorkspaceToThread(existing, request);
-      return existing;
+      try {
+        await this.resumeThread(existing, request);
+        return existing;
+      } catch (resumeErr) {
+        this.logInfo(`thread stale on server, recreating: ${existing.remoteThreadId} err=${resumeErr}`);
+        this.threadKeysByRemoteId.delete(existing.remoteThreadId);
+        existing.remoteThreadId = '';
+        existing.loaded = false;
+      }
     }
     const thread: CodexThreadRecord = existing ?? new CodexThreadRecord(request.threadKey, request.title);
     const workspace: WorkspaceDescriptor = this.bindWorkspaceToThread(thread, request);
@@ -1314,13 +1515,50 @@ export class CodexBackend {
       payload.thread.id = `native-thread-${request.threadKey}`;
     }
     thread.remoteThreadId = payload.thread.id;
-    this.threads.set(request.threadKey, thread);
-    this.threadKeysByRemoteId.set(payload.thread.id, request.threadKey);
+    thread.loaded = true;
+    if (request.title.trim().length > 0) {
+      thread.title = request.title.trim();
+      void this.renameSession(thread.remoteThreadId, thread.title).catch((_err: Error) => {});
+    }
+    if (thread.localKey !== thread.remoteThreadId) {
+      this.threads.delete(thread.localKey);
+      thread.localKey = thread.remoteThreadId;
+    }
+    this.threads.set(thread.localKey, thread);
+    this.threadKeysByRemoteId.set(payload.thread.id, thread.localKey);
     return thread;
   }
 
   private bindWorkspaceToThread(thread: CodexThreadRecord, request: CodexTurnRequest): WorkspaceDescriptor {
-    const workspace: WorkspaceDescriptor = this.upsertWorkspaceDescriptor(request);
+    return this.bindWorkspaceForSession(
+      thread,
+      request.title,
+      request.workspaceId,
+      request.workspaceRoot,
+      request.workspacePermissionState,
+      request.workspaceAccessKind,
+      request.writableRoots
+    );
+  }
+
+  private bindWorkspaceForSession(
+    thread: CodexThreadRecord,
+    title: string,
+    workspaceId: string,
+    workspaceRoot: string,
+    workspacePermissionState: WorkspacePermissionState,
+    workspaceAccessKind: WorkspaceAccessKind,
+    writableRoots: string[]
+  ): WorkspaceDescriptor {
+    const workspace: WorkspaceDescriptor = this.upsertWorkspaceDescriptor(
+      thread.localKey,
+      title,
+      workspaceId,
+      workspaceRoot,
+      workspacePermissionState,
+      workspaceAccessKind,
+      writableRoots
+    );
     thread.workspaceId = workspace.id;
     thread.workspaceName = workspace.name;
     thread.cwd = workspace.rootPath;
@@ -1330,27 +1568,35 @@ export class CodexBackend {
     return workspace;
   }
 
-  private upsertWorkspaceDescriptor(request: CodexTurnRequest): WorkspaceDescriptor {
-    const trimmedRoot: string = request.workspaceRoot.trim();
-    const workspaceId: string = request.workspaceId.trim().length > 0 ? request.workspaceId.trim() : `session:${request.threadKey}`;
-    const existing: WorkspaceDescriptor | undefined = this.workspaceCatalog.get(workspaceId);
+  private upsertWorkspaceDescriptor(
+    threadKey: string,
+    title: string,
+    workspaceId: string,
+    workspaceRoot: string,
+    workspacePermissionState: WorkspacePermissionState,
+    workspaceAccessKind: WorkspaceAccessKind,
+    writableRoots: string[]
+  ): WorkspaceDescriptor {
+    const trimmedRoot: string = workspaceRoot.trim();
+    const normalizedWorkspaceId: string = workspaceId.trim().length > 0 ? workspaceId.trim() : `session:${threadKey}`;
+    const existing: WorkspaceDescriptor | undefined = this.workspaceCatalog.get(normalizedWorkspaceId);
     const nextRoot: string = trimmedRoot.length > 0 ? trimmedRoot : (existing?.rootPath ?? '');
-    const nextWritableRoots: string[] = request.writableRoots.length > 0
-      ? [...request.writableRoots]
+    const nextWritableRoots: string[] = writableRoots.length > 0
+      ? [...writableRoots]
       : (nextRoot.length > 0 ? [nextRoot] : (existing?.writableRoots ?? []));
-    const nextName: string = request.title.trim().length > 0 ? request.title.trim() : (existing?.name ?? workspaceId);
+    const nextName: string = title.trim().length > 0 ? title.trim() : (existing?.name ?? normalizedWorkspaceId);
     const workspace: WorkspaceDescriptor = new WorkspaceDescriptor(
-      workspaceId,
+      normalizedWorkspaceId,
       nextName,
       nextRoot,
-      request.workspaceAccessKind,
-      request.workspacePermissionState,
+      workspaceAccessKind,
+      workspacePermissionState,
       existing?.sourceUri ?? '',
       nextWritableRoots,
       existing?.grantedAt ?? Date.now(),
       Date.now()
     );
-    this.workspaceCatalog.set(workspaceId, workspace);
+    this.workspaceCatalog.set(normalizedWorkspaceId, workspace);
     return workspace;
   }
 
@@ -1371,6 +1617,158 @@ export class CodexBackend {
       Date.now(),
       Date.now()
     );
+  }
+
+  private async resumeThread(thread: CodexThreadRecord, request: CodexTurnRequest): Promise<void> {
+    const workspace: WorkspaceDescriptor = this.workspaceDescriptorForThread(thread);
+    const resumeRequest: ThreadResumeRequestPayload = new ThreadResumeRequestPayload();
+    resumeRequest.threadId = thread.remoteThreadId;
+    resumeRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
+    resumeRequest.model = request.model !== 'default' ? request.model : undefined;
+    const payload: Record<string, Object> = parseJsonText(
+      threadResumeNative(JSON.stringify(resumeRequest)),
+      new Object() as Object
+    ) as Record<string, Object>;
+    const threadPayload: Record<string, Object> | undefined = payload['thread'] as Record<string, Object> | undefined;
+    const threadId: string = typeof threadPayload?.['id'] === 'string' ? (threadPayload!['id'] as string) : '';
+    if (threadId.trim().length === 0) {
+      const errorRecord: Record<string, Object> | undefined = payload['error'] as Record<string, Object> | undefined;
+      const errorMessage: string = typeof errorRecord?.['message'] === 'string' ? (errorRecord!['message'] as string) : '';
+      throw new Error(errorMessage.trim().length > 0 ? errorMessage : 'thread/resume did not return a valid thread id.');
+    }
+    thread.remoteThreadId = threadId;
+    thread.loaded = true;
+    this.threadKeysByRemoteId.set(threadId, thread.localKey);
+  }
+
+  private upsertThreadFromListPayload(payload: Record<string, Object>): void {
+    const remoteThreadId: string = typeof payload['id'] === 'string' ? (payload['id'] as string) : '';
+    if (remoteThreadId.trim().length === 0) {
+      return;
+    }
+    const title: string = this.threadTitleFromPayload(payload, remoteThreadId);
+    const thread: CodexThreadRecord = this.threads.get(remoteThreadId) ?? new CodexThreadRecord(remoteThreadId, title);
+    thread.localKey = remoteThreadId;
+    thread.remoteThreadId = remoteThreadId;
+    thread.title = title;
+    thread.updatedAt = this.timestampFromPayload(payload['updatedAt']);
+    const cwd: string = typeof payload['cwd'] === 'string' ? (payload['cwd'] as string) : thread.cwd;
+    this.bindWorkspaceForSession(
+      thread,
+      title,
+      thread.workspaceId.length > 0 ? thread.workspaceId : remoteThreadId,
+      cwd,
+      thread.workspacePermissionState,
+      thread.workspaceAccessKind,
+      cwd.trim().length > 0 ? [cwd] : thread.writableRoots
+    );
+    if (thread.summaryTitle.trim().length === 0) {
+      thread.summaryTitle = '历史会话';
+    }
+    if (thread.summaryPoints.length === 0) {
+      const preview: string = typeof payload['preview'] === 'string' ? (payload['preview'] as string) : '';
+      thread.summaryPoints = [preview.trim().length > 0 ? preview : '会话元信息已从 app-server 恢复。'];
+    }
+    this.threads.set(remoteThreadId, thread);
+    this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
+  }
+
+  private ensureThreadRecordFromReadPayload(threadId: string, payload: Record<string, Object>): CodexThreadRecord {
+    const threadPayload: Record<string, Object> | undefined = payload['thread'] as Record<string, Object> | undefined;
+    if (threadPayload !== undefined) {
+      this.upsertThreadFromListPayload(threadPayload);
+    }
+    const remoteThreadId: string = threadPayload !== undefined && typeof threadPayload['id'] === 'string'
+      ? (threadPayload['id'] as string)
+      : threadId;
+    const thread: CodexThreadRecord = this.threads.get(remoteThreadId) ?? new CodexThreadRecord(remoteThreadId, this.threadTitleFromPayload(threadPayload ?? {}, remoteThreadId));
+    thread.localKey = remoteThreadId;
+    thread.remoteThreadId = remoteThreadId;
+    thread.loaded = true;
+    if (threadPayload !== undefined) {
+      thread.title = this.threadTitleFromPayload(threadPayload, remoteThreadId);
+      thread.updatedAt = this.timestampFromPayload(threadPayload['updatedAt']);
+      const cwd: string = typeof threadPayload['cwd'] === 'string' ? (threadPayload['cwd'] as string) : thread.cwd;
+      this.bindWorkspaceForSession(
+        thread,
+        thread.title,
+        thread.workspaceId.length > 0 ? thread.workspaceId : remoteThreadId,
+        cwd,
+        thread.workspacePermissionState,
+        thread.workspaceAccessKind,
+        cwd.trim().length > 0 ? [cwd] : thread.writableRoots
+      );
+    }
+    const messagesRaw: Object[] = Array.isArray(payload['messages']) ? (payload['messages'] as Object[]) : [];
+    thread.messages = this.mergeThreadMessages([], this.messagesFromPayload(messagesRaw));
+    const diffText: string = typeof payload['diff'] === 'string' ? (payload['diff'] as string) : '';
+    if (diffText.trim().length > 0) {
+      const parsedDiff: ParsedDiff = this.parseUnifiedDiff(diffText);
+      thread.diffLines = parsedDiff.lines;
+      thread.diffStat = typeof payload['diffStat'] === 'string' ? (payload['diffStat'] as string) : parsedDiff.diffStat;
+      thread.changedFiles = typeof payload['changedFilesText'] === 'string'
+        ? (payload['changedFilesText'] as string)
+        : parsedDiff.changedFiles;
+    } else {
+      thread.diffLines = [];
+      thread.diffStat = typeof payload['diffStat'] === 'string' ? (payload['diffStat'] as string) : '+0 -0';
+      thread.changedFiles = typeof payload['changedFilesText'] === 'string'
+        ? (payload['changedFilesText'] as string)
+        : '尚未产生文件改动';
+    }
+    const summaryRaw: Object[] = Array.isArray(payload['summary']) ? (payload['summary'] as Object[]) : [];
+    thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : '历史会话';
+    thread.summaryPoints = summaryRaw.length > 0
+      ? summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item))
+      : ['历史会话已从 app-server 恢复。'];
+    thread.lastTurnStatus = this.mapTurnStatus(
+      typeof payload['lastTurnStatus'] === 'string' ? (payload['lastTurnStatus'] as string) : 'completed'
+    );
+    this.threads.set(remoteThreadId, thread);
+    this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
+    return thread;
+  }
+
+  private messagesFromPayload(messages: Object[]): CodexChatMessage[] {
+    return messages.map((item: Object, index: number) => {
+      const message = item as Record<string, Object>;
+      const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
+      const role: CodexMessageRole = roleRaw === 'user' || roleRaw === 'system' ? roleRaw : 'assistant';
+      return new CodexChatMessage(
+        typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
+        index + 1,
+        typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'ArkPilot' : '系统'),
+        role,
+        typeof message['content'] === 'string' ? (message['content'] as string) : '',
+        typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp()
+      );
+    });
+  }
+
+  private threadTitleFromPayload(payload: Record<string, Object>, fallbackId: string): string {
+    const title: string = typeof payload['title'] === 'string' ? (payload['title'] as string) : '';
+    if (title.trim().length > 0) {
+      return title.trim();
+    }
+    const name: string = typeof payload['name'] === 'string' ? (payload['name'] as string) : '';
+    if (name.trim().length > 0) {
+      return name.trim();
+    }
+    const preview: string = typeof payload['preview'] === 'string' ? (payload['preview'] as string) : '';
+    if (preview.trim().length > 0) {
+      return preview.trim().substring(0, 40);
+    }
+    return fallbackId;
+  }
+
+  private timestampFromPayload(rawValue: Object): string {
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      const date: Date = new Date((rawValue as number) * 1000);
+      const hours: string = date.getHours().toString().padStart(2, '0');
+      const minutes: string = date.getMinutes().toString().padStart(2, '0');
+      return `${hours}:${minutes}`;
+    }
+    return currentTimestamp();
   }
 
   private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
