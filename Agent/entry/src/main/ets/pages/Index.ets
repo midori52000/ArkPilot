@@ -27,6 +27,10 @@ import uri from '@ohos.uri';
 
 const INDEX_DOMAIN = 0x0000;
 const INDEX_TAG = 'IndexProviderDebug';
+const WAITING_FOR_DIFF_TEXT: string = '\u7b49\u5f85 turn/diff/updated \u901a\u77e5\u3002';
+const NO_DIFF_TEXT: string = '\u672c\u8f6e\u5c1a\u672a\u4ea7\u751f diff\u3002';
+const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
+const UNKNOWN_DIFF_FILE_TEXT: string = '\u672a\u8bc6\u522b\u6587\u4ef6';
 
 class WorkspaceItem {
   id: number;
@@ -104,13 +108,29 @@ class CodeDiffLine {
   sign: string;
   content: string;
   kind: string;
+  filePath: string;
 
-  constructor(id: string, lineNumber: string, sign: string, content: string, kind: string) {
+  constructor(id: string, lineNumber: string, sign: string, content: string, kind: string, filePath?: string) {
     this.id = id;
     this.lineNumber = lineNumber;
     this.sign = sign;
     this.content = content;
     this.kind = kind;
+    this.filePath = filePath ?? '';
+  }
+}
+
+class CodeDiffFile {
+  path: string;
+  label: string;
+  diffStat: string;
+  lines: CodeDiffLine[];
+
+  constructor(path: string, label: string, diffStat: string, lines: CodeDiffLine[]) {
+    this.path = path;
+    this.label = label;
+    this.diffStat = diffStat;
+    this.lines = lines;
   }
 }
 
@@ -176,6 +196,8 @@ struct Index {
   ];
   @State private changedFiles: string = '尚未产生文件改动';
   @State private diffStat: string = '+0 -0';
+  @State private diffFiles: CodeDiffFile[] = [];
+  @State private selectedDiffFilePath: string = '';
   @State private isRunning: boolean = false;
   @State private leftPanelWidth: number = 240;
   @State private rightPanelWidth: number = 330;
@@ -379,6 +401,8 @@ struct Index {
     this.codeLines = [
       new CodeDiffLine('placeholder-1', '1', ' ', '等待 turn/diff/updated 通知。', 'context')
     ];
+    this.diffFiles = [];
+    this.selectedDiffFilePath = '';
     this.summaryTitle = title;
     this.summaryPoints = points ?? ['当前会话尚未产生历史消息。'];
     this.changedFiles = '尚未产生文件改动';
@@ -686,6 +710,10 @@ struct Index {
     void this.runTurn(prompt);
   }
 
+  private stopTurn(): void {
+    codexBackend.interruptTurn();
+  }
+
   private async runTurn(prompt: string): Promise<void> {
     this.isRunning = true;
     if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
@@ -734,9 +762,15 @@ struct Index {
     });
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
-          return new CodeDiffLine(line.lineId, line.lineNumber, line.sign, line.content, line.kind);
+          return new CodeDiffLine(line.lineId, line.lineNumber, line.sign, line.content, line.kind, line.filePath);
         })
       : [new CodeDiffLine('placeholder-2', '1', ' ', '本轮尚未产生 diff。', 'context')];
+    if (result.diffLines.length > 0) {
+      this.applyDiffFiles(this.buildDiffFiles(this.codeLines));
+    } else {
+      this.diffFiles = [];
+      this.selectedDiffFilePath = '';
+    }
     this.summaryTitle = result.summaryTitle;
     this.summaryPoints = result.summaryPoints.length > 0 ? result.summaryPoints : ['没有可展示的摘要信息。'];
     this.changedFiles = result.changedFiles;
@@ -1123,6 +1157,116 @@ struct Index {
     return JSON.stringify(err);
   }
 
+  private placeholderDiffLine(id: string, content: string): CodeDiffLine {
+    return new CodeDiffLine(id, '1', ' ', content, 'context');
+  }
+
+  private diffFileKey(filePath: string): string {
+    const trimmedFilePath: string = filePath.trim();
+    return trimmedFilePath.length > 0 ? trimmedFilePath : UNKNOWN_DIFF_FILE_TEXT;
+  }
+
+  private diffFileDisplayName(filePath: string): string {
+    const normalizedPath: string = this.diffFileKey(filePath).replace(/\\/g, '/');
+    const slashIndex: number = normalizedPath.lastIndexOf('/');
+    return slashIndex >= 0 ? normalizedPath.substring(slashIndex + 1) : normalizedPath;
+  }
+
+  private buildDiffFiles(lines: CodeDiffLine[]): CodeDiffFile[] {
+    const orderedPaths: string[] = [];
+    const groupedLines: Map<string, CodeDiffLine[]> = new Map();
+    const addCounts: Map<string, number> = new Map();
+    const deleteCounts: Map<string, number> = new Map();
+
+    for (let index: number = 0; index < lines.length; index += 1) {
+      const line: CodeDiffLine = lines[index];
+      const filePath: string = this.diffFileKey(line.filePath);
+      if (!groupedLines.has(filePath)) {
+        groupedLines.set(filePath, []);
+        addCounts.set(filePath, 0);
+        deleteCounts.set(filePath, 0);
+        orderedPaths.push(filePath);
+      }
+      (groupedLines.get(filePath) as CodeDiffLine[]).push(line);
+      if (line.kind === 'add') {
+        addCounts.set(filePath, (addCounts.get(filePath) ?? 0) + 1);
+      } else if (line.kind === 'delete') {
+        deleteCounts.set(filePath, (deleteCounts.get(filePath) ?? 0) + 1);
+      }
+    }
+
+    const files: CodeDiffFile[] = [];
+    for (let index: number = 0; index < orderedPaths.length; index += 1) {
+      const filePath: string = orderedPaths[index];
+      files.push(
+        new CodeDiffFile(
+          filePath,
+          this.diffFileDisplayName(filePath),
+          `+${addCounts.get(filePath) ?? 0} -${deleteCounts.get(filePath) ?? 0}`,
+          groupedLines.get(filePath) ?? []
+        )
+      );
+    }
+    return files;
+  }
+
+  private diffFileByPath(path: string, files?: CodeDiffFile[]): CodeDiffFile | null {
+    const sourceFiles: CodeDiffFile[] = files ?? this.diffFiles;
+    for (let index: number = 0; index < sourceFiles.length; index += 1) {
+      if (sourceFiles[index].path === path) {
+        return sourceFiles[index];
+      }
+    }
+    return null;
+  }
+
+  private applyDiffFiles(files: CodeDiffFile[]): void {
+    this.diffFiles = files;
+    if (files.length === 0) {
+      this.selectedDiffFilePath = '';
+      this.codeLines = [this.placeholderDiffLine('placeholder-2', NO_DIFF_TEXT)];
+      return;
+    }
+
+    let selectedFile: CodeDiffFile | null = this.diffFileByPath(this.selectedDiffFilePath, files);
+    if (selectedFile === null) {
+      selectedFile = files[0];
+    }
+    this.selectedDiffFilePath = selectedFile.path;
+    this.codeLines = selectedFile.lines.length > 0
+      ? selectedFile.lines
+      : [this.placeholderDiffLine('placeholder-empty-file', NO_DIFF_TEXT)];
+  }
+
+  private selectDiffFile(path: string): void {
+    const selectedFile: CodeDiffFile | null = this.diffFileByPath(path);
+    if (selectedFile === null) {
+      return;
+    }
+    this.selectedDiffFilePath = selectedFile.path;
+    this.codeLines = selectedFile.lines.length > 0
+      ? selectedFile.lines
+      : [this.placeholderDiffLine('placeholder-empty-file', NO_DIFF_TEXT)];
+  }
+
+  private selectedDiffFile(): CodeDiffFile | null {
+    return this.diffFileByPath(this.selectedDiffFilePath);
+  }
+
+  private currentDiffFilePath(): string {
+    const selectedFile: CodeDiffFile | null = this.selectedDiffFile();
+    return selectedFile !== null ? selectedFile.path : NO_FILE_CHANGES_TEXT;
+  }
+
+  private currentDiffFileStat(): string {
+    const selectedFile: CodeDiffFile | null = this.selectedDiffFile();
+    return selectedFile !== null ? selectedFile.diffStat : this.diffStat;
+  }
+
+  private isDiffFileSelected(file: CodeDiffFile): boolean {
+    return this.selectedDiffFilePath === file.path;
+  }
+
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
@@ -1406,6 +1550,44 @@ struct Index {
     .padding({ left: 8, right: 8, top: 7, bottom: 7 })
     .backgroundColor(this.diffBackground(line.kind))
     .borderRadius(10)
+  }
+
+  @Builder
+  private diffFileRow(file: CodeDiffFile) {
+    Row() {
+      Column() {
+        Text(file.label)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .fontWeight(this.isDiffFileSelected(file) ? FontWeight.Medium : FontWeight.Regular)
+          .fontColor('#0F172A')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(file.path)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(9)
+          .fontColor('#64748B')
+          .margin({ top: 4 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Text(file.diffStat)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(10)
+        .fontColor(this.isDiffFileSelected(file) ? '#1D4ED8' : '#15803D')
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor(this.isDiffFileSelected(file) ? '#EEF4FF' : '#FFFFFF')
+    .border({ width: 1, color: this.isDiffFileSelected(file) ? '#BFDBFE' : '#E2E8F0' })
+    .borderRadius(12)
+    .onClick(() => {
+      this.selectDiffFile(file.path);
+    })
   }
 
   @Builder
@@ -2000,8 +2182,8 @@ struct Index {
             })
 
           Button() {
-            Text(this.isRunning ? '↗' : '发送')
-              .fontSize(this.isRunning ? 16 : 12)
+            Text(this.isRunning ? '■' : '发送')
+              .fontSize(this.isRunning ? 14 : 12)
               .fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF')
               .copyOption(CopyOptions.LocalDevice)
@@ -2011,10 +2193,13 @@ struct Index {
             .margin({ left: 8 })
             .backgroundColor('#111827')
             .borderRadius(18)
-            .enabled(!this.isRunning)
-            .opacity(this.isRunning ? 0.78 : 1)
+            .opacity(1)
             .onClick(() => {
-              this.sendMessage();
+              if (this.isRunning) {
+                this.stopTurn();
+              } else {
+                this.sendMessage();
+              }
             })
         }
         .width('100%')
@@ -2084,7 +2269,7 @@ struct Index {
         Blank()
           .layoutWeight(1)
 
-        Text(this.diffStat)
+        Text(this.diffFiles.length > 0 ? this.currentDiffFileStat() : this.diffStat)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor('#15803D')
@@ -2101,6 +2286,49 @@ struct Index {
         .margin({ top: 8 })
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.diffFiles.length > 0) {
+        Text('\u53d8\u66f4\u6587\u4ef6')
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(10)
+          .fontColor('#94A3B8')
+          .margin({ top: 10 })
+
+        List({ space: 6 }) {
+          ForEach(this.diffFiles, (file: CodeDiffFile) => {
+            ListItem() {
+              this.diffFileRow(file)
+            }
+          }, (file: CodeDiffFile) => file.path)
+        }
+        .width('100%')
+        .height(Math.min(150, this.diffFiles.length * 54))
+        .margin({ top: 8 })
+        .scrollBar(BarState.Off)
+
+        Row() {
+          Text('\u5f53\u524d')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#94A3B8')
+
+          Text(this.currentDiffFilePath())
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#334155')
+            .layoutWeight(1)
+            .margin({ left: 8 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.currentDiffFileStat())
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#1D4ED8')
+        }
+        .width('100%')
+        .margin({ top: 10 })
+      }
 
       List({ space: 6 }) {
         ForEach(this.codeLines, (item: CodeDiffLine) => {

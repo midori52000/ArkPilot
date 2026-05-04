@@ -564,6 +564,17 @@ export function turnPollNative(threadId: string, turnId: string): string {
   }
 }
 
+export function turnInterruptNative(threadId: string, turnId: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    return nativeBridge!.turnInterrupt(threadId, turnId);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
 export function approvalPollNative(): string {
   if (nativeModuleUnavailable()) {
     return 'null';

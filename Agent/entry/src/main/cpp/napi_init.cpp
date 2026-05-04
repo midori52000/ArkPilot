@@ -61,6 +61,7 @@ struct BridgeApi {
     const char* (*turn_start)(const char*) = nullptr;
     const char* (*turn_events)(const char*, const char*) = nullptr;
     const char* (*turn_poll)(const char*, const char*) = nullptr;
+    const char* (*turn_interrupt)(const char*, const char*) = nullptr;
     const char* (*approval_poll)(void) = nullptr;
     int32_t (*approval_approve)(const char*) = nullptr;
     int32_t (*approval_decline)(const char*) = nullptr;
@@ -126,6 +127,7 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_turn_start", &api->turn_start) &&
         LoadSymbol(api->handle, "codex_ohos_host_turn_events", &api->turn_events) &&
         LoadSymbol(api->handle, "codex_ohos_host_turn_poll", &api->turn_poll) &&
+        LoadSymbol(api->handle, "codex_ohos_host_turn_interrupt", &api->turn_interrupt) &&
         LoadSymbol(api->handle, "codex_ohos_host_approval_poll", &api->approval_poll) &&
         LoadSymbol(api->handle, "codex_ohos_host_approval_approve", &api->approval_approve) &&
         LoadSymbol(api->handle, "codex_ohos_host_approval_decline", &api->approval_decline) &&
@@ -533,6 +535,7 @@ napi_value ThreadArchive(napi_env env, napi_callback_info info) { BridgeApi* api
 napi_value TurnStart(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->turn_start); return result; }
 napi_value TurnEvents(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_events); return result; }
 napi_value TurnPoll(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_poll); return result; }
+napi_value TurnInterrupt(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_interrupt); return result; }
 napi_value ApprovalPoll(napi_env env, napi_callback_info info) { (void)info; BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateUtf8String(env, api->approval_poll()); return result; }
 napi_value ApprovalApprove(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.approval_approve); UnloadBridgeApi(&api); return result; }
 napi_value ApprovalDecline(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.approval_decline); UnloadBridgeApi(&api); return result; }
@@ -601,6 +604,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"turnStart", nullptr, TurnStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"turnEvents", nullptr, TurnEvents, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"turnPoll", nullptr, TurnPoll, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"turnInterrupt", nullptr, TurnInterrupt, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"approvalPoll", nullptr, ApprovalPoll, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"approvalApprove", nullptr, ApprovalApprove, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"approvalDecline", nullptr, ApprovalDecline, nullptr, nullptr, nullptr, napi_default, nullptr},

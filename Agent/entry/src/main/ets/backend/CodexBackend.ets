@@ -19,6 +19,7 @@ import {
   threadReadNative,
   threadResumeNative,
   threadStartNative,
+  turnInterruptNative,
   turnPollNative,
   turnStartNative
 } from './CodexNative';
@@ -842,14 +843,16 @@ export class CodexDiffLine {
   sign: string;
   content: string;
   kind: CodexDiffKind;
+  filePath: string;
 
-  constructor(lineId: string, sequence: number, lineNumber: string, sign: string, content: string, kind: CodexDiffKind) {
+  constructor(lineId: string, sequence: number, lineNumber: string, sign: string, content: string, kind: CodexDiffKind, filePath?: string) {
     this.lineId = lineId;
     this.sequence = sequence;
     this.lineNumber = lineNumber;
     this.sign = sign;
     this.content = content;
     this.kind = kind;
+    this.filePath = filePath ?? '';
   }
 }
 
@@ -966,6 +969,7 @@ export class CodexBackendSnapshot {
 class PendingTurnState {
   threadKey: string;
   turnId: string = '';
+  cancelled: boolean = false;
   listener?: CodexTurnUpdateHandler;
   completion: Promise<CodexTurnResult>;
   resolveCompletion: (result: CodexTurnResult) => void;
@@ -1420,6 +1424,22 @@ export class CodexBackend {
 
     const result: CodexTurnResult = await this.pollTurnUntilCompleted(thread, pendingTurn);
     return result;
+  }
+
+  interruptTurn(): void {
+    let activeThread: CodexThreadRecord | null = null;
+    this.threads.forEach((thread: CodexThreadRecord) => {
+      if (thread.activeTurn !== null && activeThread === null) {
+        activeThread = thread;
+      }
+    });
+    if (activeThread === null) {
+      return;
+    }
+    const thread: CodexThreadRecord = activeThread;
+    const activeTurn: PendingTurnState = thread.activeTurn!;
+    activeTurn.cancelled = true;
+    turnInterruptNative(thread.remoteThreadId, activeTurn.turnId);
   }
 
   async refreshMcpServers(): Promise<McpServerRecord[]> {
@@ -1893,6 +1913,14 @@ export class CodexBackend {
 
   private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
     while (true) {
+      if (pendingTurn.cancelled) {
+        thread.lastTurnStatus = 'interrupted';
+        const interruptedSnapshot: CodexTurnResult = this.snapshotForThread(thread, 'interrupted', pendingTurn.turnId);
+        this.emitTurnUpdate(thread, pendingTurn, interruptedSnapshot);
+        thread.activeTurn = null;
+        pendingTurn.resolveCompletion(interruptedSnapshot);
+        return interruptedSnapshot;
+      }
       const pollObject: Record<string, Object> = parseJsonText(turnPollNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
       this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
       const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
@@ -2187,16 +2215,21 @@ export class CodexBackend {
     let oldLineNumber: number = 0;
     let newLineNumber: number = 0;
     let lineSequence: number = 1;
+    let currentFilePath: string = '';
     rawLines.forEach((line: string) => {
       if (line.startsWith('diff --git ')) {
         const match: RegExpMatchArray | null = line.match(/ b\/(.+)$/);
-        if (match !== null && match.length > 1 && changedFiles.indexOf(match[1]) < 0) {
-          changedFiles.push(match[1]);
+        if (match !== null && match.length > 1) {
+          currentFilePath = match[1];
+          if (changedFiles.indexOf(match[1]) < 0) {
+            changedFiles.push(match[1]);
+          }
         }
         return;
       }
       if (line.startsWith('+++ b/')) {
         const filePath: string = line.substring(6);
+        currentFilePath = filePath;
         if (changedFiles.indexOf(filePath) < 0) {
           changedFiles.push(filePath);
         }
@@ -2210,33 +2243,37 @@ export class CodexBackend {
         }
         return;
       }
-      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('index ')) {
+      if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('index ')) {
         return;
       }
       if (line.startsWith('+')) {
-        parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, newLineNumber.toString(), '+', line.substring(1), 'add'));
+        parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, newLineNumber.toString(), '+', line.substring(1), 'add', currentFilePath));
         lineSequence += 1;
         newLineNumber += 1;
         addCount += 1;
         return;
       }
       if (line.startsWith('-')) {
-        parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, oldLineNumber.toString(), '-', line.substring(1), 'delete'));
+        parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, oldLineNumber.toString(), '-', line.substring(1), 'delete', currentFilePath));
         lineSequence += 1;
         oldLineNumber += 1;
         deleteCount += 1;
         return;
       }
       if (line.startsWith(' ')) {
-        parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, newLineNumber.toString(), ' ', line.substring(1), 'context'));
+        parsed.lines.push(new CodexDiffLine(`diff-${lineSequence}`, lineSequence, newLineNumber.toString(), ' ', line.substring(1), 'context', currentFilePath));
         lineSequence += 1;
         oldLineNumber += 1;
         newLineNumber += 1;
       }
     });
-    parsed.lines = parsed.lines.slice(0, 160);
     parsed.diffStat = `+${addCount} -${deleteCount}`;
+    if (changedFiles.length === 0) {
+      parsed.changedFiles = UNRECOGNIZED_CHANGED_FILES_TEXT;
+    }
+    parsed.changedFiles = changedFiles.length > 0 ? changedFiles.join(', ') : UNRECOGNIZED_CHANGED_FILES_TEXT;
     parsed.changedFiles = changedFiles.length > 0 ? changedFiles.join(', ') : '尚未识别变更文件';
+    parsed.changedFiles = changedFiles.length > 0 ? changedFiles.join(', ') : UNRECOGNIZED_CHANGED_FILES_TEXT;
     return parsed;
   }
 
@@ -2270,7 +2307,7 @@ export class CodexBackend {
   }
 
   private cloneDiffLine(line: CodexDiffLine): CodexDiffLine {
-    return new CodexDiffLine(line.lineId, line.sequence, line.lineNumber, line.sign, line.content, line.kind);
+    return new CodexDiffLine(line.lineId, line.sequence, line.lineNumber, line.sign, line.content, line.kind, line.filePath);
   }
 
   private cloneMcpServer(server: McpServerRecord): McpServerRecord {
