@@ -3,6 +3,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
+#include <string>
 #include "napi/native_api.h"
 #include "codex_ohos_host.h"
 
@@ -18,6 +19,8 @@ constexpr size_t MAX_SKILL_JSON_ARG_LEN = 8192;
 constexpr size_t MAX_BACKUP_ID_ARG_LEN = 512;
 constexpr size_t MAX_PROMPTS_CONTENT_ARG_LEN = 262144;
 constexpr size_t MAX_JSON_ARG_LEN = 262144;
+constexpr const char* OHOS_DEFAULT_PATH = "/system/bin:/vendor/bin:/system/xbin:/bin";
+constexpr const char* OHOS_DEFAULT_SHELL = "/system/bin/sh";
 
 struct BridgeApi {
     void* handle = nullptr;
@@ -146,6 +149,26 @@ void UnloadBridgeApi(BridgeApi* api) {
     (void)api;
 }
 
+void EnsureOhosShellEnvironment() {
+#if defined(__OHOS__)
+    const char* current_path = std::getenv("PATH");
+    if (current_path == nullptr || current_path[0] == '\0') {
+        setenv("PATH", OHOS_DEFAULT_PATH, 1);
+    } else if (std::strstr(current_path, "/system/bin") == nullptr) {
+        std::string merged_path(OHOS_DEFAULT_PATH);
+        merged_path.push_back(':');
+        merged_path.append(current_path);
+        setenv("PATH", merged_path.c_str(), 1);
+    }
+
+    const char* current_shell = std::getenv("SHELL");
+    if (current_shell == nullptr || current_shell[0] == '\0') {
+        setenv("SHELL", OHOS_DEFAULT_SHELL, 1);
+    }
+#endif
+}
+
+
 bool ReadOptionalUtf8(napi_env env, napi_value value, char* buffer, size_t capacity) {
     if (capacity == 0) {
         return false;
@@ -225,6 +248,7 @@ napi_value StartHost(napi_env env, napi_callback_info info) {
     if (argc >= 2 && !ReadOptionalUtf8(env, args[1], server_url, sizeof(server_url))) {
         return nullptr;
     }
+    EnsureOhosShellEnvironment();
     int32_t code = api->start(codex_home[0] == '\0' ? nullptr : codex_home, server_url[0] == '\0' ? nullptr : server_url);
     napi_value result = BuildStatusObject(env, api, code);
     return result;

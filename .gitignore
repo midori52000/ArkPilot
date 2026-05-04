@@ -7,13 +7,13 @@
 # Local working directories
 /ccmanage/
 
-# Design image assets (large binaries); design.md is tracked via explicit add
-/design/*.png
-/design/*.jpg
-/design/*.jpeg
+# Design directory
+/design/
 
 # Build outputs
 /Agent/entry/build/
 /Agent/.hvigor/
 /Agent/oh_modules/
 /Agent/.preview/
+
+# Keep design references versioned; ignore generated exports separately if needed later.
