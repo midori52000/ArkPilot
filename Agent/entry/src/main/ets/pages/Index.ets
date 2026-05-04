@@ -18,9 +18,12 @@ import {
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
 import { SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
+import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import { PromptsPage } from './PromptsPage';
 import router from '@ohos.router';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { picker } from '@kit.CoreFileKit';
+import uri from '@ohos.uri';
 
 const INDEX_DOMAIN = 0x0000;
 const INDEX_TAG = 'IndexProviderDebug';
@@ -36,6 +39,24 @@ class WorkspaceItem {
     this.title = title;
     this.description = description;
     this.workspaceId = workspaceId ?? `session:${id.toString()}`;
+  }
+}
+
+class WorkspaceBindingDraft {
+  id: number;
+  title: string;
+  description: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  workspaceUri: string;
+
+  constructor(id: number, title: string, description: string, workspaceId: string, workspaceRoot: string, workspaceUri?: string) {
+    this.id = id;
+    this.title = title;
+    this.description = description;
+    this.workspaceId = workspaceId;
+    this.workspaceRoot = workspaceRoot;
+    this.workspaceUri = workspaceUri ?? '';
   }
 }
 
@@ -125,6 +146,7 @@ struct Index {
   private reconnectAttemptCount: number = 0;
   private readonly workspaceRoots: Map<number, string> = new Map();
   private readonly workspaceIds: Map<number, string> = new Map();
+  private readonly workspaceUris: Map<number, string> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private activeSidebarView: SidebarView = 'chat';
@@ -137,6 +159,8 @@ struct Index {
   @State private showEffortOptions: boolean = false;
   @State private serverUrl: string = 'ws://127.0.0.1:7456';
   @State private workspaceRoot: string = '';
+  @State private workspaceDraftText: string = '';
+  @State private workspaceSelectionText: string = '使用默认工作区';
   @State private providerBaseUrl: string = '';
   @State private providerApiKey: string = '';
   @State private manualModel: string = '';
@@ -186,7 +210,7 @@ struct Index {
     this.applyBackendSnapshot(codexBackend.snapshot());
     this.applyEmbeddedHostStatus();
     this.loadProviderConfig();
-    this.initializeDefaultWorkspace();
+    this.restoreWorkspaceBindings();
     this.scheduleEmbeddedHostReconnect(0);
     this.scheduleMessageScrollToBottom();
   }
@@ -270,8 +294,9 @@ struct Index {
   private refreshWorkspaceBindingState(): void {
     const active: WorkspaceItem = this.activeWorkspace();
     this.activeWorkspaceBindingId = this.ensureWorkspaceBinding(active);
-    if (this.workspaceRoot.trim().length > 0) {
-      const status: WorkspaceAccessStatus = checkWorkspaceAccess(this.workspaceRoot.trim());
+    const currentWorkspaceRoot: string = this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText.trim() : this.workspaceRoot.trim();
+    if (currentWorkspaceRoot.length > 0) {
+      const status: WorkspaceAccessStatus = checkWorkspaceAccess(currentWorkspaceRoot);
       this.activeWorkspacePermissionState = this.mapWorkspacePermissionState(status.permissionState);
       this.activeWorkspaceAccessKind = this.mapWorkspaceAccessKind(status.accessKind);
       this.workspaceStatusText = status.message.trim().length > 0 ? status.message : 'å·¥ä½œåŒºå·²é…ç½®';
@@ -288,7 +313,131 @@ struct Index {
       this.workspaceRoot = defaultWorkspaceRoot;
       this.workspaceRoots.set(this.activeWorkspaceId, defaultWorkspaceRoot);
     }
+    if (this.workspaceDraftText.trim().length === 0) {
+      this.workspaceDraftText = this.workspaceRoot;
+    }
     this.refreshWorkspaceBindingState();
+  }
+
+  private restoreWorkspaceBindings(): void {
+    const snapshot = workspaceBindingStore.load();
+    const restoredItems: WorkspaceBindingDraft[] = [];
+    for (let index: number = 0; index < snapshot.items.length; index += 1) {
+      const item = snapshot.items[index];
+      if (item.id <= 0) {
+        continue;
+      }
+      restoredItems.push(new WorkspaceBindingDraft(
+        item.id,
+        item.title.trim().length > 0 ? item.title : `ä¼šè¯ ${item.id}`,
+        item.description,
+        item.workspaceId.trim().length > 0 ? item.workspaceId : `session:${item.id.toString()}`,
+        item.workspaceRoot,
+        item.workspaceUri
+      ));
+    }
+
+    if (restoredItems.length === 0) {
+      this.initializeDefaultWorkspace();
+      this.persistWorkspaceBindings();
+      return;
+    }
+
+    this.workspaces.splice(0, this.workspaces.length);
+    for (let index: number = 0; index < restoredItems.length; index += 1) {
+      const restored: WorkspaceBindingDraft = restoredItems[index];
+      const workspace: WorkspaceItem = new WorkspaceItem(restored.id, restored.title, restored.description, restored.workspaceId);
+      this.workspaces.push(workspace);
+      this.workspaceIds.set(restored.id, restored.workspaceId);
+      this.workspaceRoots.set(restored.id, restored.workspaceRoot);
+      this.workspaceUris.set(restored.id, restored.workspaceUri);
+    }
+
+    const preferredActiveId: number = snapshot.activeWorkspaceId > 0 ? snapshot.activeWorkspaceId : restoredItems[0].id;
+    const matched: WorkspaceItem | undefined = this.workspaces.find((item: WorkspaceItem) => item.id === preferredActiveId);
+    this.activeWorkspaceId = matched?.id ?? this.workspaces[0].id;
+    this.workspaceRoot = this.workspaceRoots.get(this.activeWorkspaceId) ?? '';
+    this.workspaceDraftText = this.workspaceRoot;
+    this.syncWorkspaceSelectionText();
+    this.refreshWorkspaceBindingState();
+  }
+
+  private persistWorkspaceBindings(): void {
+    const items: StoredWorkspaceItem[] = [];
+    for (let index: number = 0; index < this.workspaces.length; index += 1) {
+      const workspace: WorkspaceItem = this.workspaces[index];
+      const item: StoredWorkspaceItem = new StoredWorkspaceItem();
+      item.id = workspace.id;
+      item.title = workspace.title;
+      item.description = workspace.description;
+      item.workspaceId = this.ensureWorkspaceBinding(workspace);
+      item.workspaceRoot = this.workspaceRoots.get(workspace.id) ?? '';
+      item.workspaceUri = this.workspaceUris.get(workspace.id) ?? '';
+      items.push(item);
+    }
+    workspaceBindingStore.saveBindings(this.activeWorkspaceId, items);
+  }
+
+  private applyWorkspaceRootBinding(): void {
+    const trimmedWorkspaceRoot: string = this.workspaceDraftText.trim();
+    this.workspaceRoot = trimmedWorkspaceRoot;
+    this.workspaceRoots.set(this.activeWorkspaceId, trimmedWorkspaceRoot);
+    this.workspaceUris.set(this.activeWorkspaceId, '');
+    this.syncWorkspaceSelectionText();
+    this.refreshWorkspaceBindingState();
+    this.persistWorkspaceBindings();
+  }
+
+  private applyWorkspaceDirectorySelection(workspaceRoot: string, workspaceUri: string): void {
+    const trimmedWorkspaceRoot: string = workspaceRoot.trim();
+    this.workspaceRoot = trimmedWorkspaceRoot;
+    this.workspaceDraftText = trimmedWorkspaceRoot;
+    this.workspaceRoots.set(this.activeWorkspaceId, trimmedWorkspaceRoot);
+    this.workspaceUris.set(this.activeWorkspaceId, workspaceUri);
+    this.syncWorkspaceSelectionText();
+    this.refreshWorkspaceBindingState();
+    this.persistWorkspaceBindings();
+  }
+
+  private syncWorkspaceSelectionText(): void {
+    const workspaceUri: string = this.workspaceUris.get(this.activeWorkspaceId) ?? '';
+    if (workspaceUri.trim().length > 0) {
+      this.workspaceSelectionText = `已选择目录: ${workspaceUri}`;
+      return;
+    }
+    if (this.workspaceRoot.trim().length > 0) {
+      this.workspaceSelectionText = `当前工作目录: ${this.workspaceRoot}`;
+      return;
+    }
+    this.workspaceSelectionText = '使用默认工作区';
+  }
+
+  private async pickWorkspaceDirectory(): Promise<void> {
+    try {
+      const hostContext = this.getUIContext().getHostContext();
+      if (hostContext === undefined) {
+        this.workspaceStatusText = '当前页面上下文不可用，无法打开目录选择器。';
+        return;
+      }
+      const documentPicker = new picker.DocumentViewPicker(hostContext);
+      const selectedUris: Array<string> = await documentPicker.select({
+        selectMode: picker.DocumentSelectMode.FOLDER
+      });
+      if (selectedUris.length === 0) {
+        this.workspaceStatusText = '未选择目录，继续使用当前工作区。';
+        return;
+      }
+      const selectedUri: string = selectedUris[0];
+      const parsedUri = new uri.URI(selectedUri);
+      const candidatePath: string = decodeURIComponent(parsedUri.path ?? '');
+      if (candidatePath.trim().length === 0) {
+        this.workspaceStatusText = `目录已选择，但暂时无法解析路径: ${selectedUri}`;
+        return;
+      }
+      this.applyWorkspaceDirectorySelection(candidatePath, selectedUri);
+    } catch (err) {
+      this.workspaceStatusText = `选择目录失败: ${this.describeError(err)}`;
+    }
   }
 
   private mapWorkspacePermissionState(value: string): WorkspacePermissionState {
@@ -339,6 +488,9 @@ struct Index {
 
   private async runTurn(prompt: string): Promise<void> {
     this.isRunning = true;
+    if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
+      this.applyWorkspaceRootBinding();
+    }
     this.workspaceRoots.set(this.activeWorkspaceId, this.workspaceRoot);
     this.refreshWorkspaceBindingState();
     codexBackend.configureServerUrl(this.serverUrl);
@@ -608,9 +760,11 @@ struct Index {
   private selectWorkspace(item: WorkspaceItem): void {
     this.activeWorkspaceId = item.id;
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
+    this.workspaceDraftText = this.workspaceRoot;
     this.refreshWorkspaceBindingState();
     this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
     this.activeSidebarView = 'chat';
+    this.persistWorkspaceBindings();
   }
 
   private createWorkspace(): void {
@@ -622,7 +776,9 @@ struct Index {
     }
     const workspace: WorkspaceItem = new WorkspaceItem(nextId, `新会话 ${nextId}`, '从侧边栏创建的新线程');
     this.workspaces.push(workspace);
+    this.workspaceUris.set(workspace.id, '');
     this.selectWorkspace(workspace);
+    this.persistWorkspaceBindings();
   }
 
   private connectionButtonLabel(): string {
@@ -1319,24 +1475,37 @@ struct Index {
           Column() {
             this.panelTitle('工作目录', '为空时由 app-server 使用自己的默认 cwd')
 
-            TextInput({ text: this.workspaceRoot, placeholder: '例如 /data/storage/el2/base/files/project' })
+            Text(this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText : '未选择目录，当前使用默认工作区')
               .width('100%')
-              .height(38)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .fontColor('#111827')
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12, top: 11, bottom: 11 })
+              .copyOption(CopyOptions.LocalDevice)
+
+            Button('选择目录')
+              .height(34)
               .margin({ top: 10 })
               .fontSize(12)
               .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .padding({ left: 12, right: 12 })
-              .onChange((value: string) => {
-                this.workspaceRoot = value;
-                this.workspaceRoots.set(this.activeWorkspaceId, value);
-                this.refreshWorkspaceBindingState();
+              .fontColor('#111827')
+              .borderRadius(16)
+              .border({ width: 1, color: '#CBD5E1' })
+              .onClick(() => {
+                void this.pickWorkspaceDirectory();
               })
+
+            Text(this.workspaceSelectionText)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .margin({ top: 8 })
 
             Text(this.workspaceStatusText)
               .fontSize(10)
               .fontColor('#64748B')
-              .margin({ top: 8 })
+              .margin({ top: 6 })
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')
@@ -1699,7 +1868,13 @@ struct Index {
         Blank()
           .layoutWeight(1)
 
-        this.chip(this.diffStat, '#ECFDF3', '#15803D')
+        Text(this.diffStat)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(10)
+          .fontColor('#15803D')
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .backgroundColor('#ECFDF3')
+          .borderRadius(10)
       }
       .width('100%')
 

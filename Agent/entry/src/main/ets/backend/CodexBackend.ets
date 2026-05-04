@@ -61,6 +61,8 @@ const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
 const TURN_POLL_INTERVAL_MS: number = 800;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
+const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
+const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
 
 export type ConfigKind = 'provider' | 'skill';
 export type ConfigAction = 'list' | 'get' | 'add' | 'update' | 'remove' | 'enable' | 'disable' | 'setActive';
@@ -1388,12 +1390,42 @@ export class CodexBackend {
       const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
       this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
       if (nextSnapshot.status !== 'inProgress') {
+        let finalSnapshot: CodexTurnResult = nextSnapshot;
+        if (this.shouldDrainLateTurnUpdates(thread)) {
+          finalSnapshot = await this.drainLateTurnUpdates(thread, pendingTurn, finalSnapshot);
+        }
         thread.activeTurn = null;
-        pendingTurn.resolveCompletion(nextSnapshot);
-        return nextSnapshot;
+        pendingTurn.resolveCompletion(finalSnapshot);
+        return finalSnapshot;
       }
       await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
     }
+  }
+
+  private shouldDrainLateTurnUpdates(thread: CodexThreadRecord): boolean {
+    return thread.diffLines.length === 0 || thread.diffStat === '+0 -0';
+  }
+
+  private async drainLateTurnUpdates(
+    thread: CodexThreadRecord,
+    pendingTurn: PendingTurnState,
+    snapshot: CodexTurnResult
+  ): Promise<CodexTurnResult> {
+    let currentSnapshot: CodexTurnResult = snapshot;
+    for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
+      const pollObject: Record<string, Object> = parseJsonText(
+        turnPollNative(thread.remoteThreadId, pendingTurn.turnId),
+        new TurnPollResponsePayload() as Object
+      ) as Record<string, Object>;
+      this.logInfo(`turnPoll drain thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
+      currentSnapshot = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
+      this.emitTurnUpdate(thread, pendingTurn, currentSnapshot);
+      if (!this.shouldDrainLateTurnUpdates(thread)) {
+        break;
+      }
+    }
+    return currentSnapshot;
   }
 
   private applyTurnPollResult(thread: CodexThreadRecord, turnId: string, payload: Record<string, Object>): CodexTurnResult {

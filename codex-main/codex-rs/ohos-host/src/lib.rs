@@ -22,15 +22,24 @@ use codex_app_server_client::RemoteAppServerConnectArgs;
 use codex_arg0::Arg0DispatchPaths;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval;
+use codex_app_server_protocol::ApplyPatchApprovalResponse;
 use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::CommandExecutionApprovalDecision;
+use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
+use codex_app_server_protocol::FileChangeApprovalDecision;
+use codex_app_server_protocol::FileChangeRequestApprovalResponse;
+use codex_app_server_protocol::GrantedPermissionProfile;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
 use codex_app_server_protocol::McpServerOauthLoginParams;
 use codex_app_server_protocol::McpServerOauthLoginResponse;
 use codex_app_server_protocol::McpServerRefreshResponse;
+use codex_app_server_protocol::PermissionGrantScope;
+use codex_app_server_protocol::PermissionsRequestApprovalResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::SandboxPolicy;
+use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -85,6 +94,23 @@ struct NativeConversationState {
     initialized: bool,
     threads: std::collections::HashMap<String, NativeThreadState>,
     turns: std::collections::HashMap<String, NativeTurnState>,
+    pending_approval: Option<PendingApprovalState>,
+}
+
+#[derive(Debug, Clone)]
+enum PendingApprovalResolutionKind {
+    CommandExecution,
+    FileChange,
+    Permissions,
+    LegacyPatch,
+    LegacyExec,
+}
+
+#[derive(Debug, Clone)]
+struct PendingApprovalState {
+    request_id: RequestId,
+    resolution_kind: PendingApprovalResolutionKind,
+    payload_json: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -208,6 +234,13 @@ struct WorkspaceAccessStatus {
     writable: bool,
     exists: bool,
     message: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeApprovalActionRequest {
+    request_id: serde_json::Value,
+    kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1309,17 +1342,24 @@ pub extern "C" fn codex_ohos_host_turn_poll(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_approval_poll() -> *const c_char {
-    write_cstring(&LAST_APPROVAL_JSON, "null")
+    let payload = with_native_state(|state| {
+        state
+            .pending_approval
+            .as_ref()
+            .map(|approval| approval.payload_json.clone())
+            .unwrap_or_else(|| "null".to_string())
+    });
+    write_cstring(&LAST_APPROVAL_JSON, &payload)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_approval_approve(_params_json: *const c_char) -> i32 {
-    0
+pub extern "C" fn codex_ohos_host_approval_approve(params_json: *const c_char) -> i32 {
+    resolve_pending_approval(params_json, true)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_approval_decline(_params_json: *const c_char) -> i32 {
-    0
+pub extern "C" fn codex_ohos_host_approval_decline(params_json: *const c_char) -> i32 {
+    resolve_pending_approval(params_json, false)
 }
 
 #[unsafe(no_mangle)]
@@ -1616,6 +1656,19 @@ fn with_native_handle<T>(
     f(&mut state)
 }
 
+fn clear_pending_approval() {
+    with_native_state(|state| {
+        state.pending_approval = None;
+    });
+    let _ = write_cstring(&LAST_APPROVAL_JSON, "null");
+}
+
+fn set_pending_approval(state: &mut NativeConversationState, approval: PendingApprovalState) {
+    let payload = approval.payload_json.clone();
+    state.pending_approval = Some(approval);
+    let _ = write_cstring(&LAST_APPROVAL_JSON, &payload);
+}
+
 fn next_request_id(state: &mut NativeConversationState) -> RequestId {
     state.next_request_id += 1;
     RequestId::Integer(state.next_request_id)
@@ -1772,13 +1825,6 @@ async fn process_pending_events(target_turn_id: Option<&str>) -> Result<()> {
         if should_stop {
             break;
         }
-        if target_turn_id
-            .and_then(|turn_id| with_native_state(|state| state.turns.get(turn_id).cloned()))
-            .map(|turn| turn.status != "inProgress")
-            .unwrap_or(false)
-        {
-            break;
-        }
     }
     Ok(())
 }
@@ -1794,12 +1840,7 @@ async fn handle_app_server_event(
             Ok(())
         }
         AppServerEvent::ServerRequest(request) => {
-            let request_id = request.id().clone();
-            client
-                .resolve_server_request(request_id, serde_json::json!({}))
-                .await
-                .map_err(anyhow::Error::from)?;
-            Ok(())
+            handle_server_request(client, request).await
         }
         AppServerEvent::Lagged { skipped } => {
             set_host_message(format!("app-server event stream lagged; skipped {skipped} events"));
@@ -1808,6 +1849,214 @@ async fn handle_app_server_event(
         AppServerEvent::Disconnected { message } => Err(anyhow::anyhow!(
             "embedded websocket app-server disconnected: {message}"
         )),
+    }
+}
+
+async fn handle_server_request(
+    client: &mut RemoteAppServerClient,
+    request: ServerRequest,
+) -> Result<()> {
+    match request {
+        ServerRequest::CommandExecutionRequestApproval { request_id, params } => {
+            let request_id_json = request_id_to_json_value(&request_id);
+            let title = if let Some(command) = params.command.as_deref() {
+                format!("需要批准执行命令: {command}")
+            } else {
+                "需要批准执行命令".to_string()
+            };
+            let detail = serde_json::json!({
+                "reason": params.reason,
+                "cwd": params.cwd,
+                "command": params.command,
+                "availableDecisions": params.available_decisions,
+            })
+            .to_string();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::CommandExecution,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "command",
+                            "title": title,
+                            "detail": detail,
+                            "threadId": params.thread_id,
+                            "turnId": params.turn_id,
+                            "itemId": params.item_id,
+                        })
+                        .to_string(),
+                    },
+                );
+            });
+            Ok(())
+        }
+        ServerRequest::FileChangeRequestApproval { request_id, params } => {
+            let request_id_json = request_id_to_json_value(&request_id);
+            let detail = serde_json::json!({
+                "reason": params.reason,
+                "grantRoot": params.grant_root,
+            })
+            .to_string();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::FileChange,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "fileChange",
+                            "title": "需要批准文件修改",
+                            "detail": detail,
+                            "threadId": params.thread_id,
+                            "turnId": params.turn_id,
+                            "itemId": params.item_id,
+                        })
+                        .to_string(),
+                    },
+                );
+            });
+            Ok(())
+        }
+        ServerRequest::PermissionsRequestApproval { request_id, params } => {
+            let request_id_json = request_id_to_json_value(&request_id);
+            let detail = serde_json::json!({
+                "reason": params.reason,
+                "permissions": params.permissions,
+            })
+            .to_string();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::Permissions,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "permissions",
+                            "title": "需要批准权限申请",
+                            "detail": detail,
+                            "threadId": params.thread_id,
+                            "turnId": params.turn_id,
+                            "itemId": params.item_id,
+                        })
+                        .to_string(),
+                    },
+                );
+            });
+            Ok(())
+        }
+        ServerRequest::ApplyPatchApproval { request_id, params } => {
+            let request_id_json = request_id_to_json_value(&request_id);
+            let detail = serde_json::json!({
+                "reason": params.reason,
+                "grantRoot": params.grant_root,
+                "fileChanges": params.file_changes,
+            })
+            .to_string();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::LegacyPatch,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "fileChange",
+                            "title": "需要批准补丁修改",
+                            "detail": detail,
+                            "threadId": params.conversation_id.to_string(),
+                            "turnId": "",
+                            "itemId": params.call_id,
+                        })
+                        .to_string(),
+                    },
+                );
+            });
+            Ok(())
+        }
+        ServerRequest::ExecCommandApproval { request_id, params } => {
+            let request_id_json = request_id_to_json_value(&request_id);
+            let detail = serde_json::json!({
+                "reason": params.reason,
+                "cwd": params.cwd,
+                "command": params.command,
+            })
+            .to_string();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::LegacyExec,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "command",
+                            "title": "需要批准执行命令",
+                            "detail": detail,
+                            "threadId": params.conversation_id.to_string(),
+                            "turnId": "",
+                            "itemId": params.call_id,
+                        })
+                        .to_string(),
+                    },
+                );
+            });
+            Ok(())
+        }
+        ServerRequest::ToolRequestUserInput { request_id, params } => {
+            client
+                .reject_server_request(
+                    request_id,
+                    codex_app_server_protocol::JSONRPCErrorError {
+                        code: -32601,
+                        data: None,
+                        message: format!(
+                            "tool/requestUserInput is not supported in Harmony UI yet for turn `{}`",
+                            params.turn_id
+                        ),
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::from)
+        }
+        ServerRequest::McpServerElicitationRequest { request_id, params } => {
+            client
+                .reject_server_request(
+                    request_id,
+                    codex_app_server_protocol::JSONRPCErrorError {
+                        code: -32601,
+                        data: None,
+                        message: format!(
+                            "mcpServer/elicitation/request is not supported in Harmony UI yet for server `{}`",
+                            params.server_name
+                        ),
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::from)
+        }
+        ServerRequest::DynamicToolCall { request_id, .. } => {
+            client
+                .reject_server_request(
+                    request_id,
+                    codex_app_server_protocol::JSONRPCErrorError {
+                        code: -32601,
+                        data: None,
+                        message: "dynamic tool calls are not supported in Harmony UI yet".to_string(),
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::from)
+        }
+        ServerRequest::ChatgptAuthTokensRefresh { request_id, .. } => {
+            client
+                .resolve_server_request(request_id, serde_json::json!({}))
+                .await
+                .map_err(anyhow::Error::from)
+        }
     }
 }
 
@@ -2027,6 +2276,113 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
         }
         _ => {}
     }
+}
+
+fn request_id_to_json_value(request_id: &RequestId) -> serde_json::Value {
+    match request_id {
+        RequestId::Integer(value) => serde_json::json!(*value),
+        RequestId::String(value) => serde_json::json!(value),
+    }
+}
+
+fn parse_request_id_value(value: &serde_json::Value) -> Option<RequestId> {
+    if let Some(raw) = value.as_i64() {
+        return Some(RequestId::Integer(raw));
+    }
+    value
+        .as_str()
+        .map(|raw| RequestId::String(raw.to_string()))
+}
+
+fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request = serde_json::from_str::<NativeApprovalActionRequest>(&params_text).unwrap_or_default();
+    let request_id_from_payload = parse_request_id_value(&request.request_id);
+    let result = with_runtime_result(async move {
+        let (mut client, pending) = with_native_state(|state| {
+            let client = state.client.take();
+            let pending = state.pending_approval.clone();
+            if pending.is_none() {
+                state.pending_approval = None;
+            }
+            (client, pending)
+        });
+        let mut client = client.context("remote app-server client is not initialized")?;
+        let pending = pending.context("no pending approval request")?;
+        if let Some(request_id) = request_id_from_payload {
+            if request_id != pending.request_id {
+                with_native_state(|state| {
+                    state.client = Some(client);
+                });
+                anyhow::bail!("approval request id does not match current pending approval");
+            }
+        }
+        let response = match pending.resolution_kind {
+            PendingApprovalResolutionKind::CommandExecution => {
+                let decision = if approved {
+                    CommandExecutionApprovalDecision::Accept
+                } else {
+                    CommandExecutionApprovalDecision::Decline
+                };
+                serde_json::to_value(CommandExecutionRequestApprovalResponse { decision })?
+            }
+            PendingApprovalResolutionKind::FileChange => {
+                let decision = if approved {
+                    FileChangeApprovalDecision::Accept
+                } else {
+                    FileChangeApprovalDecision::Decline
+                };
+                serde_json::to_value(FileChangeRequestApprovalResponse { decision })?
+            }
+            PendingApprovalResolutionKind::Permissions => {
+                let permissions = if approved {
+                    GrantedPermissionProfile {
+                        network: None,
+                        file_system: None,
+                    }
+                } else {
+                    GrantedPermissionProfile::default()
+                };
+                serde_json::to_value(PermissionsRequestApprovalResponse {
+                    permissions,
+                    scope: PermissionGrantScope::Turn,
+                })?
+            }
+            PendingApprovalResolutionKind::LegacyPatch => {
+                let decision = if approved {
+                    codex_protocol::protocol::ReviewDecision::Approved
+                } else {
+                    codex_protocol::protocol::ReviewDecision::Denied
+                };
+                serde_json::to_value(ApplyPatchApprovalResponse { decision })?
+            }
+            PendingApprovalResolutionKind::LegacyExec => {
+                let decision = if approved {
+                    codex_protocol::protocol::ReviewDecision::Approved
+                } else {
+                    codex_protocol::protocol::ReviewDecision::Denied
+                };
+                serde_json::to_value(codex_app_server_protocol::ExecCommandApprovalResponse {
+                    decision,
+                })?
+            }
+        };
+        client
+            .resolve_server_request(pending.request_id.clone(), response)
+            .await
+            .map_err(anyhow::Error::from)?;
+        with_native_state(|state| {
+            state.client = Some(client);
+            state.pending_approval = None;
+        });
+        clear_pending_approval();
+        Ok::<(), anyhow::Error>(())
+    });
+    if let Err(err) = result {
+        set_host_message(format!("approval resolution failed: {err}"));
+        return -1;
+    }
+    0
 }
 
 fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
