@@ -82,6 +82,7 @@ export interface EntryBridgeModule {
   turnStart: (paramsJson?: string) => string;
   turnEvents: (threadId?: string, turnId?: string) => string;
   turnPoll: (threadId?: string, turnId?: string) => string;
+  turnInterrupt: (threadId?: string, turnId?: string) => string;
   approvalPoll: () => string;
   approvalApprove: (paramsJson?: string) => number;
   approvalDecline: (paramsJson?: string) => number;

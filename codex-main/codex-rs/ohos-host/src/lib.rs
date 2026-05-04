@@ -20,10 +20,9 @@ use codex_app_server::run_main_with_transport;
 use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::RemoteAppServerClient;
 use codex_app_server_client::RemoteAppServerConnectArgs;
-use codex_arg0::Arg0DispatchPaths;
+use codex_app_server_protocol::ApplyPatchApprovalResponse;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ApplyPatchApprovalResponse;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
@@ -40,8 +39,8 @@ use codex_app_server_protocol::PermissionsRequestApprovalResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxMode;
 use codex_app_server_protocol::SandboxPolicy;
-use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadArchiveResponse;
@@ -55,18 +54,21 @@ use codex_app_server_protocol::ThreadSetNameParams;
 use codex_app_server_protocol::ThreadSetNameResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::TurnInterruptParams;
+use codex_app_server_protocol::TurnInterruptResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
+use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::config::types::McpServerConfig;
 use codex_core::config_loader::LoaderOverrides;
 use codex_core::turn_diff_tracker::TurnDiffTracker;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
@@ -378,90 +380,72 @@ static LAST_PROVIDER_CONFIG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new(json).expect("provider config cstring"))
 });
 static LAST_PROVIDER_CATALOG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    let json = serde_json::to_string(&ProviderCatalog::default()).expect("default provider catalog json");
+    let json =
+        serde_json::to_string(&ProviderCatalog::default()).expect("default provider catalog json");
     Mutex::new(CString::new(json).expect("provider catalog cstring"))
 });
-static LAST_SKILLS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_SKILLS_REPOS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_HASH_RESULT: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("").expect("empty cstring"))
-});
-static LAST_BACKUPS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("[]").expect("empty cstring"))
-});
-static LAST_BACKUP_PATH: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("").expect("empty cstring"))
-});
-static LAST_INSTALL_SKILL_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_UNINSTALL_BACKUP_PATH: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("").expect("empty cstring"))
-});
-static LAST_SET_ENABLED_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
+static LAST_SKILLS_REGISTRY_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_SKILLS_REPOS_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_HASH_RESULT: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
+static LAST_BACKUPS_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("[]").expect("empty cstring")));
+static LAST_BACKUP_PATH: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
+static LAST_INSTALL_SKILL_RESULT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_UNINSTALL_BACKUP_PATH: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
+static LAST_SET_ENABLED_RESULT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
 static LAST_RECONCILE_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{\"removed\":[],\"registered\":[]}").expect("empty cstring"))
 });
-static LAST_PROMPTS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_AGENTS_MD_CONTENT: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("").expect("empty cstring"))
-});
-static LAST_ENABLE_PROMPT_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_INIT_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_THREAD_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
+static LAST_PROMPTS_REGISTRY_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_AGENTS_MD_CONTENT: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
+static LAST_ENABLE_PROMPT_RESULT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_INIT_RESULT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_THREAD_RESULT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
 static LAST_THREAD_LIST_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{\"data\":[],\"nextCursor\":null}").expect("empty cstring"))
 });
-static LAST_THREAD_READ_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_THREAD_RESUME_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_THREAD_MUTATION_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{\"ok\":false}").expect("empty cstring"))
-});
-static LAST_TURN_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_TURN_EVENTS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("[]").expect("empty cstring"))
-});
-static LAST_TURN_POLL_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
-static LAST_APPROVAL_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("null").expect("empty cstring"))
-});
+static LAST_THREAD_READ_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_THREAD_RESUME_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_THREAD_MUTATION_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{\"ok\":false}").expect("empty cstring")));
+static LAST_TURN_RESULT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_TURN_EVENTS_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("[]").expect("empty cstring")));
+static LAST_TURN_POLL_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_TURN_INTERRUPT_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_APPROVAL_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("null").expect("empty cstring")));
 static LAST_MCP_STATUS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{\"data\":[],\"nextCursor\":null}").expect("empty cstring"))
 });
-static LAST_MCP_CONFIG_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{\"config\":{}}") .expect("empty cstring"))
-});
-static LAST_MCP_OAUTH_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{\"authorizationUrl\":\"\"}").expect("empty cstring"))
-});
+static LAST_MCP_CONFIG_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{\"config\":{}}").expect("empty cstring")));
+static LAST_MCP_OAUTH_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{\"authorizationUrl\":\"\"}").expect("empty cstring")));
 static LAST_ACCOUNT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{\"account\":null,\"requiresOpenaiAuth\":false}").expect("empty cstring"))
+    Mutex::new(
+        CString::new("{\"account\":null,\"requiresOpenaiAuth\":false}").expect("empty cstring"),
+    )
 });
-static LAST_WORKSPACE_ACCESS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
-    Mutex::new(CString::new("{}").expect("empty cstring"))
-});
+static LAST_WORKSPACE_ACCESS_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
 static NATIVE_CONVERSATION_STATE: Lazy<Mutex<NativeConversationState>> =
     Lazy::new(|| Mutex::new(NativeConversationState::default()));
 static NATIVE_ASYNC_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
@@ -486,7 +470,12 @@ pub extern "C" fn codex_ohos_host_start(
     match start_host(codex_home, listen_url) {
         Ok(()) => 0,
         Err(err) => {
-            update_host_state(false, None, None, format!("embedded app-server start failed: {err}"));
+            update_host_state(
+                false,
+                None,
+                None,
+                format!("embedded app-server start failed: {err}"),
+            );
             1
         }
     }
@@ -558,7 +547,9 @@ pub extern "C" fn codex_ohos_host_save_provider_config(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_provider_catalog_json(codex_home: *const c_char) -> *const c_char {
+pub extern "C" fn codex_ohos_host_provider_catalog_json(
+    codex_home: *const c_char,
+) -> *const c_char {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     let catalog = load_provider_catalog(&codex_home).unwrap_or_default();
     let json = serde_json::to_string(&catalog).unwrap_or_else(|_| "{}".to_string());
@@ -729,14 +720,16 @@ pub extern "C" fn codex_ohos_host_install_skill_from_dir(
     let Some(skill_json) = ffi_string(skill_json) else {
         return write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, "{}");
     };
-    match skills_registry::install_skill_from_dir(&codex_home, Path::new(&source_dir), &skill_json) {
+    match skills_registry::install_skill_from_dir(&codex_home, Path::new(&source_dir), &skill_json)
+    {
         Ok(entry) => {
             let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
             write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, &json)
         }
-        Err(e) => {
-            write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, &format!("{{\"error\":\"{}\"}}", e))
-        }
+        Err(e) => write_cstring(
+            &LAST_INSTALL_SKILL_RESULT_JSON,
+            &format!("{{\"error\":\"{}\"}}", e),
+        ),
     }
 }
 
@@ -770,19 +763,19 @@ pub extern "C" fn codex_ohos_host_set_skill_enabled(
             let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
             write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &json)
         }
-        Err(e) => {
-            write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &format!("{{\"error\":\"{}\"}}", e))
-        }
+        Err(e) => write_cstring(
+            &LAST_SET_ENABLED_RESULT_JSON,
+            &format!("{{\"error\":\"{}\"}}", e),
+        ),
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_reconcile_skills(
-    codex_home: *const c_char,
-) -> *const c_char {
+pub extern "C" fn codex_ohos_host_reconcile_skills(codex_home: *const c_char) -> *const c_char {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     let result = skills_registry::reconcile_skills(&codex_home);
-    let json = serde_json::to_string(&result).unwrap_or_else(|_| "{\"removed\":[],\"registered\":[]}".into());
+    let json = serde_json::to_string(&result)
+        .unwrap_or_else(|_| "{\"removed\":[],\"registered\":[]}".into());
     write_cstring(&LAST_RECONCILE_RESULT_JSON, &json)
 }
 
@@ -804,7 +797,9 @@ pub extern "C" fn codex_ohos_host_save_prompts_registry(
     registry_json: *const c_char,
 ) -> i32 {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
-    let Some(json_str) = ffi_string(registry_json) else { return 1; };
+    let Some(json_str) = ffi_string(registry_json) else {
+        return 1;
+    };
     let registry: prompts_registry::PromptsRegistry = match serde_json::from_str(&json_str) {
         Ok(r) => r,
         Err(_) => return 1,
@@ -816,9 +811,7 @@ pub extern "C" fn codex_ohos_host_save_prompts_registry(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_read_agents_md(
-    codex_home: *const c_char,
-) -> *const c_char {
+pub extern "C" fn codex_ohos_host_read_agents_md(codex_home: *const c_char) -> *const c_char {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     let path = prompts_registry::agents_md_path(&codex_home);
     let content = std::fs::read_to_string(&path).unwrap_or_default();
@@ -831,7 +824,9 @@ pub extern "C" fn codex_ohos_host_write_agents_md(
     content: *const c_char,
 ) -> i32 {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
-    let Some(content) = ffi_string(content) else { return 1; };
+    let Some(content) = ffi_string(content) else {
+        return 1;
+    };
     let path = prompts_registry::agents_md_path(&codex_home);
 
     let tmp_path = path.with_extension("md.tmp");
@@ -860,16 +855,15 @@ pub extern "C" fn codex_ohos_host_enable_prompt(
             let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
             write_cstring(&LAST_ENABLE_PROMPT_RESULT_JSON, &json)
         }
-        Err(e) => {
-            write_cstring(&LAST_ENABLE_PROMPT_RESULT_JSON, &format!("{{\"error\":\"{}\"}}", e))
-        }
+        Err(e) => write_cstring(
+            &LAST_ENABLE_PROMPT_RESULT_JSON,
+            &format!("{{\"error\":\"{}\"}}", e),
+        ),
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_disable_all_prompts(
-    codex_home: *const c_char,
-) -> i32 {
+pub extern "C" fn codex_ohos_host_disable_all_prompts(codex_home: *const c_char) -> i32 {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     match prompts_registry::disable_all_with_agents_md(&codex_home) {
         Ok(()) => 0,
@@ -949,12 +943,9 @@ fn start_host(codex_home: Option<PathBuf>, listen_url: String) -> Result<()> {
             });
 
             match result {
-                Ok(()) => update_host_state(
-                    false,
-                    None,
-                    None,
-                    "embedded app-server stopped".to_string(),
-                ),
+                Ok(()) => {
+                    update_host_state(false, None, None, "embedded app-server stopped".to_string())
+                }
                 Err(err) => update_host_state(
                     false,
                     None,
@@ -1019,13 +1010,16 @@ fn load_provider_settings(codex_home: &Path) -> Result<ProviderSettings> {
 fn ensure_provider_config(codex_home: &Path) -> Result<()> {
     let settings = load_provider_settings(codex_home).unwrap_or_default();
     persist_provider_settings(codex_home, &settings)?;
-    let catalog = load_provider_catalog(codex_home).unwrap_or_else(|_| {
-        ProviderCatalog {
-            version: 1,
-            active_provider_id: "live-provider".to_string(),
-            providers: vec![catalog_record_from_settings("live-provider", "当前 Live Provider", &settings, true)],
-            updated_at: current_timestamp_string(),
-        }
+    let catalog = load_provider_catalog(codex_home).unwrap_or_else(|_| ProviderCatalog {
+        version: 1,
+        active_provider_id: "live-provider".to_string(),
+        providers: vec![catalog_record_from_settings(
+            "live-provider",
+            "当前 Live Provider",
+            &settings,
+            true,
+        )],
+        updated_at: current_timestamp_string(),
     });
     persist_provider_catalog(codex_home, &catalog)
 }
@@ -1053,7 +1047,12 @@ fn load_provider_catalog(codex_home: &Path) -> Result<ProviderCatalog> {
         return Ok(ProviderCatalog {
             version: 1,
             active_provider_id: "live-provider".to_string(),
-            providers: vec![catalog_record_from_settings("live-provider", "当前 Live Provider", &settings, true)],
+            providers: vec![catalog_record_from_settings(
+                "live-provider",
+                "当前 Live Provider",
+                &settings,
+                true,
+            )],
             updated_at: current_timestamp_string(),
         });
     }
@@ -1173,7 +1172,11 @@ fn normalize_catalog(mut catalog: ProviderCatalog) -> ProviderCatalog {
         provider.is_active = provider.id == active_id || (index == 0 && active_id.is_empty());
     }
 
-    if !catalog.providers.iter().any(|provider| provider.id == active_id) {
+    if !catalog
+        .providers
+        .iter()
+        .any(|provider| provider.id == active_id)
+    {
         catalog.active_provider_id = catalog.providers[0].id.clone();
         if let Some(first) = catalog.providers.first_mut() {
             first.is_active = true;
@@ -1183,10 +1186,13 @@ fn normalize_catalog(mut catalog: ProviderCatalog) -> ProviderCatalog {
 }
 
 fn current_timestamp_string() -> String {
-    format!("{}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0))
+    format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0)
+    )
 }
 
 fn toml_string(value: &str) -> String {
@@ -1314,9 +1320,7 @@ fn should_refresh_turn_diff_from_local_tracker(turn_id: &str) -> bool {
             .turns
             .get(turn_id)
             .map(|turn| {
-                !turn.diff_authoritative
-                    && turn.cwd.is_some()
-                    && turn.local_diff_tracker.is_some()
+                !turn.diff_authoritative && turn.cwd.is_some() && turn.local_diff_tracker.is_some()
             })
             .unwrap_or(false)
     })
@@ -1414,20 +1418,23 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
         params.model = request.model.filter(|value| !value.trim().is_empty());
         params.model_provider = Some(CUSTOM_PROVIDER_ID.to_string());
         params.approval_policy = parse_approval_policy(
-            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+            request
+                .approval_policy
+                .as_deref()
+                .or(Some(DEFAULT_APPROVAL_POLICY)),
         )?;
         params.approvals_reviewer = Some(ApprovalsReviewer::User);
         params.sandbox = parse_thread_sandbox_mode(
-            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE))
+            request
+                .sandbox_mode
+                .as_deref()
+                .or(Some(DEFAULT_SANDBOX_MODE)),
         )?;
         params.ephemeral = Some(false);
         params.persist_extended_history = true;
 
         let response: ThreadStartResponse = handle
-            .request_typed(ClientRequest::ThreadStart {
-                request_id,
-                params,
-            })
+            .request_typed(ClientRequest::ThreadStart { request_id, params })
             .await
             .map_err(anyhow::Error::from)?;
 
@@ -1565,7 +1572,8 @@ pub extern "C" fn codex_ohos_host_thread_read(params_json: *const c_char) -> *co
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_thread_resume(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request = serde_json::from_str::<NativeThreadResumeRequest>(&params_text).unwrap_or_default();
+    let request =
+        serde_json::from_str::<NativeThreadResumeRequest>(&params_text).unwrap_or_default();
 
     let response = with_runtime_result(async {
         let (handle, request_id) = with_native_handle(|state| {
@@ -1584,11 +1592,17 @@ pub extern "C" fn codex_ohos_host_thread_resume(params_json: *const c_char) -> *
         params.model = request.model.filter(|value| !value.trim().is_empty());
         params.model_provider = Some(CUSTOM_PROVIDER_ID.to_string());
         params.approval_policy = parse_approval_policy(
-            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+            request
+                .approval_policy
+                .as_deref()
+                .or(Some(DEFAULT_APPROVAL_POLICY)),
         )?;
         params.approvals_reviewer = Some(ApprovalsReviewer::User);
         params.sandbox = parse_thread_sandbox_mode(
-            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE))
+            request
+                .sandbox_mode
+                .as_deref()
+                .or(Some(DEFAULT_SANDBOX_MODE)),
         )?;
         params.persist_extended_history = true;
 
@@ -1623,7 +1637,8 @@ pub extern "C" fn codex_ohos_host_thread_resume(params_json: *const c_char) -> *
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_thread_name_set(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request = serde_json::from_str::<NativeThreadNameSetRequest>(&params_text).unwrap_or_default();
+    let request =
+        serde_json::from_str::<NativeThreadNameSetRequest>(&params_text).unwrap_or_default();
 
     let response = with_runtime_result(async {
         let (handle, request_id) = with_native_handle(|state| {
@@ -1670,7 +1685,8 @@ pub extern "C" fn codex_ohos_host_thread_name_set(params_json: *const c_char) ->
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_thread_archive(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request = serde_json::from_str::<NativeThreadArchiveRequest>(&params_text).unwrap_or_default();
+    let request =
+        serde_json::from_str::<NativeThreadArchiveRequest>(&params_text).unwrap_or_default();
 
     let response = with_runtime_result(async {
         let (handle, request_id) = with_native_handle(|state| {
@@ -1695,7 +1711,9 @@ pub extern "C" fn codex_ohos_host_thread_archive(params_json: *const c_char) -> 
 
         with_native_state(|state| {
             state.threads.remove(&request.thread_id);
-            state.turns.retain(|_, turn| turn.thread_id != request.thread_id);
+            state
+                .turns
+                .retain(|_, turn| turn.thread_id != request.thread_id);
         });
 
         Ok::<(), anyhow::Error>(())
@@ -1743,11 +1761,17 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
         params.model = request.model.filter(|value| !value.trim().is_empty());
         params.effort = parse_reasoning_effort(request.effort.as_deref())?;
         params.approval_policy = parse_approval_policy(
-            request.approval_policy.as_deref().or(Some(DEFAULT_APPROVAL_POLICY))
+            request
+                .approval_policy
+                .as_deref()
+                .or(Some(DEFAULT_APPROVAL_POLICY)),
         )?;
         params.approvals_reviewer = Some(ApprovalsReviewer::User);
         params.sandbox_policy = build_sandbox_policy(
-            request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE)),
+            request
+                .sandbox_mode
+                .as_deref()
+                .or(Some(DEFAULT_SANDBOX_MODE)),
             cwd.as_deref(),
         )?;
         params.input = request
@@ -1767,10 +1791,7 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
             .collect();
 
         let response: TurnStartResponse = handle
-            .request_typed(ClientRequest::TurnStart {
-                request_id,
-                params,
-            })
+            .request_typed(ClientRequest::TurnStart { request_id, params })
             .await
             .map_err(anyhow::Error::from)?;
 
@@ -1843,11 +1864,8 @@ pub extern "C" fn codex_ohos_host_turn_poll(
     let response = with_runtime_result(async {
         process_pending_events(Some(&turn_id)).await?;
         if should_wait_for_trailing_turn_diff(&turn_id) {
-            process_pending_events_with_idle_timeout(
-                Some(&turn_id),
-                Duration::from_millis(300),
-            )
-            .await?;
+            process_pending_events_with_idle_timeout(Some(&turn_id), Duration::from_millis(300))
+                .await?;
         }
         if should_refresh_turn_diff_from_local_tracker(&turn_id) {
             refresh_turn_diff_from_local_tracker(&turn_id).await?;
@@ -1857,13 +1875,8 @@ pub extern "C" fn codex_ohos_host_turn_poll(
 
     let json = match response {
         Ok(()) => {
-            let snapshot = with_native_state(|state| {
-                build_turn_poll_payload(
-                    state,
-                    &thread_id,
-                    &turn_id,
-                )
-            });
+            let snapshot =
+                with_native_state(|state| build_turn_poll_payload(state, &thread_id, &turn_id));
             serde_json::to_string(&snapshot).unwrap_or_else(|_| {
                 serde_json::json!({
                     "threadId": thread_id,
@@ -1886,6 +1899,62 @@ pub extern "C" fn codex_ohos_host_turn_poll(
         .to_string(),
     };
     write_cstring(&LAST_TURN_POLL_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_turn_interrupt(
+    thread_id: *const c_char,
+    turn_id: *const c_char,
+) -> *const c_char {
+    let thread_id = ffi_string(thread_id).unwrap_or_default();
+    let turn_id = ffi_string(turn_id).unwrap_or_default();
+
+    let setup = with_native_handle(|state| {
+        let handle = state
+            .client
+            .as_ref()
+            .map(RemoteAppServerClient::request_handle)
+            .context("remote app-server client is not initialized")?;
+        let request_id = next_request_id(state);
+        Ok::<_, anyhow::Error>((handle, request_id, thread_id.clone(), turn_id.clone()))
+    });
+
+    match setup {
+        Ok((handle, request_id, tid, tturn_id)) => {
+            thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
+                match runtime {
+                    Ok(rt) => {
+                        let result: Result<()> = rt.block_on(async {
+                            let _: TurnInterruptResponse = handle
+                                .request_typed(ClientRequest::TurnInterrupt {
+                                    request_id,
+                                    params: TurnInterruptParams {
+                                        thread_id: tid,
+                                        turn_id: tturn_id,
+                                    },
+                                })
+                                .await
+                                .map_err(anyhow::Error::from)?;
+                            Ok(())
+                        });
+                        let _ = result;
+                    }
+                    Err(_) => {}
+                }
+            });
+            write_cstring(
+                &LAST_TURN_INTERRUPT_JSON,
+                &serde_json::json!({ "ok": true }).to_string(),
+            )
+        }
+        Err(err) => write_cstring(
+            &LAST_TURN_INTERRUPT_JSON,
+            &serde_json::json!({ "ok": false, "error": { "message": err.to_string() } }).to_string(),
+        ),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1913,7 +1982,8 @@ pub extern "C" fn codex_ohos_host_approval_decline(params_json: *const c_char) -
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_mcp_status_list(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request = serde_json::from_str::<NativeMcpStatusListRequest>(&params_text).unwrap_or_default();
+    let request =
+        serde_json::from_str::<NativeMcpStatusListRequest>(&params_text).unwrap_or_default();
 
     let response = with_runtime_result(async {
         let (handle, request_id) = with_native_handle(|state| {
@@ -1953,7 +2023,8 @@ pub extern "C" fn codex_ohos_host_mcp_status_list(params_json: *const c_char) ->
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_mcp_config_read(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let _request = serde_json::from_str::<NativeMcpConfigReadRequest>(&params_text).unwrap_or_default();
+    let _request =
+        serde_json::from_str::<NativeMcpConfigReadRequest>(&params_text).unwrap_or_default();
     let codex_home = resolve_codex_home(None);
 
     let json = match mcp_servers_to_config_json(&codex_home) {
@@ -2116,7 +2187,8 @@ pub extern "C" fn codex_ohos_host_mcp_reload() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_mcp_oauth_start(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request = serde_json::from_str::<NativeMcpOauthStartRequest>(&params_text).unwrap_or_default();
+    let request =
+        serde_json::from_str::<NativeMcpOauthStartRequest>(&params_text).unwrap_or_default();
 
     let response = with_runtime_result(async {
         let (handle, request_id) = with_native_handle(|state| {
@@ -2163,15 +2235,25 @@ pub extern "C" fn codex_ohos_host_account_login(_params_json: *const c_char) -> 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_account_read() -> *const c_char {
-    write_cstring(&LAST_ACCOUNT_JSON, "{\"account\":null,\"requiresOpenaiAuth\":false}")
+    write_cstring(
+        &LAST_ACCOUNT_JSON,
+        "{\"account\":null,\"requiresOpenaiAuth\":false}",
+    )
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_check_workspace_access(params_json: *const c_char) -> *const c_char {
+pub extern "C" fn codex_ohos_host_check_workspace_access(
+    params_json: *const c_char,
+) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
     let root_path = serde_json::from_str::<serde_json::Value>(&params_text)
         .ok()
-        .and_then(|value| value.get("rootPath").and_then(|field| field.as_str()).map(ToOwned::to_owned))
+        .and_then(|value| {
+            value
+                .get("rootPath")
+                .and_then(|field| field.as_str())
+                .map(ToOwned::to_owned)
+        })
         .unwrap_or_default();
 
     let trimmed_root = root_path.trim().to_string();
@@ -2210,7 +2292,11 @@ pub extern "C" fn codex_ohos_host_check_workspace_access(params_json: *const c_c
             WorkspaceAccessStatus {
                 root_path: trimmed_root,
                 access_kind: infer_workspace_access_kind(&path),
-                permission_state: if writable { "writable".to_string() } else { "readonly".to_string() },
+                permission_state: if writable {
+                    "writable".to_string()
+                } else {
+                    "readonly".to_string()
+                },
                 writable,
                 exists: true,
                 message: if writable {
@@ -2270,9 +2356,7 @@ fn with_native_state<T>(f: impl FnOnce(&mut NativeConversationState) -> T) -> T 
     f(&mut state)
 }
 
-fn with_native_handle<T>(
-    f: impl FnOnce(&mut NativeConversationState) -> Result<T>,
-) -> Result<T> {
+fn with_native_handle<T>(f: impl FnOnce(&mut NativeConversationState) -> Result<T>) -> Result<T> {
     let mut state = NATIVE_CONVERSATION_STATE
         .lock()
         .expect("native conversation lock");
@@ -2339,7 +2423,11 @@ fn parse_reasoning_effort(raw: Option<&str>) -> Result<Option<ReasoningEffort>> 
 }
 
 fn mcp_servers_to_config_json(codex_home: &Path) -> Result<String> {
-    let servers = with_runtime_result(async { load_global_mcp_servers(codex_home).await.map_err(anyhow::Error::from) })?;
+    let servers = with_runtime_result(async {
+        load_global_mcp_servers(codex_home)
+            .await
+            .map_err(anyhow::Error::from)
+    })?;
     let config = serde_json::json!({ "config": { "mcp_servers": servers } });
     serde_json::to_string(&config).map_err(anyhow::Error::from)
 }
@@ -2354,8 +2442,15 @@ fn write_mcp_servers(codex_home: &Path, servers: &BTreeMap<String, McpServerConf
         .apply_blocking()
 }
 
-fn apply_mcp_batch_edits(codex_home: &Path, edits: Vec<NativeMcpConfigBatchEditRequest>) -> Result<()> {
-    let mut servers = with_runtime_result(async { load_global_mcp_servers(codex_home).await.map_err(anyhow::Error::from) })?;
+fn apply_mcp_batch_edits(
+    codex_home: &Path,
+    edits: Vec<NativeMcpConfigBatchEditRequest>,
+) -> Result<()> {
+    let mut servers = with_runtime_result(async {
+        load_global_mcp_servers(codex_home)
+            .await
+            .map_err(anyhow::Error::from)
+    })?;
     for edit in edits {
         let key_path = edit.key_path.trim();
         if !key_path.starts_with("mcp_servers.") {
@@ -2485,11 +2580,11 @@ async fn handle_app_server_event(
             apply_server_notification(&notification, target_turn_id);
             Ok(())
         }
-        AppServerEvent::ServerRequest(request) => {
-            handle_server_request(client, request).await
-        }
+        AppServerEvent::ServerRequest(request) => handle_server_request(client, request).await,
         AppServerEvent::Lagged { skipped } => {
-            set_host_message(format!("app-server event stream lagged; skipped {skipped} events"));
+            set_host_message(format!(
+                "app-server event stream lagged; skipped {skipped} events"
+            ));
             Ok(())
         }
         AppServerEvent::Disconnected { message } => Err(anyhow::anyhow!(
@@ -2763,7 +2858,13 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     turn.summary_title = "执行中".to_string();
                     push_turn_summary(turn, "Codex 正在生成回复。".to_string());
                 }
-                append_assistant_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
+                append_assistant_delta(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item_id,
+                    &payload.delta,
+                );
             });
         }
         ServerNotification::PlanDelta(payload) => {
@@ -2793,7 +2894,10 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
-                push_turn_summary(turn, format!("推理摘要: {}", compact_text(&payload.delta, 160)));
+                push_turn_summary(
+                    turn,
+                    format!("推理摘要: {}", compact_text(&payload.delta, 160)),
+                );
             });
         }
         ServerNotification::ReasoningTextDelta(payload) => {
@@ -2823,7 +2927,10 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "执行工具中".to_string();
-                push_turn_summary(turn, format!("命令输出: {}", compact_text(&payload.delta, 160)));
+                push_turn_summary(
+                    turn,
+                    format!("命令输出: {}", compact_text(&payload.delta, 160)),
+                );
             });
         }
         ServerNotification::FileChangeOutputDelta(payload) => {
@@ -2838,7 +2945,10 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "更改文件中".to_string();
-                push_turn_summary(turn, format!("文件变更: {}", compact_text(&payload.delta, 160)));
+                push_turn_summary(
+                    turn,
+                    format!("文件变更: {}", compact_text(&payload.delta, 160)),
+                );
             });
         }
         ServerNotification::McpToolCallProgress(payload) => {
@@ -2853,12 +2963,20 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "执行工具中".to_string();
-                push_turn_summary(turn, format!("工具进度: {}", compact_text(&payload.message, 160)));
+                push_turn_summary(
+                    turn,
+                    format!("工具进度: {}", compact_text(&payload.message, 160)),
+                );
             });
         }
         ServerNotification::ItemCompleted(payload) => {
             with_native_state(|state| {
-                sync_thread_from_completed_item(state, &payload.thread_id, &payload.turn_id, &payload.item);
+                sync_thread_from_completed_item(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item,
+                );
                 let turn = state
                     .turns
                     .entry(payload.turn_id.clone())
@@ -2949,14 +3067,13 @@ fn parse_request_id_value(value: &serde_json::Value) -> Option<RequestId> {
     if let Some(raw) = value.as_i64() {
         return Some(RequestId::Integer(raw));
     }
-    value
-        .as_str()
-        .map(|raw| RequestId::String(raw.to_string()))
+    value.as_str().map(|raw| RequestId::String(raw.to_string()))
 }
 
 fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request = serde_json::from_str::<NativeApprovalActionRequest>(&params_text).unwrap_or_default();
+    let request =
+        serde_json::from_str::<NativeApprovalActionRequest>(&params_text).unwrap_or_default();
     let request_id_from_payload = parse_request_id_value(&request.request_id);
     let result = with_runtime_result(async move {
         let (mut client, pending) = with_native_state(|state| {
@@ -3050,7 +3167,12 @@ fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
     if trimmed.is_empty() {
         return;
     }
-    if turn.summary.last().map(|last| last == trimmed).unwrap_or(false) {
+    if turn
+        .summary
+        .last()
+        .map(|last| last == trimmed)
+        .unwrap_or(false)
+    {
         return;
     }
     turn.summary.push(trimmed.to_string());
@@ -3076,7 +3198,11 @@ fn describe_started_item(item: &codex_app_server_protocol::ThreadItem) -> String
         codex_app_server_protocol::ThreadItem::Plan { .. } => "开始生成计划。".to_string(),
         codex_app_server_protocol::ThreadItem::Reasoning { .. } => "开始推理。".to_string(),
         codex_app_server_protocol::ThreadItem::CommandExecution { command, cwd, .. } => {
-            format!("开始执行命令: {} (cwd: {})", compact_text(command, 120), cwd.display())
+            format!(
+                "开始执行命令: {} (cwd: {})",
+                compact_text(command, 120),
+                cwd.display()
+            )
         }
         codex_app_server_protocol::ThreadItem::FileChange { changes, .. } => {
             format!("开始应用文件变更，共 {} 处。", changes.len())
@@ -3096,14 +3222,18 @@ fn describe_started_item(item: &codex_app_server_protocol::ThreadItem) -> String
         codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
             format!("正在查看图像: {}", path)
         }
-        codex_app_server_protocol::ThreadItem::ImageGeneration { .. } => "开始生成图像。".to_string(),
+        codex_app_server_protocol::ThreadItem::ImageGeneration { .. } => {
+            "开始生成图像。".to_string()
+        }
         codex_app_server_protocol::ThreadItem::EnteredReviewMode { review, .. } => {
             format!("进入审查模式: {}", review)
         }
         codex_app_server_protocol::ThreadItem::ExitedReviewMode { review, .. } => {
             format!("退出审查模式: {}", review)
         }
-        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => "开始压缩上下文。".to_string(),
+        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => {
+            "开始压缩上下文。".to_string()
+        }
         codex_app_server_protocol::ThreadItem::AgentMessage { .. }
         | codex_app_server_protocol::ThreadItem::UserMessage { .. }
         | codex_app_server_protocol::ThreadItem::HookPrompt { .. } => "更新对话内容。".to_string(),
@@ -3115,8 +3245,14 @@ fn describe_completed_item(item: &codex_app_server_protocol::ThreadItem) -> Opti
         codex_app_server_protocol::ThreadItem::Plan { text, .. } => {
             Some(format!("计划已生成: {}", compact_text(text, 160)))
         }
-        codex_app_server_protocol::ThreadItem::Reasoning { summary, content, .. } => {
-            let source = if !summary.is_empty() { summary.join(" ") } else { content.join(" ") };
+        codex_app_server_protocol::ThreadItem::Reasoning {
+            summary, content, ..
+        } => {
+            let source = if !summary.is_empty() {
+                summary.join(" ")
+            } else {
+                content.join(" ")
+            };
             Some(format!("推理完成: {}", compact_text(&source, 160)))
         }
         codex_app_server_protocol::ThreadItem::CommandExecution {
@@ -3143,16 +3279,28 @@ fn describe_completed_item(item: &codex_app_server_protocol::ThreadItem) -> Opti
             }
             Some(message)
         }
-        codex_app_server_protocol::ThreadItem::FileChange { changes, status, .. } => {
+        codex_app_server_protocol::ThreadItem::FileChange {
+            changes, status, ..
+        } => {
             let status_text = match status {
                 codex_app_server_protocol::PatchApplyStatus::InProgress => "进行中",
                 codex_app_server_protocol::PatchApplyStatus::Completed => "已完成",
                 codex_app_server_protocol::PatchApplyStatus::Failed => "失败",
                 codex_app_server_protocol::PatchApplyStatus::Declined => "已拒绝",
             };
-            Some(format!("文件变更{}，共 {} 处。", status_text, changes.len()))
+            Some(format!(
+                "文件变更{}，共 {} 处。",
+                status_text,
+                changes.len()
+            ))
         }
-        codex_app_server_protocol::ThreadItem::McpToolCall { server, tool, status, error, .. } => {
+        codex_app_server_protocol::ThreadItem::McpToolCall {
+            server,
+            tool,
+            status,
+            error,
+            ..
+        } => {
             let status_text = match status {
                 codex_app_server_protocol::McpToolCallStatus::InProgress => "进行中",
                 codex_app_server_protocol::McpToolCallStatus::Completed => "已完成",
@@ -3186,7 +3334,12 @@ fn describe_completed_item(item: &codex_app_server_protocol::ThreadItem) -> Opti
         codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
             Some(format!("图像已加载: {}", path))
         }
-        codex_app_server_protocol::ThreadItem::ImageGeneration { status, revised_prompt, saved_path, .. } => {
+        codex_app_server_protocol::ThreadItem::ImageGeneration {
+            status,
+            revised_prompt,
+            saved_path,
+            ..
+        } => {
             let mut message = format!("图像生成状态: {}", status);
             if let Some(prompt) = revised_prompt {
                 if !prompt.trim().is_empty() {
@@ -3302,13 +3455,140 @@ fn append_turn_diff(turn: &mut NativeTurnState, diff: &str) {
         turn.diff = chunk.to_string();
         return;
     }
-    if turn.diff.contains(chunk) {
-        return;
+    turn.diff = merge_unified_diff(&turn.diff, chunk);
+}
+
+fn extract_diff_section_path(section: &str) -> Option<String> {
+    for line in section.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(index) = rest.rfind(" b/") {
+                let path = rest[index + 3..].trim();
+                if !path.is_empty() {
+                    return Some(path.to_string());
+                }
+            }
+        }
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            let normalized = path.trim();
+            if !normalized.is_empty() {
+                return Some(normalized.to_string());
+            }
+        }
     }
-    if !turn.diff.ends_with('\n') {
-        turn.diff.push('\n');
+    None
+}
+
+fn split_unified_diff_sections(diff: &str) -> Vec<(Option<String>, String)> {
+    let trimmed = diff.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
     }
-    turn.diff.push_str(chunk);
+
+    let mut sections: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut saw_structured_header = false;
+
+    for line in trimmed.lines() {
+        if line.starts_with("diff --git ") {
+            saw_structured_header = true;
+            if !current.trim().is_empty() {
+                sections.push(current.trim().to_string());
+                current.clear();
+            }
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+    }
+
+    if !current.trim().is_empty() {
+        sections.push(current.trim().to_string());
+    }
+
+    if !saw_structured_header {
+        return vec![(extract_diff_section_path(trimmed), trimmed.to_string())];
+    }
+
+    sections
+        .into_iter()
+        .map(|section| {
+            let path = extract_diff_section_path(&section);
+            (path, section)
+        })
+        .collect()
+}
+
+fn merge_unified_diff(existing: &str, incoming: &str) -> String {
+    let existing_sections = split_unified_diff_sections(existing);
+    let incoming_sections = split_unified_diff_sections(incoming);
+
+    if existing_sections.is_empty() {
+        return incoming.trim().to_string();
+    }
+    if incoming_sections.is_empty() {
+        return existing.trim().to_string();
+    }
+
+    let mut merged = existing_sections;
+    for (incoming_path, incoming_section) in incoming_sections {
+        let incoming_trimmed = incoming_section.trim();
+        if incoming_trimmed.is_empty() {
+            continue;
+        }
+
+        let mut handled = false;
+        if let Some(path) = incoming_path.as_ref() {
+            let matching_indexes = merged
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (existing_path, _))| {
+                    if existing_path.as_ref() == Some(path) {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            for index in matching_indexes {
+                let existing_trimmed = merged[index].1.trim();
+                if existing_trimmed == incoming_trimmed
+                    || existing_trimmed.contains(incoming_trimmed)
+                {
+                    handled = true;
+                    break;
+                }
+                if incoming_trimmed.contains(existing_trimmed)
+                    || incoming_section.lines().count() >= merged[index].1.lines().count()
+                {
+                    merged[index] = (incoming_path.clone(), incoming_section.clone());
+                    handled = true;
+                    break;
+                }
+                handled = true;
+            }
+        } else if merged
+            .iter()
+            .any(|(_, existing_section)| existing_section.trim() == incoming_trimmed)
+        {
+            handled = true;
+        }
+
+        if !handled
+            && !merged
+                .iter()
+                .any(|(_, existing_section)| existing_section.trim() == incoming_trimmed)
+        {
+            merged.push((incoming_path.clone(), incoming_section));
+        }
+    }
+
+    merged
+        .into_iter()
+        .map(|(_, section)| section)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn diff_from_thread_item(item: &codex_app_server_protocol::ThreadItem) -> Option<String> {
@@ -3620,14 +3900,14 @@ fn can_write_to_directory(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::time::SystemTime;
     use codex_app_server_protocol::FileUpdateChange;
     use codex_app_server_protocol::ItemCompletedNotification;
     use codex_app_server_protocol::PatchApplyStatus;
     use codex_app_server_protocol::PatchChangeKind;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::ThreadItem;
+    use std::fs;
+    use std::time::SystemTime;
 
     #[test]
     fn render_config_toml_includes_workspace_write_defaults() {
@@ -3687,6 +3967,41 @@ mod tests {
     }
 
     #[test]
+    fn append_turn_diff_preserves_multiple_files() {
+        let mut turn = NativeTurnState {
+            diff: "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -0,0 +1 @@\n+print('foo')"
+                .to_string(),
+            ..Default::default()
+        };
+
+        append_turn_diff(
+            &mut turn,
+            "diff --git a/bar.py b/bar.py\n--- a/bar.py\n+++ b/bar.py\n@@ -0,0 +1 @@\n+print('bar')",
+        );
+
+        assert!(turn.diff.contains("diff --git a/foo.py b/foo.py"));
+        assert!(turn.diff.contains("diff --git a/bar.py b/bar.py"));
+    }
+
+    #[test]
+    fn append_turn_diff_replaces_same_file_with_more_complete_section() {
+        let mut turn = NativeTurnState {
+            diff: "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -0,0 +1 @@\n+print('foo')"
+                .to_string(),
+            ..Default::default()
+        };
+
+        append_turn_diff(
+            &mut turn,
+            "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -0,0 +1,2 @@\n+print('foo')\n+print('bar')",
+        );
+
+        assert_eq!(turn.diff.matches("diff --git a/foo.py b/foo.py").count(), 1);
+        assert!(turn.diff.contains("+print('foo')"));
+        assert!(turn.diff.contains("+print('bar')"));
+    }
+
+    #[test]
     fn completed_turn_with_empty_diff_waits_for_trailing_turn_diff() {
         with_native_state(|state| {
             *state = NativeConversationState::default();
@@ -3731,8 +4046,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("codex-ohos-host-diff-{unique}"));
         fs::create_dir_all(&dir).expect("temp test dir should create");
         let file = dir.join("created.txt");
-        let tracker = build_local_turn_diff_tracker(Some(&dir))
-            .expect("tracker should be created for cwd");
+        let tracker =
+            build_local_turn_diff_tracker(Some(&dir)).expect("tracker should be created for cwd");
 
         fs::write(&file, "hello world\n").expect("file write should succeed");
 
