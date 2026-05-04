@@ -49,7 +49,7 @@ export class SkillsViewModel {
   }
 
   async installFromGithub(skill: DiscoverableSkill): Promise<void> {
-    const result = await configManagerFacade.installSkillMockOnly(skill);
+    const result = await configManagerFacade.installSkill(skill);
     if (!result.ok || result.data === null) {
       this.state.errorText = this.describeActionError(result.error);
       return;
@@ -91,7 +91,7 @@ export class SkillsViewModel {
 
     this.state.discoverableLoading = true;
     try {
-      const result = await configManagerFacade.discoverableSkillsMockOnly();
+      const result = await configManagerFacade.discoverableSkills();
       if (!result.ok || result.data === null) {
         this.state.discoverable = [];
         this.state.errorText = this.describeActionError(result.error);
@@ -130,7 +130,7 @@ export class SkillsViewModel {
   async checkUpdates(): Promise<void> {
     this.state.updatesLoading = true;
     try {
-      const result = await configManagerFacade.skillUpdatesMockOnly();
+      const result = await configManagerFacade.checkSkillUpdates();
       if (!result.ok || result.data === null) {
         this.state.updates = [];
         this.state.errorText = this.describeActionError(result.error);
@@ -144,7 +144,7 @@ export class SkillsViewModel {
   }
 
   async updateSkill(id: string): Promise<void> {
-    const result = await configManagerFacade.updateSkillMockOnly(id);
+    const result = await configManagerFacade.updateSkill(id);
     if (!result.ok || result.data === null) {
       this.state.errorText = this.describeActionError(result.error);
       return;
@@ -253,8 +253,8 @@ export class SkillsViewModel {
     return result.data;
   }
 
-  async importFromZip(_zipPath: string): Promise<void> {
-    const result = await configManagerFacade.importSkillMockOnly();
+  async importFromZip(zipPath: string): Promise<void> {
+    const result = await configManagerFacade.importFromZipFile(zipPath);
     if (!result.ok || result.data === null) {
       this.state.errorText = this.describeActionError(result.error);
       return;

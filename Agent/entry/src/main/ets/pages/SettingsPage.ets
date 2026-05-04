@@ -2005,17 +2005,17 @@ struct SettingsPage {
   }
 
   @Builder
-  private skillIconAction(symbol: string, key: string, active: boolean, danger: boolean, onClick: () => void) {
-    Button(symbol)
-      .width(28)
-      .height(28)
-      .fontSize(13)
+  private skillActionButton(label: string, key: string, color: string, bg: string, border: string, onClick: () => void) {
+    Button(label)
+      .height(30)
+      .fontSize(11)
       .fontWeight(FontWeight.Medium)
-      .fontColor(danger ? '#F97373' : (active ? '#2F7D6B' : '#9AA6B6'))
-      .backgroundColor(danger ? '#FEE2E2' : (active ? '#DDF5EE' : '#FFFFFF'))
-      .borderRadius(14)
-      .border({ width: 1, color: danger ? '#FECACA' : (active ? '#BFE8DB' : '#E5EAF1') })
-      .margin({ left: 10 })
+      .fontColor(color)
+      .backgroundColor(bg)
+      .borderRadius(10)
+      .border({ width: 1, color: border })
+      .padding({ left: 10, right: 10 })
+      .margin({ left: 6 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
@@ -2036,9 +2036,20 @@ struct SettingsPage {
                 .fontColor('#111827')
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
-              this.skillInlineTag(this.skillSourceText(skill), true)
+
+              if (skill.enabled) {
+                Text('启用')
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(9)
+                  .fontColor('#16A34A')
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .backgroundColor('#DCFCE7')
+                  .borderRadius(8)
+                  .margin({ left: 8 })
+              }
             }
             .width('100%')
+            .alignItems(VerticalAlign.Center)
 
             Text(skill.description)
               .copyOption(CopyOptions.LocalDevice)
@@ -2050,23 +2061,48 @@ struct SettingsPage {
               .margin({ top: 6 })
 
             Row() {
-              this.skillInlineTag(this.skillMetaText(skill))
-              this.skillInlineTag(this.skillUpdatedText(skill))
+              Text(this.skillSourceText(skill))
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(10)
+                .fontColor('#94A3B8')
+              Text(this.skillMetaText(skill))
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(10)
+                .fontColor('#94A3B8')
+                .margin({ left: 10 })
             }
             .width('100%')
             .margin({ top: 8 })
           }
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
-          .padding({ right: 16 })
+          .padding({ right: 12 })
 
           Row() {
-            this.skillIconAction('✺', `skill-toggle-${skill.id}`, skill.enabled, false, () => { this.toggleSkillEnabled(skill.id); })
-            this.skillIconAction(skill.source === 'github' ? 'G' : 'L', `skill-source-${skill.id}`, skill.source === 'local', false, () => { this.notePending('Skill 来源详情'); })
-            this.skillIconAction('✦', `skill-sync-${skill.id}`, false, false, () => { this.notePending('Skill 同步'); })
-            this.skillIconAction('◫', `skill-directory-${skill.id}`, false, false, () => { this.notePending('Skill 目录查看'); })
-            this.skillIconAction('◌', `skill-backup-${skill.id}`, false, false, () => { this.notePending('Skill 备份'); })
-            this.skillIconAction('⌫', `skill-remove-${skill.id}`, false, true, () => { this.requestUninstallSkill(skill.id); })
+            this.skillActionButton(
+              skill.enabled ? '启用中' : '禁用中',
+              `skill-toggle-${skill.id}`,
+              skill.enabled ? '#16A34A' : '#94A3B8',
+              skill.enabled ? '#DCFCE7' : '#F5F7FA',
+              skill.enabled ? '#BBF7D0' : '#E5EAF1',
+              () => { this.toggleSkillEnabled(skill.id); }
+            )
+            this.skillActionButton(
+              '打开',
+              `skill-open-${skill.id}`,
+              '#6366F1',
+              '#EEF2FF',
+              '#C7D2FE',
+              () => { this.notePending('打开 Skill 目录'); }
+            )
+            this.skillActionButton(
+              '删除',
+              `skill-delete-${skill.id}`,
+              '#EF4444',
+              '#FEF2F2',
+              '#FECACA',
+              () => { this.requestUninstallSkill(skill.id); }
+            )
           }
           .justifyContent(FlexAlign.End)
           .alignItems(VerticalAlign.Center)
@@ -2074,8 +2110,8 @@ struct SettingsPage {
         .width('100%')
         .padding({ left: 16, right: 16, top: 14, bottom: 14 })
         .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: skill.enabled ? '#D8EEE7' : '#E7ECF3' })
-        .borderRadius(0)
+        .borderRadius(14)
+        .border({ width: 1, color: skill.enabled ? '#D1FAE5' : '#E7ECF3' })
         .margin({ top: 0 })
       }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
     }
@@ -2526,63 +2562,6 @@ struct SettingsPage {
       .width(22)
       .justifyContent(FlexAlign.Center)
       .margin({ right: 8 })
-      .onTouch((event: TouchEvent) => {
-        if (event.sourceTool !== SourceTool.Finger) {
-          return;
-        }
-        if (event.type === TouchType.Down) {
-          this.dragStartY = event.touches[0].y;
-          this.dragDownTime = Date.now();
-          this.dragMoved = false;
-        }
-        if (event.type === TouchType.Move) {
-          const currentY = event.touches[0].y;
-          if (Math.abs(currentY - this.dragStartY) > 10) {
-            this.dragMoved = true;
-          }
-          if (this.dragFromIndex < 0) {
-            if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
-              const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
-              if (idx >= 0) {
-                this.dragFromIndex = idx;
-                this.dragStartIndex = idx;
-                this.dragTargetName = provider.name;
-              }
-            }
-            return;
-          }
-          const deltaY = currentY - this.dragStartY;
-          const step = this.CARD_HEIGHT_ESTIMATE;
-          this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
-        }
-        if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-          if (this.dragFromIndex < 0) {
-            if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
-              const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
-              if (idx >= 0) {
-                this.dragFromIndex = idx;
-                this.dragStartIndex = idx;
-                this.dragTargetName = provider.name;
-                this.dragOverIndex = idx;
-              }
-            }
-          }
-          if (this.dragFromIndex >= 0) {
-            const deltaY = event.touches[0].y - this.dragStartY;
-            const step = this.CARD_HEIGHT_ESTIMATE;
-            this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
-          }
-          if (this.dragFromIndex >= 0 && this.dragOverIndex >= 0 && this.dragFromIndex !== this.dragOverIndex) {
-            const from = this.dragFromIndex;
-            const to = this.dragOverIndex;
-            const moved = this.apiProviders.splice(from, 1)[0];
-            this.apiProviders.splice(to > from ? to - 1 : to, 0, moved);
-            this.apiProviders = [...this.apiProviders];
-          }
-          this.dragFromIndex = -1;
-          this.dragOverIndex = -1;
-        }
-      })
 
       Stack({ alignContent: Alignment.Center }) {
         Column()
@@ -2666,7 +2645,6 @@ struct SettingsPage {
             })
 
           this.apiProviderActionButton('编辑', `api-edit-${provider.id}`, false, () => { this.startEditingApiProvider(provider.id); })
-          this.apiProviderActionButton('复制', `api-copy-${provider.id}`, false, () => { this.notePending('复制 Provider'); })
           this.apiProviderActionButton('验证', `api-validate-${provider.id}`, false, () => {
             this.syncApiDraftFromProvider(provider.id);
             this.validateApiDraft();
@@ -2689,6 +2667,63 @@ struct SettingsPage {
     .opacity(this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.6 : 1.0)
     .scale({ x: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.97 : 1.0, y: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.97 : 1.0 })
     .animation({ duration: 200, curve: Curve.FastOutSlowIn })
+    .onTouch((event: TouchEvent) => {
+      if (event.sourceTool !== SourceTool.Finger) {
+        return;
+      }
+      if (event.type === TouchType.Down) {
+        this.dragStartY = event.touches[0].y;
+        this.dragDownTime = Date.now();
+        this.dragMoved = false;
+      }
+      if (event.type === TouchType.Move) {
+        const currentY = event.touches[0].y;
+        if (Math.abs(currentY - this.dragStartY) > 10) {
+          this.dragMoved = true;
+        }
+        if (this.dragFromIndex < 0) {
+          if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
+            const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
+            if (idx >= 0) {
+              this.dragFromIndex = idx;
+              this.dragStartIndex = idx;
+              this.dragTargetName = provider.name;
+            }
+          }
+          return;
+        }
+        const deltaY = currentY - this.dragStartY;
+        const step = this.CARD_HEIGHT_ESTIMATE;
+        this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
+      }
+      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        if (this.dragFromIndex < 0) {
+          if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
+            const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
+            if (idx >= 0) {
+              this.dragFromIndex = idx;
+              this.dragStartIndex = idx;
+              this.dragTargetName = provider.name;
+              this.dragOverIndex = idx;
+            }
+          }
+        }
+        if (this.dragFromIndex >= 0) {
+          const deltaY = event.touches[0].y - this.dragStartY;
+          const step = this.CARD_HEIGHT_ESTIMATE;
+          this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
+        }
+        if (this.dragFromIndex >= 0 && this.dragOverIndex >= 0 && this.dragFromIndex !== this.dragOverIndex) {
+          const from = this.dragFromIndex;
+          const to = this.dragOverIndex;
+          const moved = this.apiProviders.splice(from, 1)[0];
+          this.apiProviders.splice(to > from ? to - 1 : to, 0, moved);
+          this.apiProviders = [...this.apiProviders];
+        }
+        this.dragFromIndex = -1;
+        this.dragOverIndex = -1;
+      }
+    })
     .onClick(() => {
       if (this.dragFromIndex >= 0) {
         return;

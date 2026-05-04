@@ -48,7 +48,8 @@ import {
   SkillRepo,
   SkillsShSearchResult,
   SkillUpdateInfo,
-  UnmanagedSkill
+  UnmanagedSkill,
+  ReconcileResult
 } from '../skills/SkillTypes';
 import { SkillError, SkillsBackendService } from '../skills/SkillsBackendService';
 
@@ -341,20 +342,9 @@ export class ConfigManagerFacade {
 
   async setSkillEnabled(id: string, enabled: boolean): Promise<ConfigActionResult<InstalledSkill>> {
     try {
-      const installed = await this.reloadInstalledSkills();
-      const target = installed.find((skill: InstalledSkill) => skill.id === id);
-      if (target === undefined) {
-        return configFailure<InstalledSkill>('NOT_FOUND', 'Skill 不存在。', id);
-      }
-      target.enabled = enabled;
-      target.updatedAt = Date.now();
-      await this.skillsService().saveInstalled(installed);
-      const reloaded = await this.reloadInstalledSkills();
-      const saved = reloaded.find((skill: InstalledSkill) => skill.id === id);
-      if (saved === undefined) {
-        return configFailure<InstalledSkill>('NOT_FOUND', 'Skill 不存在。', id);
-      }
-      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(saved));
+      const updated = await this.skillsService().setSkillEnabled(id, enabled);
+      await this.reloadInstalledSkills();
+      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(updated));
     } catch (err) {
       return this.configFailureFromError<InstalledSkill>(err as Object, 'SET_SKILL_ENABLED_FAILED', '切换 Skill 启用状态失败。');
     }
@@ -453,8 +443,13 @@ export class ConfigManagerFacade {
     }
   }
 
-  async discoverableSkillsMockOnly(): Promise<ConfigActionResult<DiscoverableSkill[]>> {
-    return configFailure<DiscoverableSkill[]>('NOT_IMPLEMENTED', 'Skill 发现暂未接入统一前端 façade。');
+  async discoverableSkills(): Promise<ConfigActionResult<DiscoverableSkill[]>> {
+    try {
+      const result = await this.skillsService().discoverFromRepos();
+      return configSuccess<DiscoverableSkill[]>(result);
+    } catch (err) {
+      return this.configFailureFromError<DiscoverableSkill[]>(err as Object, 'DISCOVER_SKILLS_FAILED', '发现 Skill 失败。');
+    }
   }
 
   async scanUnmanagedSkills(): Promise<ConfigActionResult<UnmanagedSkill[]>> {
@@ -466,16 +461,33 @@ export class ConfigManagerFacade {
     }
   }
 
-  async skillUpdatesMockOnly(): Promise<ConfigActionResult<SkillUpdateInfo[]>> {
-    return configFailure<SkillUpdateInfo[]>('NOT_IMPLEMENTED', 'Skill 更新检测暂未接入统一前端 façade。');
+  async checkSkillUpdates(): Promise<ConfigActionResult<SkillUpdateInfo[]>> {
+    try {
+      const result = await this.skillsService().checkUpdates();
+      return configSuccess<SkillUpdateInfo[]>(result);
+    } catch (err) {
+      return this.configFailureFromError<SkillUpdateInfo[]>(err as Object, 'CHECK_SKILL_UPDATES_FAILED', '检测 Skill 更新失败。');
+    }
   }
 
-  async installSkillMockOnly(_skill: DiscoverableSkill): Promise<ConfigActionResult<InstalledSkill>> {
-    return configFailure<InstalledSkill>('MOCK_ONLY', 'Skill 安装暂未接入后端，当前仅前端模拟。');
+  async installSkill(skill: DiscoverableSkill): Promise<ConfigActionResult<InstalledSkill>> {
+    try {
+      const installed = await this.skillsService().installFromGithub(skill);
+      await this.reloadInstalledSkills();
+      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(installed));
+    } catch (err) {
+      return this.configFailureFromError<InstalledSkill>(err as Object, 'INSTALL_SKILL_FAILED', '安装 Skill 失败。');
+    }
   }
 
-  async importSkillMockOnly(): Promise<ConfigActionResult<InstalledSkill[]>> {
-    return configFailure<InstalledSkill[]>('MOCK_ONLY', 'ZIP Skill 导入暂未接入后端，当前仅前端模拟。');
+  async updateSkill(id: string): Promise<ConfigActionResult<InstalledSkill>> {
+    try {
+      const updated = await this.skillsService().update(id);
+      await this.reloadInstalledSkills();
+      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(updated));
+    } catch (err) {
+      return this.configFailureFromError<InstalledSkill>(err as Object, 'UPDATE_SKILL_FAILED', '更新 Skill 失败。');
+    }
   }
 
   async importLocalSkills(directories: string[]): Promise<ConfigActionResult<InstalledSkill[]>> {
@@ -488,8 +500,14 @@ export class ConfigManagerFacade {
     }
   }
 
-  async updateSkillMockOnly(_id: string): Promise<ConfigActionResult<InstalledSkill>> {
-    return configFailure<InstalledSkill>('MOCK_ONLY', 'Skill 更新暂未接入后端，当前仅前端模拟。');
+  async importFromZipFile(zipPath: string): Promise<ConfigActionResult<InstalledSkill[]>> {
+    try {
+      const imported = await this.skillsService().importFromZip(zipPath);
+      await this.reloadInstalledSkills();
+      return configSuccess<InstalledSkill[]>(this.cloneInstalledSkills(imported));
+    } catch (err) {
+      return this.configFailureFromError<InstalledSkill[]>(err as Object, 'IMPORT_ZIP_SKILLS_FAILED', '从 ZIP 导入 Skill 失败。');
+    }
   }
 
   async restoreSkillBackup(backupId: string): Promise<ConfigActionResult<InstalledSkill>> {
@@ -509,6 +527,16 @@ export class ConfigManagerFacade {
       return configSuccess<SkillsShSearchResult>(result);
     } catch (err) {
       return this.configFailureFromError<SkillsShSearchResult>(err as Object, 'SEARCH_SKILLS_SH_FAILED', '搜索 skills.sh 失败。');
+    }
+  }
+
+  async reconcileSkills(): Promise<ConfigActionResult<ReconcileResult>> {
+    try {
+      const result = await this.skillsService().reconcileSkills();
+      await this.reloadInstalledSkills();
+      return configSuccess<ReconcileResult>(result);
+    } catch (err) {
+      return this.configFailureFromError<ReconcileResult>(err as Object, 'RECONCILE_SKILLS_FAILED', 'Skill 一致性检查失败。');
     }
   }
 

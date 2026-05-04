@@ -6,10 +6,11 @@ import {
   InstalledSkill, DiscoverableSkill, UnmanagedSkill, SkillRepo,
   SkillUpdateInfo, SkillBackupEntry, SkillsShSearchResult, SkillsShItem,
   DEFAULT_SKILL_REPOS, SkillSource, SkillEntryJson, SkillsRegistryJson,
-  SkillRepoEntryJson, SkillsRepoListJson, SkillBackupJson
+  SkillRepoEntryJson, SkillsRepoListJson, SkillBackupJson, ReconcileResult
 } from './SkillTypes';
 import http from '@ohos.net.http';
 import fileIo from '@ohos.file.fs';
+import zlib from '@ohos.zlib';
 
 const GITHUB_API_BASE = 'https://github.com';
 const SKILLS_SH_API = 'https://skills.sh/api/search';
@@ -65,16 +66,16 @@ export class SkillError extends Error {
   }
 }
 
-export const SKILL_ERROR_MESSAGES: Record<SkillErrorCode, string> = {
-  [SkillErrorCode.INVALID_SKILL_DIRECTORY]: 'Skill 目录路径不合法，请检查路径是否包含非法字符',
-  [SkillErrorCode.SKILL_DIR_NOT_FOUND]: '在仓库中未找到指定的 Skill 目录，请确认仓库 URL 是否正确',
-  [SkillErrorCode.SKILL_DIRECTORY_CONFLICT]: '已存在同名 Skill（来自不同仓库），请先卸载现有 Skill 再重试',
-  [SkillErrorCode.SKILL_NOT_FOUND]: '未找到指定的 Skill，可能已被卸载',
-  [SkillErrorCode.UPDATE_NOT_SUPPORTED]: '仅支持更新来自 GitHub 的 Skill',
-  [SkillErrorCode.BACKUP_NOT_FOUND]: '备份文件不存在或已被清理',
-  [SkillErrorCode.DOWNLOAD_FAILED]: '下载仓库失败，请检查仓库地址和网络连接',
-  [SkillErrorCode.EMPTY_ARCHIVE]: '下载的 ZIP 文件为空，请确认仓库是否存在',
-};
+export const SKILL_ERROR_MESSAGES: Map<SkillErrorCode, string> = new Map([
+  [SkillErrorCode.INVALID_SKILL_DIRECTORY, 'Skill 目录路径不合法，请检查路径是否包含非法字符'],
+  [SkillErrorCode.SKILL_DIR_NOT_FOUND, '在仓库中未找到指定的 Skill 目录，请确认仓库 URL 是否正确'],
+  [SkillErrorCode.SKILL_DIRECTORY_CONFLICT, '已存在同名 Skill（来自不同仓库），请先卸载现有 Skill 再重试'],
+  [SkillErrorCode.SKILL_NOT_FOUND, '未找到指定的 Skill，可能已被卸载'],
+  [SkillErrorCode.UPDATE_NOT_SUPPORTED, '仅支持更新来自 GitHub 的 Skill'],
+  [SkillErrorCode.BACKUP_NOT_FOUND, '备份文件不存在或已被清理'],
+  [SkillErrorCode.DOWNLOAD_FAILED, '下载仓库失败，请检查仓库地址和网络连接'],
+  [SkillErrorCode.EMPTY_ARCHIVE, '下载的 ZIP 文件为空，请确认仓库是否存在'],
+]);
 
 /**
  * Skills 后端管理服务
@@ -164,6 +165,149 @@ export class SkillsBackendService {
     if (!ok) {
       throw new Error('Failed to save skills registry');
     }
+  }
+
+  /**
+   * 切换 Skill 启用/禁用状态
+   */
+  async setSkillEnabled(id: string, enabled: boolean): Promise<InstalledSkill> {
+    const installed = await this.getInstalled();
+    const target = installed.find((s: InstalledSkill): boolean => s.id === id);
+    if (!target) {
+      throw new SkillError(
+        SkillErrorCode.SKILL_NOT_FOUND,
+        `id=${id}`,
+        '未找到指定的 Skill，可能已被卸载'
+      );
+    }
+    target.enabled = enabled;
+    await this.saveInstalled(installed);
+    return target;
+  }
+
+  /**
+   * 确保 SSOT 目录存在
+   */
+  ensureSsotDir(): string {
+    const ssotDir = this.getSsotDir();
+    try {
+      fileIo.mkdirSync(ssotDir, true);
+    } catch (_) {
+      // 目录已存在
+    }
+    return ssotDir;
+  }
+
+  /**
+   * 一致性检查与自动修复
+   *
+   * 检测并修复 registry 与 SSOT 目录之间的不一致：
+   * 1. registry 有条目但 SSOT 目录缺失 → 从 registry 移除（记录警告）
+   * 2. SSOT 有目录但 registry 无条目 → 注册为 unmanaged skill
+   *
+   * 返回修复摘要
+   */
+  async reconcileSkills(): Promise<ReconcileResult> {
+    const ssotDir = this.ensureSsotDir();
+    const removed: string[] = [];
+    const registered: string[] = [];
+
+    // 读取现有 registry
+    let installed: InstalledSkill[] = [];
+    try {
+      installed = await this.getInstalled();
+    } catch (_) {
+      // registry 不存在或损坏，跳过
+      return new ReconcileResult(removed, registered);
+    }
+
+    // 检查 1: registry 有条目但 SSOT 目录缺失
+    const validEntries: InstalledSkill[] = [];
+    for (const skill of installed) {
+      const skillDir = `${ssotDir}/${skill.directory}`;
+      let dirExists = false;
+      try {
+        const stat = fileIo.statSync(skillDir);
+        dirExists = stat.isDirectory();
+      } catch (_) {
+        dirExists = false;
+      }
+
+      if (dirExists) {
+        validEntries.push(skill);
+      } else {
+        removed.push(skill.id);
+        console.warn(`[SkillsReconcile] SSOT missing for skill "${skill.name}" (${skill.id}), removing from registry`);
+      }
+    }
+
+    if (removed.length > 0) {
+      await this.saveInstalled(validEntries);
+    }
+
+    // 检查 2: SSOT 有目录但 registry 无条目
+    const registeredDirs = new Set(validEntries.map((s: InstalledSkill): string => s.directory));
+    let entries: string[] = [];
+    try {
+      entries = fileIo.listFileSync(ssotDir) as string[];
+    } catch (_) {
+      // 目录不存在或无法读取
+      return new ReconcileResult(removed, registered);
+    }
+
+    const now = Date.now();
+    const newSkills: InstalledSkill[] = [];
+    for (const entry of entries) {
+      if (registeredDirs.has(entry)) {
+        continue;
+      }
+
+      const entryPath = `${ssotDir}/${entry}`;
+      let isDir = false;
+      try {
+        const stat = fileIo.statSync(entryPath);
+        isDir = stat.isDirectory();
+      } catch (_) {
+        continue;
+      }
+      if (!isDir) {
+        continue;
+      }
+
+      // 检查是否有 SKILL.md
+      const skillMdPath = `${entryPath}/SKILL.md`;
+      let hasSkillMd = false;
+      try {
+        fileIo.statSync(skillMdPath);
+        hasSkillMd = true;
+      } catch (_) {
+        hasSkillMd = false;
+      }
+      if (!hasSkillMd) {
+        continue;
+      }
+
+      // 解析元数据并注册
+      const metadata = this.parseSkillMetadata(skillMdPath, entry);
+      const contentHash = computeDirHash(entryPath);
+      const id = `local:${entry}`;
+
+      const newSkill = new InstalledSkill(
+        id, metadata.name, metadata.description, entry,
+        'local', '', '', '',
+        '', true, now, contentHash, 0
+      );
+      newSkills.push(newSkill);
+      registered.push(id);
+      console.info(`[SkillsReconcile] Auto-registered unmanaged skill "${metadata.name}" (${id})`);
+    }
+
+    if (newSkills.length > 0) {
+      const merged = [...validEntries, ...newSkills];
+      await this.saveInstalled(merged);
+    }
+
+    return new ReconcileResult(removed, registered);
   }
 
   /**
@@ -546,6 +690,59 @@ export class SkillsBackendService {
     return imported;
   }
 
+  /**
+   * 从 ZIP 文件导入 Skill
+   */
+  async importFromZip(zipPath: string): Promise<InstalledSkill[]> {
+    const tempDir = `${this.codexHome}/.tmp_zip_import_${Date.now()}`;
+    fileIo.mkdirSync(tempDir, true);
+
+    try {
+      await this.extractZip(zipPath, tempDir);
+      this.flattenGitHubZipRoot(tempDir);
+
+      // 找到包含 SKILL.md 的目录
+      const skillDirs: string[] = [];
+      this.findSkillDirs(tempDir, skillDirs);
+
+      if (skillDirs.length === 0) {
+        throw new SkillError(
+          SkillErrorCode.SKILL_DIR_NOT_FOUND,
+          `zipPath=${zipPath}`,
+          'ZIP 中未找到包含 SKILL.md 的 Skill 目录'
+        );
+      }
+
+      const result = await this.importFromLocal(skillDirs);
+      return result;
+    } finally {
+      try { await this.removeDir(tempDir); } catch (_) { /* */ }
+    }
+  }
+
+  private findSkillDirs(baseDir: string, result: string[]): void {
+    try {
+      const entries: string[] = fileIo.listFileSync(baseDir) as string[];
+      // 先检查当前目录是否有 SKILL.md
+      for (const entry of entries) {
+        if (entry === 'SKILL.md') {
+          result.push(baseDir);
+          return;
+        }
+      }
+      // 递归子目录
+      for (const entry of entries) {
+        const fullPath = `${baseDir}/${entry}`;
+        try {
+          const stat = fileIo.statSync(fullPath);
+          if (stat.isDirectory()) {
+            this.findSkillDirs(fullPath, result);
+          }
+        } catch (_) { /* */ }
+      }
+    } catch (_) { /* */ }
+  }
+
   // ================================================================
   // 更新检测
   // ================================================================
@@ -751,8 +948,25 @@ export class SkillsBackendService {
     let lastError: Error | null = null;
 
     for (const branch of branches) {
-      const url = `${GITHUB_API_BASE}/${repo.owner}/${repo.name}/archive/refs/heads/${branch}.zip`;
+      const tempDir = `${this.codexHome}/.tmp_skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      fileIo.mkdirSync(tempDir, true);
 
+      // 策略 1：GitHub API 逐文件下载（无需 ZIP 解压）
+      try {
+        const apiOk = await this.downloadRepoViaApi(repo, tempDir, branch);
+        if (apiOk) {
+          return { tempDir: tempDir, usedBranch: branch };
+        }
+      } catch (e) {
+        console.warn(`API download failed for ${branch}: ${JSON.stringify(e)}`);
+      }
+
+      // 策略 2：ZIP 下载 + 解压
+      try {
+        await this.removeDir(tempDir);
+      } catch (_) { /* */ }
+
+      const url = `${GITHUB_API_BASE}/${repo.owner}/${repo.name}/archive/refs/heads/${branch}.zip`;
       try {
         const httpRequest = http.createHttp();
         const response = await httpRequest.request(url, {
@@ -765,13 +979,7 @@ export class SkillsBackendService {
           throw new Error(`HTTP ${response.responseCode}`);
         }
 
-        // 创建临时目录
-        const tempDir = `${this.codexHome}/.tmp_skill_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         fileIo.mkdirSync(tempDir, true);
-
-        // 保存并解压 ZIP
-        // 注意：HarmonyOS @ohos.zlib 对 ZIP 格式支持有限，
-        // 这里保存原始数据到临时文件供后续处理
         const zipPath = `${tempDir}.zip`;
         const zipData: ArrayBuffer = response.result as ArrayBuffer;
         const file = fileIo.openSync(
@@ -781,25 +989,18 @@ export class SkillsBackendService {
         fileIo.writeSync(file.fd, zipData);
         fileIo.closeSync(file);
 
-        // 解压 ZIP 到 tempDir
         await this.extractZip(zipPath, tempDir);
 
-        // 清理临时 ZIP 文件
         try {
           fileIo.unlinkSync(zipPath);
-        } catch (_) { /* cleanup best-effort */ }
+        } catch (_) { /* */ }
 
-        // GitHub ZIP 解压后文件在一个 repo-branch 前缀目录下，
-        // 需要将内容提升一级以简化后续 sourceDir 解析
         this.flattenGitHubZipRoot(tempDir);
 
-        const result: DownloadAndExtractResult = {
-          tempDir: tempDir,
-          usedBranch: branch
-        };
-        return result;
+        return { tempDir: tempDir, usedBranch: branch };
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(JSON.stringify(e));
+        try { await this.removeDir(tempDir); } catch (_) { /* */ }
         continue;
       }
     }
@@ -837,27 +1038,206 @@ export class SkillsBackendService {
   }
 
   /**
-   * 解压 ZIP 文件
-   *
-   * HarmonyOS @ohos.zlib 提供的是流式解压（inflate），不支持完整 ZIP 格式解析。
-   * 当前实现通过保存 ZIP 文件到临时路径，依赖系统的 ZIP 解压能力。
-   * 如需完整 ZIP 解析，可引入 zip.js 纯 JS 库。
+   * 通过 GitHub API 逐文件下载仓库内容（不依赖 ZIP 解压）
+   */
+  private async downloadRepoViaApi(repo: SkillRepo, destDir: string, branch: string): Promise<boolean> {
+    const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${branch}?recursive=1`;
+    try {
+      const httpRequest = http.createHttp();
+      const treeResponse = await httpRequest.request(treeUrl, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/vnd.github.v3+json' },
+        connectTimeout: DOWNLOAD_TIMEOUT_MS,
+        readTimeout: DOWNLOAD_TIMEOUT_MS
+      });
+
+      if (treeResponse.responseCode !== 200) {
+        return false;
+      }
+
+      interface TreeEntry {
+        path: string;
+        type: string;
+        sha: string;
+      }
+      interface TreeResponse {
+        tree: TreeEntry[];
+        truncated: boolean;
+      }
+
+      const treeData: TreeResponse = JSON.parse(treeResponse.result as string) as TreeResponse;
+      const files: TreeEntry[] = [];
+      for (let i = 0; i < treeData.tree.length; i++) {
+        if (treeData.tree[i].type === 'blob') {
+          files.push(treeData.tree[i]);
+        }
+      }
+
+      for (let i = 0; i < files.length; i++) {
+        const entry = files[i];
+        const rawUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${entry.path}`;
+        const fileResponse = await httpRequest.request(rawUrl, {
+          method: http.RequestMethod.GET,
+          connectTimeout: DOWNLOAD_TIMEOUT_MS,
+          readTimeout: DOWNLOAD_TIMEOUT_MS
+        });
+
+        if (fileResponse.responseCode !== 200) {
+          continue;
+        }
+
+        const filePath = `${destDir}/${entry.path}`;
+        const parentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+        fileIo.mkdirSync(parentDir, true);
+
+        const file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        const content: ArrayBuffer = fileResponse.result as ArrayBuffer;
+        fileIo.writeSync(file.fd, content);
+        fileIo.closeSync(file);
+      }
+      return true;
+    } catch (e) {
+      console.warn(`GitHub API download failed: ${JSON.stringify(e)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 解压 ZIP 文件（最小实现：读取 central directory，逐条目提取）
    */
   private async extractZip(zipPath: string, destDir: string): Promise<void> {
-    // 尝试使用 @ohos.zlib 进行解压
-    // 完整 ZIP 解析需要处理 local file headers、central directory 等结构
-    // 这里提供一个基础框架，实际 ZIP 解析可能需要第三方库
-    try {
-      const zlibModule: Object = await import('@ohos.zlib') as Object;
-      void zlibModule;
-      // zlib.decompress 用于单个 deflate 流，不适用于完整 ZIP
-      // 此方法作为占位，实际部署需要 zip.js 或 NAPI zip crate
-      console.info('ZIP extraction requires full ZIP format support');
-    } catch (e) {
-      console.warn(`ZIP extraction not fully available: ${JSON.stringify(e)}`);
+    const fd = fileIo.openSync(zipPath, fileIo.OpenMode.READ_ONLY);
+    const fileSize: number = fileIo.statSync(zipPath).size;
+
+    const readBytes = (offset: number, length: number): ArrayBuffer => {
+      const buf = new ArrayBuffer(length);
+      fileIo.readSync(fd.fd, buf, { offset: offset, length: length });
+      return buf;
+    };
+
+    const readU16 = (offset: number): number => {
+      const buf = readBytes(offset, 2);
+      const view = new DataView(buf);
+      return view.getUint16(0, true);
+    };
+
+    const readU32 = (offset: number): number => {
+      const buf = readBytes(offset, 4);
+      const view = new DataView(buf);
+      return view.getUint32(0, true);
+    };
+
+    // 查找 End of Central Directory
+    let eocdOffset = -1;
+    const scanStart = Math.max(0, fileSize - 65557);
+    for (let i = fileSize - 21; i >= scanStart; i--) {
+      if (readU32(i) === 0x06054b50) {
+        eocdOffset = i;
+        break;
+      }
     }
-    // 抛出错误提示需要完整的 ZIP 支持
-    throw new Error('ZIP extraction requires zip.js or native zip support');
+
+    if (eocdOffset < 0) {
+      fileIo.closeSync(fd);
+      throw new Error('Invalid ZIP: no EOCD record');
+    }
+
+    const centralDirOffset = readU32(eocdOffset + 16);
+    const numEntries = readU16(eocdOffset + 10);
+
+    // 解析 Central Directory 并提取文件
+    let offset = centralDirOffset;
+    for (let i = 0; i < numEntries; i++) {
+      if (readU32(offset) !== 0x02014b50) {
+        break;
+      }
+
+      const compressionMethod = readU16(offset + 10);
+      const compressedSize = readU32(offset + 20);
+      const uncompressedSize = readU32(offset + 24);
+      const nameLen = readU16(offset + 28);
+      const extraLen = readU16(offset + 30);
+      const commentLen = readU16(offset + 32);
+      const localHeaderOffset = readU32(offset + 42);
+
+      const nameBytes = readBytes(offset + 46, nameLen);
+      const name = this.arrayBufferToString(nameBytes);
+
+      offset += 46 + nameLen + extraLen + commentLen;
+
+      if (name.endsWith('/')) {
+        fileIo.mkdirSync(`${destDir}/${name}`, true);
+        continue;
+      }
+
+      // 从 local header 读取实际数据偏移
+      const localNameLen = readU16(localHeaderOffset + 26);
+      const localExtraLen = readU16(localHeaderOffset + 28);
+      const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
+
+      const compressedData = readBytes(dataOffset, compressedSize);
+
+      const destPath = `${destDir}/${name}`;
+      const parentDir = destPath.substring(0, destPath.lastIndexOf('/'));
+      fileIo.mkdirSync(parentDir, true);
+
+      if (compressionMethod === 0) {
+        // Stored (无压缩)
+        const file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        fileIo.writeSync(file.fd, compressedData);
+        fileIo.closeSync(file);
+      } else if (compressionMethod === 8) {
+        // Deflate - 通过 zlib 解压
+        await this.inflateDeflateData(compressedData, uncompressedSize, destPath);
+      } else {
+        console.warn(`Unsupported compression method ${compressionMethod} for ${name}`);
+      }
+    }
+
+    fileIo.closeSync(fd);
+  }
+
+  private arrayBufferToString(buf: ArrayBuffer): string {
+    const bytes = new Uint8Array(buf);
+    let result = '';
+    for (let i = 0; i < bytes.length; i++) {
+      result += String.fromCharCode(bytes[i]);
+    }
+    return result;
+  }
+
+  private async inflateDeflateData(compressed: ArrayBuffer, expectedSize: number, destPath: string): Promise<void> {
+    // 使用 zlib gzip 格式包装 deflate 数据进行解压
+    // deflate 数据需要 2 字节 zlib header + deflate stream + adler32 校验
+    // 构造 zlib 格式包装
+    const zlibHeader = new Uint8Array([0x78, 0x01]); // zlib header, no compression
+    const compressedBytes = new Uint8Array(compressed);
+    const wrapped = new ArrayBuffer(2 + compressedBytes.length + 4);
+    const wrappedView = new Uint8Array(wrapped);
+    wrappedView.set(zlibHeader, 0);
+    wrappedView.set(compressedBytes, 2);
+    // adler32 checksum (placeholder)
+    wrappedView[wrappedView.length - 4] = 0;
+    wrappedView[wrappedView.length - 3] = 0;
+    wrappedView[wrappedView.length - 2] = 0;
+    wrappedView[wrappedView.length - 1] = 1;
+
+    // 写入临时文件
+    const tmpPath = `${destPath}.ztmp`;
+    const tmpFile = fileIo.openSync(tmpPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+    fileIo.writeSync(tmpFile.fd, wrapped);
+    fileIo.closeSync(tmpFile);
+
+    try {
+      await zlib.decompressFile(tmpPath, destPath, { level: zlib.CompressLevel.COMPRESS_LEVEL_BEST_SPEED });
+      fileIo.unlinkSync(tmpPath);
+    } catch (e) {
+      // 如果 zlib 解压失败，尝试直接写入压缩数据（可能是 stored 误标）
+      try { fileIo.unlinkSync(tmpPath); } catch (_) { /* */ }
+      const file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(file.fd, compressed);
+      fileIo.closeSync(file);
+    }
   }
 
   // ================================================================

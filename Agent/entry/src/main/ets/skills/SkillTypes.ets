@@ -280,3 +280,16 @@ export const DEFAULT_SKILL_REPOS: SkillRepo[] = [
   new SkillRepo('cexll', 'myclaude', 'master', true),
   new SkillRepo('JimLiu', 'baoyu-skills', 'main', true),
 ];
+
+/**
+ * 一致性检查结果
+ */
+export class ReconcileResult {
+  removed: string[];
+  registered: string[];
+
+  constructor(removed: string[], registered: string[]) {
+    this.removed = removed;
+    this.registered = registered;
+  }
+}

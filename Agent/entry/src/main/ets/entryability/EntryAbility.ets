@@ -3,6 +3,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { startEmbeddedCodexHost } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
+import { installBundledSkills } from '../skills/BundledSkills';
+import { SkillsBackendService } from '../skills/SkillsBackendService';
+import { ReconcileResult } from '../skills/SkillTypes';
 import fileIo from '@ohos.file.fs';
 
 const DOMAIN = 0x0000;
@@ -46,6 +49,23 @@ export default class EntryAbility extends UIAbility {
       // 首次启动自动导入已有 AGENTS.md
       const promptsService = new PromptsBackendService(codexHome);
       promptsService.autoImportOnFirstLaunch();
+
+      // 预设 bundled skills（幂等，已存在则跳过）
+      installBundledSkills(codexHome);
+
+      // Skill 一致性检查：修复 registry 与 SSOT 目录的不一致
+      const skillsService = new SkillsBackendService(codexHome);
+      skillsService.reconcileSkills().then((result: ReconcileResult) => {
+        if (result.removed.length > 0 || result.registered.length > 0) {
+          hilog.info(
+            DOMAIN, TAG,
+            'Skills reconciled: removed=%{public}d registered=%{public}d',
+            result.removed.length, result.registered.length
+          );
+        }
+      }).catch((err: Error) => {
+        hilog.warn(DOMAIN, TAG, 'Skills reconcile failed: %{public}s', JSON.stringify(err));
+      });
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
     }
