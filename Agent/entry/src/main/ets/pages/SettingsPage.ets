@@ -1,7 +1,7 @@
 import router from '@ohos.router';
 import { McpServerRecord, SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat } from '../backend/ConsoleModels';
 import { codexBackend } from '../backend/CodexBackend';
-import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult } from '../apim/ApiTypes';
+import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult, ChatProbeResult } from '../apim/ApiTypes';
 import { apiManagementVM } from '../apim/ApiManagementViewModel';
 import { InstalledSkill, SkillRepo, SkillBackupEntry } from '../skills/SkillTypes';
 import { skillsVM } from '../skills/SkillsViewModel';
@@ -145,6 +145,14 @@ struct SettingsPage {
   @State private apiSpeedResults: EndpointSpeedResult[] = [];
   @State private apiShowSpeedResults: boolean = false;
   @State private dragTargetName: string = '';
+  @State private dragFromIndex: number = -1;
+  @State private dragOverIndex: number = -1;
+  private dragStartY: number = 0;
+  private dragStartIndex: number = -1;
+  private dragDownTime: number = 0;
+  private dragMoved: boolean = false;
+  private readonly CARD_HEIGHT_ESTIMATE: number = 76;
+  private readonly LONG_PRESS_MS: number = 500;
 
   aboutToAppear(): void {
     this.loadMockData();
@@ -832,9 +840,10 @@ struct SettingsPage {
       case 'degraded':
         return '#C2410C';
       case 'unhealthy':
+      case 'error':
         return '#B91C1C';
       default:
-        return '#0C4A6E';
+        return '#94A3B8';
     }
   }
 
@@ -845,10 +854,44 @@ struct SettingsPage {
       case 'degraded':
         return '#FFF7ED';
       case 'unhealthy':
+      case 'error':
         return '#FEE2E2';
       default:
-        return '#E0F2FE';
+        return '#F1F5F9';
     }
+  }
+
+  private apiHealthLabel(provider: ProviderRecord): string {
+    if (provider.healthStatus === 'healthy') {
+      return provider.healthLatencyMs > 0 ? `可用 ${provider.healthLatencyMs}ms` : '可用';
+    }
+    if (provider.healthStatus === 'error' || provider.healthStatus === 'unhealthy') {
+      return '不可用';
+    }
+    if (provider.healthStatus === 'degraded') {
+      return '不可对话';
+    }
+    return '未测速';
+  }
+
+  private chatProbeLabel(probe: ChatProbeResult | null): string {
+    if (probe === null) {
+      return '未测试';
+    }
+    if (probe.success) {
+      return '可对话';
+    }
+    return '不可用';
+  }
+
+  private chatProbeColor(probe: ChatProbeResult | null): string {
+    if (probe === null) {
+      return '#94A3B8';
+    }
+    if (probe.success) {
+      return '#166534';
+    }
+    return '#B91C1C';
   }
 
   private apiProviderInitial(provider: ProviderRecord): string {
@@ -1109,7 +1152,7 @@ struct SettingsPage {
 
   @Builder
   private apiSpeedResultsPanel() {
-    if (this.apiShowSpeedResults && this.apiSpeedResults.length > 0) {
+    if (this.apiShowSpeedResults && (this.apiSpeedResults.length > 0 || this.apiSpeedTesting)) {
       Column() {
         Row() {
           Text('端点测速结果')
@@ -1137,31 +1180,81 @@ struct SettingsPage {
         }
         .width('100%')
 
+        if (this.apiSpeedTesting && this.apiSpeedResults.length === 0) {
+          Row() {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color('#2563EB')
+            Text('正在测速，请稍候...')
+              .fontSize(11)
+              .fontColor('#64748B')
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .padding({ top: 12, bottom: 12 })
+          .justifyContent(FlexAlign.Center)
+        }
+
         List({ space: 0 }) {
           ForEach(this.apiSpeedResults, (r: EndpointSpeedResult) => {
             ListItem() {
-              Row() {
-                Text(r.endpointUrl)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#334155')
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .layoutWeight(1)
-                Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(r.success ? '#166534' : '#B91C1C')
-                  .margin({ left: 8, right: 8 })
-                Text(r.success ? 'OK' : 'ERR')
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(9)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(r.success ? '#166534' : '#B91C1C')
-                  .padding({ left: 6, right: 6, top: 3, bottom: 3 })
-                  .backgroundColor(r.success ? '#DCFCE7' : '#FEE2E2')
-                  .borderRadius(8)
+              Column() {
+                Row() {
+                  Text(r.endpointUrl)
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(10)
+                    .fontColor('#334155')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                  Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(10)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(r.success ? '#166534' : '#B91C1C')
+                    .margin({ left: 8, right: 8 })
+                  Text(r.success ? 'OK' : 'ERR')
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(9)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(r.success ? '#166534' : '#B91C1C')
+                    .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+                    .backgroundColor(r.success ? '#DCFCE7' : '#FEE2E2')
+                    .borderRadius(8)
+                }
+                .width('100%')
+
+                Row() {
+                  Text('对话测试')
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(9)
+                    .fontColor('#94A3B8')
+                  Text(this.chatProbeLabel(r.chatProbe))
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(9)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(this.chatProbeColor(r.chatProbe))
+                    .margin({ left: 6 })
+                  if (r.chatProbe !== null && r.chatProbe.success) {
+                    Text(`${r.chatProbe.latencyMs}ms`)
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(9)
+                      .fontColor('#64748B')
+                      .margin({ left: 4 })
+                  }
+                  if (r.chatProbe !== null && !r.chatProbe.success && r.chatProbe.errorMessage.length > 0) {
+                    Text(r.chatProbe.errorMessage)
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(8)
+                      .fontColor('#94A3B8')
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .margin({ left: 6 })
+                  }
+                }
+                .width('100%')
+                .margin({ top: 4 })
               }
               .width('100%')
               .padding({ top: 6, bottom: 6 })
@@ -2352,6 +2445,41 @@ struct SettingsPage {
   }
 
   @Builder
+  private apiSpeedTestButton(provider: ProviderRecord) {
+    Row() {
+      if (this.apiSpeedTesting && this.selectedApiProviderId === provider.id) {
+        LoadingProgress()
+          .width(14)
+          .height(14)
+          .color('#2563EB')
+        Text('测速中')
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#2563EB')
+          .margin({ left: 4 })
+      } else {
+        Text('测速')
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#475569')
+      }
+    }
+    .height(30)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(10)
+    .border({ width: 1, color: (this.apiSpeedTesting && this.selectedApiProviderId === provider.id) ? '#93C5FD' : '#D9E2EE' })
+    .padding({ left: 12, right: 12 })
+    .scale({ x: this.pressScale(`api-speed-${provider.id}`), y: this.pressScale(`api-speed-${provider.id}`) })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => { this.updatePressed(`api-speed-${provider.id}`, event); })
+    .onClick(() => {
+      if (!this.apiSpeedTesting) {
+        this.runApiSpeedTest(provider);
+      }
+    })
+  }
+
+  @Builder
   private apiProviderActionButton(label: string, key: string, danger: boolean, onClick: () => void) {
     Button(label)
       .height(30)
@@ -2369,11 +2497,28 @@ struct SettingsPage {
   }
 
   @Builder
+  private apiDragPreviewBuilder() {
+    Column() {
+      Text(this.dragTargetName.length > 0 ? this.dragTargetName : '未命名')
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#0F172A')
+        .maxLines(1)
+    }
+    .width(280)
+    .padding({ left: 20, right: 20, top: 16, bottom: 16 })
+    .backgroundColor('#FFFFFF')
+    .border({ width: 2, color: '#2E8BFF' })
+    .borderRadius(20)
+    .shadow({ radius: 20, color: '#1E3A5F33', offsetX: 0, offsetY: 10 })
+  }
+
+  @Builder
   private apiProviderCard(provider: ProviderRecord) {
     Row() {
       Row() {
         Text('⋮⋮')
-          .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
           .fontColor('#C0CAD8')
           .opacity(0.95)
@@ -2381,6 +2526,63 @@ struct SettingsPage {
       .width(22)
       .justifyContent(FlexAlign.Center)
       .margin({ right: 8 })
+      .onTouch((event: TouchEvent) => {
+        if (event.sourceTool !== SourceTool.Finger) {
+          return;
+        }
+        if (event.type === TouchType.Down) {
+          this.dragStartY = event.touches[0].y;
+          this.dragDownTime = Date.now();
+          this.dragMoved = false;
+        }
+        if (event.type === TouchType.Move) {
+          const currentY = event.touches[0].y;
+          if (Math.abs(currentY - this.dragStartY) > 10) {
+            this.dragMoved = true;
+          }
+          if (this.dragFromIndex < 0) {
+            if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
+              const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
+              if (idx >= 0) {
+                this.dragFromIndex = idx;
+                this.dragStartIndex = idx;
+                this.dragTargetName = provider.name;
+              }
+            }
+            return;
+          }
+          const deltaY = currentY - this.dragStartY;
+          const step = this.CARD_HEIGHT_ESTIMATE;
+          this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
+        }
+        if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          if (this.dragFromIndex < 0) {
+            if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
+              const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
+              if (idx >= 0) {
+                this.dragFromIndex = idx;
+                this.dragStartIndex = idx;
+                this.dragTargetName = provider.name;
+                this.dragOverIndex = idx;
+              }
+            }
+          }
+          if (this.dragFromIndex >= 0) {
+            const deltaY = event.touches[0].y - this.dragStartY;
+            const step = this.CARD_HEIGHT_ESTIMATE;
+            this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
+          }
+          if (this.dragFromIndex >= 0 && this.dragOverIndex >= 0 && this.dragFromIndex !== this.dragOverIndex) {
+            const from = this.dragFromIndex;
+            const to = this.dragOverIndex;
+            const moved = this.apiProviders.splice(from, 1)[0];
+            this.apiProviders.splice(to > from ? to - 1 : to, 0, moved);
+            this.apiProviders = [...this.apiProviders];
+          }
+          this.dragFromIndex = -1;
+          this.dragOverIndex = -1;
+        }
+      })
 
       Stack({ alignContent: Alignment.Center }) {
         Column()
@@ -2434,7 +2636,7 @@ struct SettingsPage {
         Row() {
           this.pill(this.apiCategoryLabel(provider.category), '#F4F8FF', '#3563C8')
           this.pill(this.apiWireApiLabel(provider.wireApi), '#F8FAFC', '#64748B')
-          this.pill(provider.healthStatus, this.apiHealthBg(provider.healthStatus), this.apiHealthColor(provider.healthStatus))
+          this.pill(this.apiHealthLabel(provider), this.apiHealthBg(provider.healthStatus), this.apiHealthColor(provider.healthStatus))
         }
         .margin({ top: 8 })
       }
@@ -2469,7 +2671,7 @@ struct SettingsPage {
             this.syncApiDraftFromProvider(provider.id);
             this.validateApiDraft();
           })
-          this.apiProviderActionButton('测速', `api-speed-${provider.id}`, false, () => { this.runApiSpeedTest(provider); })
+          this.apiSpeedTestButton(provider)
           this.apiProviderActionButton('删除', `api-delete-${provider.id}`, true, () => { this.removeApiProvider(provider.id); })
         }
         .margin({ left: 12 })
@@ -2479,27 +2681,31 @@ struct SettingsPage {
     .width('100%')
     .padding({ left: 14, right: 14, top: 16, bottom: 16 })
     .backgroundColor(this.apiProviderCardBackground(provider))
-    .border({ width: this.apiProviderEmphasized(provider) ? 2 : 1, color: this.apiProviderCardBorder(provider) })
+    .border({
+      width: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 2 : (this.apiProviderEmphasized(provider) ? 2 : 1),
+      color: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? '#2E8BFF' : this.apiProviderCardBorder(provider)
+    })
     .borderRadius(20)
-    .onClick(() => { this.selectApiProvider(provider.id); })
+    .opacity(this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.6 : 1.0)
+    .scale({ x: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.97 : 1.0, y: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.97 : 1.0 })
+    .animation({ duration: 200, curve: Curve.FastOutSlowIn })
+    .onClick(() => {
+      if (this.dragFromIndex >= 0) {
+        return;
+      }
+      this.selectApiProvider(provider.id);
+    })
   }
 
   @Builder
-  private apiDragPreviewBuilder() {
-    Row() {
-      Text(this.dragTargetName.length > 0 ? this.dragTargetName : '未命名')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-    }
-    .width(260)
-    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-    .backgroundColor('#FFFFFF')
-    .border({ width: 2, color: '#2E8BFF' })
-    .borderRadius(16)
-    .opacity(0.92)
-    .shadow({ radius: 16, color: '#1E3A5F33', offsetX: 0, offsetY: 8 })
+  private apiDropIndicator() {
+    Row()
+      .width('90%')
+      .height(3)
+      .backgroundColor('#2E8BFF')
+      .borderRadius(2)
+      .margin({ top: -5, bottom: -5 })
+      .opacity(0.9)
   }
 
   @Builder
@@ -2527,33 +2733,21 @@ struct SettingsPage {
       }
       .width('100%')
 
-      List({ space: 12 }) {
+      Column({ space: 12 }) {
         ForEach(this.apiProviders, (provider: ProviderRecord, index: number) => {
-          ListItem() {
-            Column() {
-              this.apiProviderCard(provider)
-              if (this.apiEditorExpanded && this.selectedApiProviderId === provider.id) {
-                this.apiEditorPanel()
-              }
-            }
-            .width('100%')
+          if (this.dragOverIndex === index && this.dragFromIndex !== index) {
+            this.apiDropIndicator()
           }
+          Column() {
+            this.apiProviderCard(provider)
+            if (this.apiEditorExpanded && this.selectedApiProviderId === provider.id) {
+              this.apiEditorPanel()
+            }
+          }
+          .width('100%')
         }, (provider: ProviderRecord) => `${provider.id}-${provider.isActive}`)
       }
       .width('100%')
-      .constraintSize({ minHeight: 300 })
-      .onItemDragStart((event: ItemDragInfo, itemIndex: number): CustomBuilder => {
-        this.dragTargetName = this.apiProviders[itemIndex].name;
-        return this.apiDragPreviewBuilder;
-      })
-      .onItemDrop((event: ItemDragInfo, itemIndex: number, insertIndex: number, isSuccess: boolean) => {
-        if (isSuccess && insertIndex !== itemIndex) {
-          const moved = this.apiProviders.splice(itemIndex, 1)[0];
-          const targetIndex = insertIndex > itemIndex ? insertIndex - 1 : insertIndex;
-          this.apiProviders.splice(targetIndex, 0, moved);
-          this.apiProviders = [...this.apiProviders];
-        }
-      })
       .margin({ top: 14 })
 
       if (!this.apiEditorExpanded || this.selectedApiProvider() === null) {
@@ -2586,7 +2780,8 @@ struct SettingsPage {
   private apiEditorPanel() {
     if (this.selectedApiProvider() !== null) {
       Column() {
-        this.sectionCard('Connection profile', '当前编辑区只写前端草稿；后续接后端时优先替换 action/facade。')
+
+
         Column() {
           this.formLabel('Provider name')
           TextInput({ text: this.apiProviderName, placeholder: 'Provider name' })
@@ -2636,13 +2831,13 @@ struct SettingsPage {
             .onChange((value: string) => { this.apiAuthState = value; })
 
           Row() {
-            this.actionButton('Validate', 'api-validate', false, () => { this.validateApiDraft(); })
+            this.actionButton('验证', 'api-validate', false, () => { this.validateApiDraft(); })
             Column() {
-              this.actionButton('Save Draft', 'api-save', true, () => { this.saveApiDraft(); })
+              this.actionButton('保存草稿', 'api-save', true, () => { this.saveApiDraft(); })
             }
             .margin({ left: 10 })
             Column() {
-              this.actionButton('Collapse', 'api-collapse', false, () => { this.apiEditorExpanded = false; })
+              this.actionButton('折叠', 'api-collapse', false, () => { this.apiEditorExpanded = false; })
             }
             .margin({ left: 10 })
           }

@@ -1,6 +1,7 @@
 import router from '@ohos.router';
 import { ProviderPreset, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
-import { ApiWireFormat, ProviderCategory } from '../backend/ConsoleModels';
+import { ApiWireFormat, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
+import { configManagerFacade } from '../backend/CodexBackend';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 type AddProviderMode = 'claude' | 'unified';
@@ -248,8 +249,57 @@ struct AddProviderPage {
       this.triggerFeedback('请先填写请求地址。', 'error');
       return;
     }
-    this.triggerFeedback('添加草稿已整理完成。', 'success');
-    this.notePending('Provider 添加');
+
+    try {
+      if (this.selectedPresetId !== 'custom') {
+        const result = configManagerFacade.addProviderFromPreset(this.selectedPresetId, this.apiKey);
+        if (!result.ok || result.data === null) {
+          const msg = result.error !== null ? result.error.message : '新增 Provider 失败。';
+          this.triggerFeedback(msg, 'error');
+          return;
+        }
+        this.triggerFeedback(`已添加 "${result.data.name}"。`, 'success');
+      } else {
+        const provider = new ProviderRecord(
+          `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          this.providerName,
+          'codex',
+          'exclusive',
+          this.baseUrl,
+          this.apiKey,
+          '',
+          false,
+          'dirty',
+          '',
+          'apiKey',
+          [],
+          this.wireApi,
+          'custom',
+          this.providerNote,
+          this.websiteUrl,
+          '',
+          '',
+          [],
+          'unknown',
+          0,
+          0,
+          null,
+          Date.now()
+        );
+        const result = configManagerFacade.saveProvider(provider);
+        if (!result.ok || result.data === null) {
+          const msg = result.error !== null ? result.error.message : '保存 Provider 失败。';
+          this.triggerFeedback(msg, 'error');
+          return;
+        }
+        this.triggerFeedback(`已添加 "${result.data.name}"。`, 'success');
+      }
+      setTimeout(() => {
+        router.back();
+      }, 600);
+    } catch (err) {
+      this.triggerFeedback('添加失败：' + JSON.stringify(err), 'error');
+    }
   }
 
   @Builder
@@ -377,9 +427,6 @@ struct AddProviderPage {
       .borderRadius(14)
       .padding({ left: 14, right: 14 })
       .margin({ top: 8 })
-      .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onChange(onChange)
   }
 

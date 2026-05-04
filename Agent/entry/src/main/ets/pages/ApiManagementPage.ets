@@ -1,5 +1,5 @@
 import { apiManagementVM, ApiManagementState } from '../apim/ApiManagementViewModel';
-import { ProviderRecord, ProviderPreset, EndpointSpeedResult, BUILTIN_PROVIDER_PRESETS, ApiWireFormat, ProviderCategory } from '../apim/ApiTypes';
+import { ProviderRecord, ProviderPreset, EndpointSpeedResult, ChatProbeResult, BUILTIN_PROVIDER_PRESETS, ApiWireFormat, ProviderCategory } from '../apim/ApiTypes';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -318,6 +318,26 @@ export struct ApiManagementPage {
       .padding({ left: 8, right: 8, top: 3, bottom: 3 })
       .backgroundColor(background)
       .borderRadius(8)
+  }
+
+  private chatProbeLabel(probe: ChatProbeResult | null): string {
+    if (probe === null) {
+      return '未测试';
+    }
+    if (probe.success) {
+      return '可对话';
+    }
+    return '不可用';
+  }
+
+  private chatProbeColor(probe: ChatProbeResult | null): string {
+    if (probe === null) {
+      return '#94A3B8';
+    }
+    if (probe.success) {
+      return '#166534';
+    }
+    return '#B91C1C';
   }
 
   @Builder
@@ -1016,17 +1036,51 @@ export struct ApiManagementPage {
         List({ space: 0 }) {
           ForEach(this.vm.speedResults, (r: EndpointSpeedResult) => {
             ListItem() {
-              Row() {
-                Text(r.endpointUrl)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10).fontColor('#334155').maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
-                Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10).fontColor(r.success ? '#166534' : '#B91C1C')
-                this.chip(r.success ? 'OK' : `ERR`,
-                  r.success ? '#DCFCE7' : '#FEE2E2',
-                  r.success ? '#166534' : '#B91C1C')
+              Column() {
+                Row() {
+                  Text(r.endpointUrl)
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(10).fontColor('#334155').maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
+                  Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(10).fontColor(r.success ? '#166534' : '#B91C1C')
+                  this.chip(r.success ? 'OK' : `ERR`,
+                    r.success ? '#DCFCE7' : '#FEE2E2',
+                    r.success ? '#166534' : '#B91C1C')
+                }
+                .width('100%')
+
+                Row() {
+                  Text('对话测试')
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(9)
+                    .fontColor('#94A3B8')
+                  Text(this.chatProbeLabel(r.chatProbe))
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(9)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(this.chatProbeColor(r.chatProbe))
+                    .margin({ left: 6 })
+                  if (r.chatProbe !== null && r.chatProbe.success) {
+                    Text(`${r.chatProbe.latencyMs}ms`)
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(9)
+                      .fontColor('#64748B')
+                      .margin({ left: 4 })
+                  }
+                  if (r.chatProbe !== null && !r.chatProbe.success && r.chatProbe.errorMessage.length > 0) {
+                    Text(r.chatProbe.errorMessage)
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(8)
+                      .fontColor('#94A3B8')
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .margin({ left: 6 })
+                  }
+                }
+                .width('100%')
+                .margin({ top: 4 })
               }
               .width('100%')
               .padding({ top: 6, bottom: 6 })

@@ -212,6 +212,20 @@ export class ApiValidationResult {
   }
 }
 
+export class ChatProbeResult {
+  success: boolean;
+  latencyMs: number;
+  statusCode: number;
+  errorMessage: string;
+
+  constructor(success: boolean, latencyMs: number, statusCode: number, errorMessage: string) {
+    this.success = success;
+    this.latencyMs = latencyMs;
+    this.statusCode = statusCode;
+    this.errorMessage = errorMessage;
+  }
+}
+
 export class EndpointSpeedResult {
   endpointUrl: string;
   latencyMs: number;
@@ -219,11 +233,13 @@ export class EndpointSpeedResult {
   success: boolean;
   errorMessage: string;
   timestamp: number;
+  chatProbe: ChatProbeResult | null;
 
   constructor(
     endpointUrl: string, latencyMs: number,
     statusCode: number, success: boolean,
-    errorMessage: string, timestamp: number
+    errorMessage: string, timestamp: number,
+    chatProbe: ChatProbeResult | null = null
   ) {
     this.endpointUrl = endpointUrl;
     this.latencyMs = latencyMs;
@@ -231,6 +247,7 @@ export class EndpointSpeedResult {
     this.success = success;
     this.errorMessage = errorMessage;
     this.timestamp = timestamp;
+    this.chatProbe = chatProbe;
   }
 }
 

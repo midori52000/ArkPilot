@@ -11,7 +11,7 @@ import {
 import { providerConfigStore } from '../backend/ProviderConfigStore';
 import {
   ProviderPreset, BUILTIN_PROVIDER_PRESETS, findPresetById,
-  ApiValidationResult, EndpointSpeedResult, UsageQueryResult,
+  ApiValidationResult, EndpointSpeedResult, ChatProbeResult, UsageQueryResult,
   ApiError, ApiErrorCode
 } from './ApiTypes';
 
@@ -51,6 +51,13 @@ class OpenAIUsageData {
 class ChatProbeMessage {
   role: string = '';
   content: string = '';
+}
+
+
+class ResponsesProbeBody {
+  model: string = '';
+  input: string = '';
+  max_output_tokens: number = 0;
 }
 
 class ChatProbeBody {
@@ -407,6 +414,98 @@ export class ApiManagementService {
 
   // ========== 端点测速 ==========
 
+  private async probeChatEndpoint(
+    baseUrl: string, apiKey: string, model: string, wireApi: string
+  ): Promise<ChatProbeResult> {
+    const trimmedUrl = cleanBaseUrl(baseUrl);
+    const effectiveModel: string = model.length > 0 ? model : 'gpt-4o-mini';
+    let chatUrl: string = '';
+    let body: string = '';
+
+    if (wireApi === 'chat' || wireApi === 'chat_completions') {
+      chatUrl = `${trimmedUrl}/chat/completions`;
+      const msg = new ChatProbeMessage();
+      msg.role = 'user';
+      msg.content = 'hi';
+      const probeBody = new ChatProbeBody();
+      probeBody.model = effectiveModel;
+      probeBody.messages = [msg];
+      probeBody.max_tokens = 1;
+      body = JSON.stringify(probeBody);
+    } else if (wireApi === 'anthropic') {
+      chatUrl = `${trimmedUrl}/messages`;
+      const msg = new ChatProbeMessage();
+      msg.role = 'user';
+      msg.content = 'hi';
+      const probeBody = new ChatProbeBody();
+      probeBody.model = model.length > 0 ? model : 'claude-3-haiku-20240307';
+      probeBody.messages = [msg];
+      probeBody.max_tokens = 1;
+      body = JSON.stringify(probeBody);
+    } else {
+      chatUrl = `${trimmedUrl}/responses`;
+      const respBody = new ResponsesProbeBody();
+      respBody.model = effectiveModel;
+      respBody.input = 'hi';
+      respBody.max_output_tokens = 1;
+      body = JSON.stringify(respBody);
+    }
+
+    const startTime: number = Date.now();
+    try {
+      const httpRequest = http.createHttp();
+      let response: http.HttpResponse;
+      if (wireApi === 'anthropic') {
+        response = await httpRequest.request(chatUrl, {
+          method: http.RequestMethod.POST,
+          header: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          extraData: body,
+          connectTimeout: 15000,
+          readTimeout: 15000
+        });
+      } else {
+        response = await httpRequest.request(chatUrl, {
+          method: http.RequestMethod.POST,
+          header: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          extraData: body,
+          connectTimeout: 15000,
+          readTimeout: 15000
+        });
+      }
+
+      const latency: number = Date.now() - startTime;
+      const status: number = response.responseCode;
+      const ok: boolean = status === 200 || status === 201;
+
+      if (ok) {
+        return new ChatProbeResult(true, latency, status, '');
+      }
+
+      let errMsg: string = `HTTP ${status}`;
+      try {
+        const errBody: string = response.result as string;
+        const errJson: ChatErrorBody = JSON.parse(errBody) as ChatErrorBody;
+        if (errJson.error !== null && errJson.error !== undefined &&
+          errJson.error.message !== null && errJson.error.message !== undefined &&
+          errJson.error.message.length > 0) {
+          errMsg = errJson.error.message;
+        }
+      } catch (_) {
+        // use default error message
+      }
+      return new ChatProbeResult(false, latency, status, errMsg);
+    } catch (e) {
+      return new ChatProbeResult(false, Date.now() - startTime, 0, `${e}`);
+    }
+  }
+
   async testEndpointSpeed(
     provider: ProviderRecord, autoSelect: boolean
   ): Promise<EndpointSpeedResult[]> {
@@ -439,9 +538,19 @@ export class ApiManagementService {
         });
 
         const latency = Date.now() - startTime;
+        const modelsOk = response.responseCode === 200;
+
+        // /models 通过后再测真实对话
+        let chatProbe: ChatProbeResult | null = null;
+        if (modelsOk) {
+          chatProbe = await this.probeChatEndpoint(
+            trimmedUrl, provider.apiKey, provider.model, provider.wireApi
+          );
+        }
+
         results.push(new EndpointSpeedResult(
           trimmedUrl, latency, response.responseCode,
-          response.responseCode === 200, '', Date.now()
+          modelsOk, '', Date.now(), chatProbe
         ));
       } catch (e) {
         results.push(new EndpointSpeedResult(
@@ -457,16 +566,23 @@ export class ApiManagementService {
       return 0;
     });
 
-    if (autoSelect && results.length > 0 && results[0].success) {
-      const fastest = results[0];
-      provider.baseUrl = fastest.endpointUrl;
-      provider.healthStatus = 'healthy';
-      provider.healthLatencyMs = fastest.latencyMs;
+    // 始终更新健康状态（综合 /models + 对话探测）
+    if (results.length > 0) {
+      const best = results[0];
+      if (best.success && best.chatProbe !== null && best.chatProbe.success) {
+        provider.healthStatus = 'healthy';
+        provider.healthLatencyMs = best.chatProbe.latencyMs;
+      } else if (best.success) {
+        provider.healthStatus = 'degraded';
+        provider.healthLatencyMs = best.latencyMs;
+      } else {
+        provider.healthStatus = 'error';
+        provider.healthLatencyMs = 0;
+      }
       provider.lastValidatedAt = Date.now();
 
       for (let i = 0; i < provider.endpoints.length; i++) {
         const e = provider.endpoints[i];
-        e.isActive = e.url === fastest.endpointUrl;
         for (let j = 0; j < results.length; j++) {
           if (results[j].endpointUrl === e.url) {
             e.latencyMs = results[j].latencyMs;
@@ -474,9 +590,18 @@ export class ApiManagementService {
           }
         }
       }
-
-      this.saveProvider(provider);
     }
+
+    // autoSelect 时自动切换到最快的端点
+    if (autoSelect && results.length > 0 && results[0].success) {
+      const fastest = results[0];
+      provider.baseUrl = fastest.endpointUrl;
+      for (let i = 0; i < provider.endpoints.length; i++) {
+        provider.endpoints[i].isActive = provider.endpoints[i].url === fastest.endpointUrl;
+      }
+    }
+
+    this.saveProvider(provider);
 
     return results;
   }
