@@ -41,6 +41,10 @@ struct BridgeApi {
     const char* (*skills_backups_json)(const char*) = nullptr;
     const char* (*create_skill_backup)(const char*, const char*, const char*) = nullptr;
     int32_t (*delete_skill_backup)(const char*, const char*) = nullptr;
+    const char* (*install_skill_from_dir)(const char*, const char*, const char*) = nullptr;
+    const char* (*uninstall_skill)(const char*, const char*) = nullptr;
+    const char* (*set_skill_enabled)(const char*, const char*, int32_t) = nullptr;
+    const char* (*reconcile_skills)(const char*) = nullptr;
     const char* (*prompts_registry_json)(const char*) = nullptr;
     int32_t (*save_prompts_registry)(const char*, const char*) = nullptr;
     const char* (*read_agents_md)(const char*) = nullptr;
@@ -98,6 +102,10 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_skills_backups_json", &api->skills_backups_json) &&
         LoadSymbol(api->handle, "codex_ohos_host_create_skill_backup", &api->create_skill_backup) &&
         LoadSymbol(api->handle, "codex_ohos_host_delete_skill_backup", &api->delete_skill_backup) &&
+        LoadSymbol(api->handle, "codex_ohos_host_install_skill_from_dir", &api->install_skill_from_dir) &&
+        LoadSymbol(api->handle, "codex_ohos_host_uninstall_skill", &api->uninstall_skill) &&
+        LoadSymbol(api->handle, "codex_ohos_host_set_skill_enabled", &api->set_skill_enabled) &&
+        LoadSymbol(api->handle, "codex_ohos_host_reconcile_skills", &api->reconcile_skills) &&
         LoadSymbol(api->handle, "codex_ohos_host_prompts_registry_json", &api->prompts_registry_json) &&
         LoadSymbol(api->handle, "codex_ohos_host_save_prompts_registry", &api->save_prompts_registry) &&
         LoadSymbol(api->handle, "codex_ohos_host_read_agents_md", &api->read_agents_md) &&
@@ -431,6 +439,41 @@ napi_value DeleteSkillBackup(napi_env env, napi_callback_info info) {
     UnloadBridgeApi(&api); return result;
 }
 
+napi_value InstallSkillFromDir(napi_env env, napi_callback_info info) {
+    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char codex_home[MAX_HOME_ARG_LEN], source_dir[MAX_DIR_PATH_ARG_LEN], skill_json[MAX_SKILL_JSON_ARG_LEN]; codex_home[0] = '\0'; source_dir[0] = '\0'; skill_json[0] = '\0';
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], source_dir, sizeof(source_dir))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], skill_json, sizeof(skill_json))) { UnloadBridgeApi(&api); return nullptr; }
+    napi_value result = CreateUtf8String(env, api.install_skill_from_dir(codex_home[0] == '\0' ? nullptr : codex_home, source_dir[0] == '\0' ? nullptr : source_dir, skill_json[0] == '\0' ? nullptr : skill_json));
+    UnloadBridgeApi(&api); return result;
+}
+
+napi_value UninstallSkill(napi_env env, napi_callback_info info) {
+    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { UnloadBridgeApi(&api); return nullptr; }
+    napi_value result = CreateUtf8String(env, api.uninstall_skill(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id));
+    UnloadBridgeApi(&api); return result;
+}
+
+napi_value SetSkillEnabled(napi_env env, napi_callback_info info) {
+    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
+    int32_t enabled = 1;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 3) { napi_get_value_int32(env, args[2], &enabled); }
+    napi_value result = CreateUtf8String(env, api.set_skill_enabled(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id, enabled));
+    UnloadBridgeApi(&api); return result;
+}
+
+napi_value ReconcileSkills(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->reconcile_skills); return result; }
+
 napi_value GetPromptsRegistry(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->prompts_registry_json); return result; }
 napi_value SavePromptsRegistry(napi_env env, napi_callback_info info) {
     BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
@@ -509,6 +552,10 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getSkillsBackups", nullptr, GetSkillsBackups, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createSkillBackup", nullptr, CreateSkillBackup, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"deleteSkillBackup", nullptr, DeleteSkillBackup, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"installSkillFromDir", nullptr, InstallSkillFromDir, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"uninstallSkill", nullptr, UninstallSkill, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setSkillEnabled", nullptr, SetSkillEnabled, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"reconcileSkills", nullptr, ReconcileSkills, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getPromptsRegistry", nullptr, GetPromptsRegistry, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"savePromptsRegistry", nullptr, SavePromptsRegistry, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"readAgentsMd", nullptr, ReadAgentsMd, nullptr, nullptr, nullptr, napi_default, nullptr},

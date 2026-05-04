@@ -1,6 +1,7 @@
 import {
   getSkillsRegistry, saveSkillsRegistry, getSkillsRepos, saveSkillsRepos,
-  computeDirHash, getSkillsBackups, createSkillBackup, deleteSkillBackup
+  computeDirHash, getSkillsBackups, createSkillBackup, deleteSkillBackup,
+  installSkillFromDir, uninstallSkill, setSkillEnabledNative, reconcileSkills
 } from '../backend/CodexNative';
 import {
   InstalledSkill, DiscoverableSkill, UnmanagedSkill, SkillRepo,
@@ -168,21 +169,19 @@ export class SkillsBackendService {
   }
 
   /**
-   * 切换 Skill 启用/禁用状态
+   * 切换 Skill 启用/禁用状态（通过 Rust host）
    */
   async setSkillEnabled(id: string, enabled: boolean): Promise<InstalledSkill> {
-    const installed = await this.getInstalled();
-    const target = installed.find((s: InstalledSkill): boolean => s.id === id);
-    if (!target) {
+    const json = setSkillEnabledNative(this.codexHome, id, enabled);
+    const parsed = JSON.parse(json) as SkillEntryJson;
+    if (parsed.id === undefined || parsed.id.length === 0) {
       throw new SkillError(
         SkillErrorCode.SKILL_NOT_FOUND,
         `id=${id}`,
         '未找到指定的 Skill，可能已被卸载'
       );
     }
-    target.enabled = enabled;
-    await this.saveInstalled(installed);
-    return target;
+    return InstalledSkill.fromJSON(parsed);
   }
 
   /**
@@ -199,119 +198,21 @@ export class SkillsBackendService {
   }
 
   /**
-   * 一致性检查与自动修复
+   * 一致性检查与自动修复（通过 Rust host）
    *
    * 检测并修复 registry 与 SSOT 目录之间的不一致：
-   * 1. registry 有条目但 SSOT 目录缺失 → 从 registry 移除（记录警告）
-   * 2. SSOT 有目录但 registry 无条目 → 注册为 unmanaged skill
-   *
-   * 返回修复摘要
+   * 1. registry 有条目但 SSOT 目录缺失 → 从 registry 移除
+   * 2. SSOT 有目录但 registry 无条目 → 注册为 local skill
    */
   async reconcileSkills(): Promise<ReconcileResult> {
-    const ssotDir = this.ensureSsotDir();
-    const removed: string[] = [];
-    const registered: string[] = [];
-
-    // 读取现有 registry
-    let installed: InstalledSkill[] = [];
-    try {
-      installed = await this.getInstalled();
-    } catch (_) {
-      // registry 不存在或损坏，跳过
-      return new ReconcileResult(removed, registered);
-    }
-
-    // 检查 1: registry 有条目但 SSOT 目录缺失
-    const validEntries: InstalledSkill[] = [];
-    for (const skill of installed) {
-      const skillDir = `${ssotDir}/${skill.directory}`;
-      let dirExists = false;
-      try {
-        const stat = fileIo.statSync(skillDir);
-        dirExists = stat.isDirectory();
-      } catch (_) {
-        dirExists = false;
-      }
-
-      if (dirExists) {
-        validEntries.push(skill);
-      } else {
-        removed.push(skill.id);
-        console.warn(`[SkillsReconcile] SSOT missing for skill "${skill.name}" (${skill.id}), removing from registry`);
-      }
-    }
-
-    if (removed.length > 0) {
-      await this.saveInstalled(validEntries);
-    }
-
-    // 检查 2: SSOT 有目录但 registry 无条目
-    const registeredDirs = new Set(validEntries.map((s: InstalledSkill): string => s.directory));
-    let entries: string[] = [];
-    try {
-      entries = fileIo.listFileSync(ssotDir) as string[];
-    } catch (_) {
-      // 目录不存在或无法读取
-      return new ReconcileResult(removed, registered);
-    }
-
-    const now = Date.now();
-    const newSkills: InstalledSkill[] = [];
-    for (const entry of entries) {
-      if (registeredDirs.has(entry)) {
-        continue;
-      }
-
-      const entryPath = `${ssotDir}/${entry}`;
-      let isDir = false;
-      try {
-        const stat = fileIo.statSync(entryPath);
-        isDir = stat.isDirectory();
-      } catch (_) {
-        continue;
-      }
-      if (!isDir) {
-        continue;
-      }
-
-      // 检查是否有 SKILL.md
-      const skillMdPath = `${entryPath}/SKILL.md`;
-      let hasSkillMd = false;
-      try {
-        fileIo.statSync(skillMdPath);
-        hasSkillMd = true;
-      } catch (_) {
-        hasSkillMd = false;
-      }
-      if (!hasSkillMd) {
-        continue;
-      }
-
-      // 解析元数据并注册
-      const metadata = this.parseSkillMetadata(skillMdPath, entry);
-      const contentHash = computeDirHash(entryPath);
-      const id = `local:${entry}`;
-
-      const newSkill = new InstalledSkill(
-        id, metadata.name, metadata.description, entry,
-        'local', '', '', '',
-        '', true, now, contentHash, 0
-      );
-      newSkills.push(newSkill);
-      registered.push(id);
-      console.info(`[SkillsReconcile] Auto-registered unmanaged skill "${metadata.name}" (${id})`);
-    }
-
-    if (newSkills.length > 0) {
-      const merged = [...validEntries, ...newSkills];
-      await this.saveInstalled(merged);
-    }
-
-    return new ReconcileResult(removed, registered);
+    this.ensureSsotDir();
+    const json = reconcileSkills(this.codexHome);
+    const parsed = JSON.parse(json) as ReconcileResult;
+    return new ReconcileResult(parsed.removed ?? [], parsed.registered ?? []);
   }
 
   /**
-   * 安装 Skill（完整流程）
+   * 安装 Skill（完整流程，通过 Rust host 完成 SSOT 复制 + 注册）
    */
   async installFromGithub(skill: DiscoverableSkill): Promise<InstalledSkill> {
     // Step 1: 校验
@@ -356,7 +257,7 @@ export class SkillsBackendService {
       }
     }
 
-    // Step 3-5: 下载、解压、复制
+    // Step 3-4: 下载、解压
     const repo = new SkillRepo(
       skill.repoOwner,
       skill.repoName,
@@ -378,73 +279,47 @@ export class SkillsBackendService {
       );
     }
 
-    const ssotDir = this.getSsotDir();
-    const dest = `${ssotDir}/${installName}`;
-    fileIo.mkdirSync(ssotDir, true);
-    await this.copyDirRecursive(sourceDir, dest);
+    // Step 5: 通过 Rust host 复制到 SSOT + 解析 SKILL.md + 计算哈希 + 注册
+    const readmeUrl = `https://github.com/${skill.repoOwner}/${skill.repoName}/blob/${usedBranch}/${skill.directory}/SKILL.md`;
+    const skillJson = JSON.stringify({
+      id: skill.key,
+      source: 'github',
+      repoOwner: skill.repoOwner,
+      repoName: skill.repoName,
+      repoBranch: usedBranch,
+      directory: installName,
+      readmeUrl: readmeUrl,
+      enabled: true,
+      installedAt: Date.now()
+    });
 
+    const resultJson = installSkillFromDir(this.codexHome, sourceDir, skillJson);
     await this.removeDir(tempDir);
 
-    // Step 6: 解析 SKILL.md
-    const metadata = this.parseSkillMetadata(`${dest}/SKILL.md`, installName);
-    const name = metadata.name;
-    const description = metadata.description;
+    const parsed = JSON.parse(resultJson) as SkillEntryJson;
+    if (parsed.id === undefined || parsed.id.length === 0) {
+      throw new Error(`installSkillFromDir failed: ${resultJson}`);
+    }
 
-    // 构建 readmeUrl
-    const readmeUrl = `https://github.com/${skill.repoOwner}/${skill.repoName}/blob/${usedBranch}/${skill.directory}/SKILL.md`;
-
-    // Step 7: 计算哈希并保存
-    const contentHash = computeDirHash(dest);
-
-    const entry = new InstalledSkill(
-      skill.key, name, description, installName,
-      'github', skill.repoOwner, skill.repoName, usedBranch,
-      readmeUrl, true, Date.now(), contentHash, 0
-    );
-
-    installed.push(entry);
-    await this.saveInstalled(installed);
-
-    return entry;
+    return InstalledSkill.fromJSON(parsed);
   }
 
   /**
-   * 卸载 Skill
+   * 卸载 Skill（通过 Rust host）
    */
   async uninstall(id: string): Promise<string | null> {
-    const installed = await this.getInstalled();
-    const index = installed.findIndex((s: InstalledSkill): boolean => s.id === id);
-    if (index === -1) {
+    const result = uninstallSkill(this.codexHome, id);
+    if (result.length === 0) {
       throw new SkillError(
         SkillErrorCode.SKILL_NOT_FOUND,
         `id=${id}`,
         '未找到指定的 Skill，可能已被卸载'
       );
     }
-
-    const skill = installed[index];
-
-    // 备份
-    let backupPath: string | null = null;
-    try {
-      const skillDir = `${this.getSsotDir()}/${skill.directory}`;
-      const result = createSkillBackup(this.codexHome, skillDir, JSON.stringify(skill));
-      if (!result.startsWith('error:')) {
-        backupPath = result;
-      }
-    } catch (e) {
-      console.warn(`Skill backup failed: ${JSON.stringify(e)}`);
+    if (result.startsWith('error:')) {
+      throw new Error(result);
     }
-
-    // 从 SSOT 删除
-    const ssotPath = `${this.getSsotDir()}/${skill.directory}`;
-    await this.removeDir(ssotPath);
-
-    // 从注册表移除
-    installed.splice(index, 1);
-    await this.saveInstalled(installed);
-
-    return backupPath;
+    return result;
   }
 
   /**

@@ -376,6 +376,18 @@ static LAST_BACKUPS_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 static LAST_BACKUP_PATH: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("").expect("empty cstring"))
 });
+static LAST_INSTALL_SKILL_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_UNINSTALL_BACKUP_PATH: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("").expect("empty cstring"))
+});
+static LAST_SET_ENABLED_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{}").expect("empty cstring"))
+});
+static LAST_RECONCILE_RESULT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"removed\":[],\"registered\":[]}").expect("empty cstring"))
+});
 static LAST_PROMPTS_REGISTRY_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
     Mutex::new(CString::new("{}").expect("empty cstring"))
 });
@@ -677,6 +689,78 @@ pub extern "C" fn codex_ohos_host_delete_skill_backup(
         Ok(()) => 0,
         Err(_) => 1,
     }
+}
+
+// ========== Skills Install / Uninstall / Enable / Reconcile ==========
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_install_skill_from_dir(
+    codex_home: *const c_char,
+    source_dir: *const c_char,
+    skill_json: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(source_dir) = ffi_string(source_dir) else {
+        return write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, "{}");
+    };
+    let Some(skill_json) = ffi_string(skill_json) else {
+        return write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, "{}");
+    };
+    match skills_registry::install_skill_from_dir(&codex_home, Path::new(&source_dir), &skill_json) {
+        Ok(entry) => {
+            let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
+            write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, &json)
+        }
+        Err(e) => {
+            write_cstring(&LAST_INSTALL_SKILL_RESULT_JSON, &format!("{{\"error\":\"{}\"}}", e))
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_uninstall_skill(
+    codex_home: *const c_char,
+    skill_id: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(skill_id) = ffi_string(skill_id) else {
+        return write_cstring(&LAST_UNINSTALL_BACKUP_PATH, "");
+    };
+    match skills_registry::uninstall_skill(&codex_home, &skill_id) {
+        Ok(backup_path) => write_cstring(&LAST_UNINSTALL_BACKUP_PATH, &backup_path),
+        Err(e) => write_cstring(&LAST_UNINSTALL_BACKUP_PATH, &format!("error:{}", e)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_set_skill_enabled(
+    codex_home: *const c_char,
+    skill_id: *const c_char,
+    enabled: i32,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let Some(skill_id) = ffi_string(skill_id) else {
+        return write_cstring(&LAST_SET_ENABLED_RESULT_JSON, "{}");
+    };
+    match skills_registry::set_skill_enabled(&codex_home, &skill_id, enabled != 0) {
+        Ok(entry) => {
+            let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
+            write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &json)
+        }
+        Err(e) => {
+            write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &format!("{{\"error\":\"{}\"}}", e))
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_reconcile_skills(
+    codex_home: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let result = skills_registry::reconcile_skills(&codex_home);
+    let json = serde_json::to_string(&result).unwrap_or_else(|_| "{\"removed\":[],\"registered\":[]}".into());
+    write_cstring(&LAST_RECONCILE_RESULT_JSON, &json)
 }
 
 // ========== Prompts Registry ==========

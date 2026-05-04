@@ -119,6 +119,8 @@ struct SettingsPage {
   @State private pendingDeleteSkillId: string = '';
   @State private pendingDeleteSkillName: string = '';
   @State private showSkillDeleteDialog: boolean = false;
+  @State private showSkillDetailDialog: boolean = false;
+  @State private selectedSkillDetail: InstalledSkill | null = null;
 
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private prompts: PromptRecord[] = [];
@@ -650,6 +652,16 @@ struct SettingsPage {
         this.skillsStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.skillsStatusText, 'error');
       });
+  }
+
+  private showSkillDetail(skill: InstalledSkill): void {
+    this.selectedSkillDetail = skill;
+    this.showSkillDetailDialog = true;
+  }
+
+  private closeSkillDetail(): void {
+    this.showSkillDetailDialog = false;
+    this.selectedSkillDetail = null;
   }
 
   private addSkillRepo(): void {
@@ -2093,7 +2105,7 @@ struct SettingsPage {
               '#6366F1',
               '#EEF2FF',
               '#C7D2FE',
-              () => { this.notePending('打开 Skill 目录'); }
+              () => { this.showSkillDetail(skill); }
             )
             this.skillActionButton(
               '删除',
@@ -3227,6 +3239,147 @@ struct SettingsPage {
     }
   }
 
+  private skillDetailSourceLabel(): string {
+    if (this.selectedSkillDetail === null) {
+      return '';
+    }
+    const src: string = this.selectedSkillDetail.source;
+    if (src === 'github') {
+      return 'GitHub';
+    }
+    if (src === 'zip') {
+      return 'ZIP 导入';
+    }
+    return '本地';
+  }
+
+  private skillDetailInstalledDate(): string {
+    if (this.selectedSkillDetail === null || this.selectedSkillDetail.installedAt <= 0) {
+      return '未知';
+    }
+    return new Date(this.selectedSkillDetail.installedAt).toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+  private skillDetailUpdatedDate(): string {
+    if (this.selectedSkillDetail === null || this.selectedSkillDetail.updatedAt <= 0) {
+      return '从未更新';
+    }
+    return new Date(this.selectedSkillDetail.updatedAt).toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+  @Builder
+  private skillDetailDialog() {
+    if (this.showSkillDetailDialog && this.selectedSkillDetail !== null) {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#0F172A')
+          .opacity(0.18)
+          .onClick(() => { this.closeSkillDetail(); })
+
+        Column() {
+          Row() {
+            Text(this.selectedSkillDetail.name)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
+              .layoutWeight(1)
+
+            Text(this.selectedSkillDetail.enabled ? '启用' : '禁用')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(11)
+              .fontColor(this.selectedSkillDetail.enabled ? '#16A34A' : '#94A3B8')
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .backgroundColor(this.selectedSkillDetail.enabled ? '#DCFCE7' : '#F5F7FA')
+              .borderRadius(8)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Text(this.selectedSkillDetail.description)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(12)
+            .fontColor('#64748B')
+            .lineHeight(20)
+            .margin({ top: 10 })
+            .width('100%')
+
+          Column() {
+            this.skillDetailRow('来源', this.skillDetailSourceLabel())
+            this.skillDetailRow('目录', this.selectedSkillDetail.directory)
+            this.skillDetailRow('ID', this.selectedSkillDetail.id)
+            if (this.selectedSkillDetail.source === 'github') {
+              this.skillDetailRow('仓库', this.selectedSkillDetail.repoOwner + '/' + this.selectedSkillDetail.repoName)
+              this.skillDetailRow('分支', this.selectedSkillDetail.repoBranch)
+            }
+            if (this.selectedSkillDetail.readmeUrl.length > 0) {
+              this.skillDetailRow('README', this.selectedSkillDetail.readmeUrl)
+            }
+            this.skillDetailRow('安装时间', this.skillDetailInstalledDate())
+            this.skillDetailRow('更新时间', this.skillDetailUpdatedDate())
+            if (this.selectedSkillDetail.contentHash.length > 0) {
+              this.skillDetailRow('内容哈希', this.selectedSkillDetail.contentHash.substring(0, 16) + '...')
+            }
+          }
+          .width('100%')
+          .margin({ top: 16 })
+          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
+          .backgroundColor('#F8FAFC')
+          .borderRadius(12)
+
+          Row() {
+            Button('关闭')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#475569')
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('skill-detail-close'), y: this.pressScale('skill-detail-close') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('skill-detail-close', event); })
+              .onClick(() => { this.closeSkillDetail(); })
+          }
+          .width('100%')
+          .margin({ top: 20 })
+        }
+        .width(420)
+        .padding(22)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' })
+        .borderRadius(24)
+      }
+      .width('100%')
+      .height('100%')
+    }
+  }
+
+  @Builder
+  private skillDetailRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor('#94A3B8')
+        .width(70)
+
+      Text(value)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor('#334155')
+        .layoutWeight(1)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ top: 8 })
+  }
+
   build() {
     Stack() {
       this.backdropLayer()
@@ -3248,6 +3401,7 @@ struct SettingsPage {
 
       this.toastHost()
       this.skillDeleteDialog()
+      this.skillDetailDialog()
     }
     .width('100%')
     .height('100%')

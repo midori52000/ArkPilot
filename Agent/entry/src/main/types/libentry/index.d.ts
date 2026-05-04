@@ -62,6 +62,10 @@ export interface EntryBridgeModule {
   getSkillsBackups: (codexHome?: string) => string;
   createSkillBackup: (codexHome?: string, skillDir?: string, skillJson?: string) => string;
   deleteSkillBackup: (codexHome?: string, backupId?: string) => number;
+  installSkillFromDir: (codexHome?: string, sourceDir?: string, skillJson?: string) => string;
+  uninstallSkill: (codexHome?: string, skillId?: string) => string;
+  setSkillEnabled: (codexHome?: string, skillId?: string, enabled?: number) => string;
+  reconcileSkills: (codexHome?: string) => string;
   getPromptsRegistry: (codexHome?: string) => string;
   savePromptsRegistry: (codexHome?: string, registryJson?: string) => number;
   readAgentsMd: (codexHome?: string) => string;

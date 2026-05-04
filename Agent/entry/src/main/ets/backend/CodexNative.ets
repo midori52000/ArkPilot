@@ -339,6 +339,53 @@ export function deleteSkillBackup(codexHome: string, backupId: string): boolean 
   }
 }
 
+export function installSkillFromDir(codexHome: string, sourceDir: string, skillJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    const result = nativeBridge!.installSkillFromDir(codexHome, sourceDir, skillJson);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{}';
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function uninstallSkill(codexHome: string, skillId: string): string {
+  if (nativeModuleUnavailable()) {
+    return '';
+  }
+  try {
+    return nativeBridge!.uninstallSkill(codexHome, skillId) ?? '';
+  } catch (_err) {
+    return '';
+  }
+}
+
+export function setSkillEnabledNative(codexHome: string, skillId: string, enabled: boolean): string {
+  if (nativeModuleUnavailable()) {
+    return '{}';
+  }
+  try {
+    const result = nativeBridge!.setSkillEnabled(codexHome, skillId, enabled ? 1 : 0);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{}';
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export function reconcileSkills(codexHome: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"removed":[],"registered":[]}';
+  }
+  try {
+    const result = nativeBridge!.reconcileSkills(codexHome);
+    return result !== undefined && result !== null && result.length > 0 ? result : '{"removed":[],"registered":[]}';
+  } catch (_err) {
+    return '{"removed":[],"registered":[]}';
+  }
+}
+
 export function getPromptsRegistry(codexHome: string): string {
   if (nativeModuleUnavailable()) {
     return '{"version":1,"prompts":[],"updatedAt":"0"}';

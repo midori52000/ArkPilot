@@ -140,10 +140,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 ## 当前我们要做的事
-1、前端设计完给出一定交互反馈（比如按钮按压的时候会缩放，有一定的粒子效果等），同时如果还没对接后端则给出一个提示没有对接的弹窗（自动消散无需确认），我给出参考文件在design/design.md
-2、即使更新gitignore,更新claude.md。
-3、尽量不要动codex-main文件夹，
+1、"D:\code\harmony\ArkPilot\ccmanage\persistence-implementation-plan.md"本次执行的计划，按计划执行，拿不准就参考
+2、及时更新gitignore,更新claude.md。
+3、codex-main文件夹下的文件改动了什么必须跟我说，尽量最小改动。
 
 
 ## 错误经验
 （这里写错误和解决方案，遇到错误优先查找，避免重复工作）
+
+### ArkTS 编译器限制（高频踩坑）
+
+**1. `ArrayBuffer` 没有 `length` 和 `buffer` 属性**
+- 错误：`Property 'length' does not exist on type 'ArrayBuffer'`
+- 解决：用 `new Uint8Array(arrayBuffer)` 创建视图，然后用 `view.length`；写文件时直接传 `arrayBuffer` 本身，不要用 `.buffer`
+
+**2. 不支持 `Record<K, V>` 类型**
+- 错误：`Cannot find name 'Record'`
+- 解决：用 `Map<K, V>` 替代，配合 `new Map([...])` 初始化
+
+**3. 不支持内联对象类型声明**
+- 错误：`Object literals cannot be used as type declarations (arkts-no-obj-literals-as-types)`
+- 场景：函数返回值类型 `{ removed: string[]; registered: string[] }`
+- 解决：必须定义正式的 `class` 或 `interface`，不能用内联 `{ key: type }`
+
+**4. 不支持匿名对象字面量**
+- 错误：`Object literal must correspond to some explicitly declared class or interface (arkts-no-untyped-obj-literals)`
+- 场景：`map` 回调返回 `{ id: s.id, name: s.name, ... }`
+- 解决：用类型断言 `as TargetInterface[]` 或定义专门的 class
+
+**5. `@Builder` 方法内不能写非 UI 逻辑**
+- 错误：`Only UI component syntax can be written here`
+- 禁止：`const` 声明、`return` 语句、三元表达式赋值
+- 解决：
+  - 非 UI 计算提取到 private helper 方法
+  - 用 `if (condition) { Stack() {...} }` 代替 `if (!condition) { return; }`
+  - 模板字符串 `` `${a}/${b}` `` 在 `@Builder` 内改用字符串拼接 `a + '/' + b`
+
+**6. `throw` 必须抛 Error 对象**
+- 错误：`throw 'string'` 不合法
+- 解决：`throw new Error('message')` 或自定义 Error 子类
+
+**7. 可选参数必须给默认值**
+- 错误：`function foo(x?: string)` 不合法
+- 解决：`function foo(x: string = '')` 或 `function foo(x: string | null = null)`
+
+**8. zlib 枚举值名称**
+- `@ohos.zlib` 的压缩级别枚举是 `COMPRESS_LEVEL_BEST_SPEED`，不是 `COMPRESS_LEVEL_DEFAULT_SPEED`
+
+**9. `@ohos.zlib` 只支持 gzip/zlib 流，不支持 ZIP 归档**
+- `decompressFile` 不能直接解压 `.zip` 文件
+- 解决：自己实现 ZIP 解析（EOCD → Central Directory → Local File Header），deflate 条目用 zlib inflate
+
+**10. `fileIo.writeSync` 接受 `ArrayBuffer`，不接受 `string`**
+- 写文本文件需要先用 `util.TextEncoder().encodeInto(text)` 转成 `ArrayBuffer`
+- 写文件模式：`fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC`

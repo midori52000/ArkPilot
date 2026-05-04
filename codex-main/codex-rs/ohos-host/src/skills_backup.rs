@@ -102,7 +102,7 @@ pub fn list_backups(codex_home: &Path) -> Vec<serde_json::Value> {
     backups
 }
 
-fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), String> {
+pub fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest)
         .map_err(|e| format!("mkdir {}: {}", dest.display(), e))?;
 
