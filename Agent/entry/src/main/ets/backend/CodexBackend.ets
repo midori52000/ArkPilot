@@ -71,6 +71,8 @@ const TURN_POLL_INTERVAL_MS: number = 800;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
+const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
+const UNRECOGNIZED_CHANGED_FILES_TEXT: string = '\u5c1a\u672a\u8bc6\u522b\u53d8\u66f4\u6587\u4ef6';
 
 export type ConfigKind = 'provider' | 'skill';
 export type ConfigAction = 'list' | 'get' | 'add' | 'update' | 'remove' | 'enable' | 'disable' | 'setActive';
@@ -809,6 +811,9 @@ class McpConfigReadResponsePayload {
 class ParsedDiff {
   lines: CodexDiffLine[] = [];
   diffStat: string = '+0 -0';
+  constructor() {
+    this.changedFiles = UNRECOGNIZED_CHANGED_FILES_TEXT;
+  }
   changedFiles: string = '尚未识别变更文件';
 }
 
@@ -1002,6 +1007,7 @@ class CodexThreadRecord {
     this.localKey = localKey;
     this.title = title;
     this.updatedAt = currentTimestamp();
+    this.changedFiles = NO_FILE_CHANGES_TEXT;
   }
 }
 
@@ -1815,6 +1821,7 @@ export class CodexBackend {
         ? (payload['changedFilesText'] as string)
         : '尚未产生文件改动';
     }
+    thread.changedFiles = this.normalizeChangedFilesText(thread.changedFiles, diffText.trim().length > 0);
     const summaryRaw: Object[] = Array.isArray(payload['summary']) ? (payload['summary'] as Object[]) : [];
     thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : '历史会话';
     thread.summaryPoints = summaryRaw.length > 0
@@ -1875,6 +1882,10 @@ export class CodexBackend {
     thread.turnCount += 1;
     thread.lastTurnStatus = 'inProgress';
     thread.updatedAt = currentTimestamp();
+    thread.changedFiles = NO_FILE_CHANGES_TEXT;
+    thread.diffLines = [];
+    thread.diffStat = '+0 -0';
+    thread.changedFiles = 'å°šæœªäº§ç”Ÿæ–‡ä»¶æ”¹åŠ¨';
     thread.summaryTitle = '正在等待 ArkPilot 响应';
     thread.summaryPoints = ['已通过原生桥接发送请求，等待轮询结果。'];
     return this.snapshotForThread(thread, 'inProgress');
@@ -1890,6 +1901,9 @@ export class CodexBackend {
         let finalSnapshot: CodexTurnResult = nextSnapshot;
         if (this.shouldDrainLateTurnUpdates(thread)) {
           finalSnapshot = await this.drainLateTurnUpdates(thread, pendingTurn, finalSnapshot);
+        }
+        if (this.shouldDrainLateTurnUpdates(thread)) {
+          finalSnapshot = await this.recoverDiffFromThreadHistory(thread, pendingTurn, finalSnapshot);
         }
         thread.activeTurn = null;
         pendingTurn.resolveCompletion(finalSnapshot);
@@ -1925,9 +1939,53 @@ export class CodexBackend {
     return currentSnapshot;
   }
 
+  private async recoverDiffFromThreadHistory(
+    thread: CodexThreadRecord,
+    pendingTurn: PendingTurnState,
+    snapshot: CodexTurnResult
+  ): Promise<CodexTurnResult> {
+    if (thread.remoteThreadId.trim().length === 0) {
+      return snapshot;
+    }
+    let currentSnapshot: CodexTurnResult = snapshot;
+    for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
+      try {
+        const recovered: CodexTurnResult = await this.loadThreadHistory(thread.remoteThreadId);
+        currentSnapshot = new CodexTurnResult(
+          recovered.threadId,
+          pendingTurn.turnId,
+          recovered.status,
+          recovered.messages,
+          recovered.diffLines,
+          recovered.summaryTitle,
+          recovered.summaryPoints,
+          recovered.changedFiles,
+          recovered.diffStat
+        );
+        this.logInfo(
+          `threadRead diff recovery thread=${thread.remoteThreadId} attempt=${attempt + 1} diffStat=${currentSnapshot.diffStat}`
+        );
+        this.emitTurnUpdate(thread, pendingTurn, currentSnapshot);
+        if (!this.shouldDrainLateTurnUpdates(thread)) {
+          return currentSnapshot;
+        }
+      } catch (err) {
+        const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+        this.logInfo(`threadRead diff recovery failed thread=${thread.remoteThreadId} attempt=${attempt + 1} error=${errorText}`);
+      }
+      if (attempt + 1 < TERMINAL_TURN_DRAIN_ATTEMPTS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
+      }
+    }
+    return currentSnapshot;
+  }
+
   private applyTurnPollResult(thread: CodexThreadRecord, turnId: string, payload: Record<string, Object>): CodexTurnResult {
     const statusRaw: string = typeof payload['status'] === 'string' ? (payload['status'] as string) : 'completed';
     const status: CodexTurnStatus = this.mapTurnStatus(statusRaw);
+    const previousDiffStat: string = thread.diffStat;
+    const previousChangedFiles: string = thread.changedFiles;
+    const previousDiffLineCount: number = thread.diffLines.length;
     const messages: Object[] = Array.isArray(payload['messages']) ? (payload['messages'] as Object[]) : [];
     if (messages.length > 0) {
       const nextMessages: CodexChatMessage[] = messages.map((item: Object, index: number) => {
@@ -1951,7 +2009,18 @@ export class CodexBackend {
       thread.diffLines = parsed.lines;
       thread.diffStat = parsed.diffStat;
       thread.changedFiles = parsed.changedFiles;
+      if (
+        thread.diffStat !== previousDiffStat ||
+        thread.changedFiles !== previousChangedFiles ||
+        thread.diffLines.length !== previousDiffLineCount
+      ) {
+        thread.diffUpdateCount += 1;
+        this.logInfo(
+          `turnDiffApplied thread=${thread.remoteThreadId} turn=${turnId} diffStat=${thread.diffStat} changedFiles=${thread.changedFiles} updates=${thread.diffUpdateCount}`
+        );
+      }
     }
+    thread.changedFiles = this.normalizeChangedFilesText(thread.changedFiles, diffText.trim().length > 0);
     const summaryRaw: Object[] = Array.isArray(payload['summary']) ? (payload['summary'] as Object[]) : [];
     const summaryPoints: string[] = summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item));
     thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : (status === 'completed' ? '本轮已完成' : '执行中');
@@ -2063,6 +2132,18 @@ export class CodexBackend {
       return 'interrupted';
     }
     return 'inProgress';
+  }
+
+  private normalizeChangedFilesText(value: string, hasDiff: boolean): string {
+    const trimmed: string = value.trim();
+    if (trimmed.length === 0 || this.isMojibakeText(trimmed)) {
+      return hasDiff ? UNRECOGNIZED_CHANGED_FILES_TEXT : NO_FILE_CHANGES_TEXT;
+    }
+    return trimmed;
+  }
+
+  private isMojibakeText(value: string): boolean {
+    return value.indexOf('Ã') >= 0 || value.indexOf('å°') >= 0 || value.indexOf('灏') >= 0;
   }
 
   private snapshotForThread(thread: CodexThreadRecord, status: CodexTurnStatus, turnId: string = ''): CodexTurnResult {

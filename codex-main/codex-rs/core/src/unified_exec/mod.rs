@@ -37,6 +37,7 @@ use tokio::sync::Mutex;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::sandboxing::SandboxPermissions;
+use crate::tools::context::SharedTurnDiffTracker;
 
 mod async_watcher;
 mod errors;
@@ -72,14 +73,21 @@ pub(crate) const WARNING_UNIFIED_EXEC_PROCESSES: usize = 60;
 pub(crate) struct UnifiedExecContext {
     pub session: Arc<Session>,
     pub turn: Arc<TurnContext>,
+    pub tracker: SharedTurnDiffTracker,
     pub call_id: String,
 }
 
 impl UnifiedExecContext {
-    pub fn new(session: Arc<Session>, turn: Arc<TurnContext>, call_id: String) -> Self {
+    pub fn new(
+        session: Arc<Session>,
+        turn: Arc<TurnContext>,
+        tracker: SharedTurnDiffTracker,
+        call_id: String,
+    ) -> Self {
         Self {
             session,
             turn,
+            tracker,
             call_id,
         }
     }

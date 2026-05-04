@@ -179,7 +179,12 @@ impl ToolHandler for UnifiedExecHandler {
         };
 
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
-        let context = UnifiedExecContext::new(session.clone(), turn.clone(), call_id.clone());
+        let context = UnifiedExecContext::new(
+            session.clone(),
+            turn.clone(),
+            tracker.clone(),
+            call_id.clone(),
+        );
 
         let response = match tool_name.as_str() {
             "exec_command" => {

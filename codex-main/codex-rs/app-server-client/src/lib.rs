@@ -99,12 +99,13 @@ fn event_requires_delivery(event: &InProcessServerEvent) -> bool {
 
 /// Returns `true` for notifications that must survive backpressure.
 ///
-/// Transcript events (`AgentMessageDelta`, `PlanDelta`, reasoning deltas) and
-/// the authoritative `ItemCompleted` / `TurnCompleted` form the lossless tier
-/// of the event stream. Dropping any of these corrupts the visible assistant
-/// output or leaves surfaces waiting for a completion signal that already
-/// fired. Everything else (`CommandExecutionOutputDelta`, progress, etc.) is
-/// best-effort and may be dropped with only cosmetic impact.
+/// Transcript events (`AgentMessageDelta`, `PlanDelta`, reasoning deltas), the
+/// authoritative `ItemCompleted` / `TurnCompleted`, and turn diff snapshots
+/// form the lossless tier of the event stream. Dropping any of these corrupts
+/// the visible assistant output, loses the per-turn diff, or leaves surfaces
+/// waiting for a completion signal that already fired. Everything else
+/// (`CommandExecutionOutputDelta`, progress, etc.) is best-effort and may be
+/// dropped with only cosmetic impact.
 ///
 /// Both the in-process and remote transports delegate to this function so the
 /// classification stays in sync.
@@ -112,6 +113,7 @@ pub(crate) fn server_notification_requires_delivery(notification: &ServerNotific
     matches!(
         notification,
         ServerNotification::TurnCompleted(_)
+            | ServerNotification::TurnDiffUpdated(_)
             | ServerNotification::ItemCompleted(_)
             | ServerNotification::AgentMessageDelta(_)
             | ServerNotification::PlanDelta(_)
@@ -1847,6 +1849,17 @@ mod tests {
                         turn_id: "turn".to_string(),
                         item_id: "item".to_string(),
                         delta: "hello".to_string(),
+                    }
+                )
+            )
+        ));
+        assert!(event_requires_delivery(
+            &InProcessServerEvent::ServerNotification(
+                codex_app_server_protocol::ServerNotification::TurnDiffUpdated(
+                    codex_app_server_protocol::TurnDiffUpdatedNotification {
+                        thread_id: "thread".to_string(),
+                        turn_id: "turn".to_string(),
+                        diff: "--- a/file\n+++ b/file\n@@ -0,0 +1 @@\n+hello".to_string(),
                     }
                 )
             )

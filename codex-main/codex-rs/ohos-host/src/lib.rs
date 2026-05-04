@@ -6,6 +6,7 @@ use std::net::TcpStream;
 use std::os::raw::c_char;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -62,6 +63,7 @@ use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::config::types::McpServerConfig;
 use codex_core::config_loader::LoaderOverrides;
+use codex_core::turn_diff_tracker::TurnDiffTracker;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
@@ -69,6 +71,7 @@ use codex_utils_cli::CliConfigOverrides;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::sync::Mutex as AsyncMutex;
 
 mod prompts_registry;
 mod skills_backup;
@@ -127,10 +130,11 @@ struct PendingApprovalState {
 #[derive(Debug, Clone, Default)]
 struct NativeThreadState {
     remote_thread_id: String,
+    cwd: Option<PathBuf>,
     messages: Vec<NativeMessage>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 struct NativeTurnState {
     thread_id: String,
     status: String,
@@ -138,7 +142,10 @@ struct NativeTurnState {
     summary: Vec<String>,
     summary_title: String,
     diff: String,
+    diff_authoritative: bool,
     error_message: String,
+    cwd: Option<PathBuf>,
+    local_diff_tracker: Option<Arc<AsyncMutex<TurnDiffTracker>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1286,6 +1293,63 @@ fn write_cstring(target: &Mutex<CString>, value: &str) -> *const c_char {
     slot.as_ptr()
 }
 
+fn build_local_turn_diff_tracker(cwd: Option<&Path>) -> Option<Arc<AsyncMutex<TurnDiffTracker>>> {
+    let cwd = cwd?.to_path_buf();
+    let mut tracker = TurnDiffTracker::new();
+    tracker.on_exec_begin(&cwd);
+    Some(Arc::new(AsyncMutex::new(tracker)))
+}
+
+fn should_refresh_turn_diff_from_local_tracker(turn_id: &str) -> bool {
+    if turn_id.is_empty() {
+        return false;
+    }
+    with_native_state(|state| {
+        state
+            .turns
+            .get(turn_id)
+            .map(|turn| {
+                !turn.diff_authoritative
+                    && turn.cwd.is_some()
+                    && turn.local_diff_tracker.is_some()
+            })
+            .unwrap_or(false)
+    })
+}
+
+async fn refresh_turn_diff_from_local_tracker(turn_id: &str) -> Result<()> {
+    let Some((cwd, tracker)) = with_native_state(|state| {
+        state.turns.get(turn_id).and_then(|turn| {
+            let cwd = turn.cwd.clone()?;
+            let tracker = turn.local_diff_tracker.clone()?;
+            Some((cwd, tracker))
+        })
+    }) else {
+        return Ok(());
+    };
+
+    let diff = {
+        let mut guard = tracker.lock().await;
+        guard.on_exec_end(&cwd);
+        guard.get_unified_diff()?
+    };
+
+    let normalized_diff = diff
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    with_native_state(|state| {
+        if let Some(turn) = state.turns.get_mut(turn_id)
+            && !turn.diff_authoritative
+        {
+            turn.diff = normalized_diff;
+        }
+    });
+
+    Ok(())
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_initialize(config_json: *const c_char) -> *const c_char {
     let config_text = ffi_string(config_json).unwrap_or_else(|| "{}".to_string());
@@ -1367,6 +1431,7 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
                 response.thread.id.clone(),
                 NativeThreadState {
                     remote_thread_id: response.thread.id.clone(),
+                    cwd: Some(response.cwd.clone()),
                     messages: collect_thread_messages(&response.thread.turns),
                 },
             );
@@ -1704,6 +1769,16 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
             .await
             .map_err(anyhow::Error::from)?;
 
+        let turn_cwd = cwd.clone().or_else(|| {
+            with_native_state(|state| {
+                state
+                    .threads
+                    .get(&request.thread_id)
+                    .and_then(|thread| thread.cwd.clone())
+            })
+        });
+        let local_diff_tracker = build_local_turn_diff_tracker(turn_cwd.as_deref());
+
         with_native_state(|state| {
             state.turns.insert(
                 response.turn.id.clone(),
@@ -1714,7 +1789,10 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
                     summary: vec!["正在等待 Codex 响应".to_string()],
                     summary_title: "执行中".to_string(),
                     diff: String::new(),
+                    diff_authoritative: false,
                     error_message: String::new(),
+                    cwd: turn_cwd,
+                    local_diff_tracker,
                 },
             );
         });
@@ -1758,7 +1836,18 @@ pub extern "C" fn codex_ohos_host_turn_poll(
     let thread_id = ffi_string(thread_id).unwrap_or_default();
     let turn_id = ffi_string(turn_id).unwrap_or_default();
     let response = with_runtime_result(async {
-        process_pending_events(Some(&turn_id)).await
+        process_pending_events(Some(&turn_id)).await?;
+        if should_wait_for_trailing_turn_diff(&turn_id) {
+            process_pending_events_with_idle_timeout(
+                Some(&turn_id),
+                Duration::from_millis(300),
+            )
+            .await?;
+        }
+        if should_refresh_turn_diff_from_local_tracker(&turn_id) {
+            refresh_turn_diff_from_local_tracker(&turn_id).await?;
+        }
+        Ok(())
     });
 
     let json = match response {
@@ -2337,10 +2426,17 @@ fn build_sandbox_policy(raw: Option<&str>, cwd: Option<&Path>) -> Result<Option<
 }
 
 async fn process_pending_events(target_turn_id: Option<&str>) -> Result<()> {
+    process_pending_events_with_idle_timeout(target_turn_id, Duration::from_millis(50)).await
+}
+
+async fn process_pending_events_with_idle_timeout(
+    target_turn_id: Option<&str>,
+    idle_timeout: Duration,
+) -> Result<()> {
     loop {
         let mut client = with_native_state(|state| state.client.take())
             .context("remote app-server client is not initialized")?;
-        let event = tokio::time::timeout(Duration::from_millis(50), client.next_event())
+        let event = tokio::time::timeout(idle_timeout, client.next_event())
             .await
             .ok()
             .flatten();
@@ -2356,6 +2452,22 @@ async fn process_pending_events(target_turn_id: Option<&str>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn should_wait_for_trailing_turn_diff(turn_id: &str) -> bool {
+    if turn_id.is_empty() {
+        return false;
+    }
+    with_native_state(|state| {
+        state
+            .turns
+            .get(turn_id)
+            .map(|turn| {
+                turn.diff.trim().is_empty()
+                    && matches!(turn.status.as_str(), "completed" | "failed" | "cancelled")
+            })
+            .unwrap_or(false)
+    })
 }
 
 async fn handle_app_server_event(
@@ -2599,6 +2711,15 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     .or_insert_with(NativeTurnState::default);
                 entry.thread_id = payload.thread_id.clone();
                 entry.status = map_turn_status(&payload.turn.status).to_string();
+                if entry.cwd.is_none() {
+                    entry.cwd = state
+                        .threads
+                        .get(&payload.thread_id)
+                        .and_then(|thread| thread.cwd.clone());
+                }
+                if entry.local_diff_tracker.is_none() {
+                    entry.local_diff_tracker = build_local_turn_diff_tracker(entry.cwd.as_deref());
+                }
                 if entry.summary_title.is_empty() {
                     entry.summary_title = "执行中".to_string();
                 }
@@ -2744,6 +2865,10 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 if let Some(summary) = describe_completed_item(&payload.item) {
                     push_turn_summary(turn, summary);
                 }
+                if let Some(diff) = diff_from_thread_item(&payload.item) {
+                    append_turn_diff(turn, &diff);
+                    turn.diff_authoritative = true;
+                }
             });
         }
         ServerNotification::TurnCompleted(payload) => {
@@ -2786,6 +2911,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                         ..Default::default()
                     });
                 entry.diff = payload.diff.clone();
+                entry.diff_authoritative = true;
             });
         }
         ServerNotification::Error(payload) => {
@@ -3095,6 +3221,7 @@ fn append_assistant_delta(
             .entry(thread_id.to_string())
             .or_insert_with(|| NativeThreadState {
                 remote_thread_id: thread_id.to_string(),
+                cwd: None,
                 messages: Vec::new(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
@@ -3134,6 +3261,7 @@ fn sync_thread_from_completed_item(
                 .entry(thread_id.to_string())
                 .or_insert_with(|| NativeThreadState {
                     remote_thread_id: thread_id.to_string(),
+                    cwd: None,
                     messages: Vec::new(),
                 });
             let message_id = format!("{turn_id}:{id}");
@@ -3157,6 +3285,48 @@ fn sync_thread_from_completed_item(
         if let Some(turn) = state.turns.get_mut(turn_id) {
             turn.messages = thread_messages;
         }
+    }
+}
+
+fn append_turn_diff(turn: &mut NativeTurnState, diff: &str) {
+    let chunk = diff.trim();
+    if chunk.is_empty() {
+        return;
+    }
+    if turn.diff.trim().is_empty() {
+        turn.diff = chunk.to_string();
+        return;
+    }
+    if turn.diff.contains(chunk) {
+        return;
+    }
+    if !turn.diff.ends_with('\n') {
+        turn.diff.push('\n');
+    }
+    turn.diff.push_str(chunk);
+}
+
+fn diff_from_thread_item(item: &codex_app_server_protocol::ThreadItem) -> Option<String> {
+    match item {
+        codex_app_server_protocol::ThreadItem::FileChange { changes, .. } => {
+            let chunks = changes
+                .iter()
+                .filter_map(|change| {
+                    let diff = change.diff.trim();
+                    if diff.is_empty() {
+                        None
+                    } else {
+                        Some(diff.to_string())
+                    }
+                })
+                .collect::<Vec<_>>();
+            if chunks.is_empty() {
+                None
+            } else {
+                Some(chunks.join("\n"))
+            }
+        }
+        _ => None,
     }
 }
 
@@ -3207,9 +3377,11 @@ fn upsert_thread_state_from_protocol(
         .entry(thread.id.clone())
         .or_insert_with(|| NativeThreadState {
             remote_thread_id: thread.id.clone(),
+            cwd: Some(thread.cwd.clone()),
             messages: Vec::new(),
         });
     entry.remote_thread_id = thread.id.clone();
+    entry.cwd = Some(thread.cwd.clone());
     if refresh_messages {
         entry.messages = collect_thread_messages(&thread.turns);
     }
@@ -3337,12 +3509,8 @@ fn collect_thread_diff_from_turns(turns: &[codex_app_server_protocol::Turn]) -> 
     let mut chunks: Vec<String> = Vec::new();
     for turn in turns {
         for item in &turn.items {
-            if let codex_app_server_protocol::ThreadItem::FileChange { changes, .. } = item {
-                for change in changes {
-                    if !change.diff.trim().is_empty() {
-                        chunks.push(change.diff.clone());
-                    }
-                }
+            if let Some(diff) = diff_from_thread_item(item) {
+                chunks.push(diff);
             }
         }
     }
@@ -3447,6 +3615,14 @@ fn can_write_to_directory(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::SystemTime;
+    use codex_app_server_protocol::FileUpdateChange;
+    use codex_app_server_protocol::ItemCompletedNotification;
+    use codex_app_server_protocol::PatchApplyStatus;
+    use codex_app_server_protocol::PatchChangeKind;
+    use codex_app_server_protocol::ServerNotification;
+    use codex_app_server_protocol::ThreadItem;
 
     #[test]
     fn render_config_toml_includes_workspace_write_defaults() {
@@ -3461,5 +3637,129 @@ mod tests {
         assert!(config.contains("model = \"test-model\""));
         assert!(config.contains("base_url = \"https://example.com/v1\""));
         assert!(config.contains("experimental_bearer_token = \"secret\""));
+    }
+
+    #[test]
+    fn item_completed_file_change_backfills_turn_diff() {
+        let diff = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -0,0 +1 @@\n+print('hello')";
+        with_native_state(|state| {
+            *state = NativeConversationState::default();
+            state.turns.insert(
+                "turn".to_string(),
+                NativeTurnState {
+                    thread_id: "thread".to_string(),
+                    status: "inProgress".to_string(),
+                    ..Default::default()
+                },
+            );
+        });
+
+        apply_server_notification(
+            &ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id: "thread".to_string(),
+                turn_id: "turn".to_string(),
+                item: ThreadItem::FileChange {
+                    id: "item".to_string(),
+                    changes: vec![FileUpdateChange {
+                        path: "foo.py".to_string(),
+                        kind: PatchChangeKind::Add,
+                        diff: diff.to_string(),
+                    }],
+                    status: PatchApplyStatus::Completed,
+                },
+            }),
+            Some("turn"),
+        );
+
+        let stored = with_native_state(|state| {
+            state
+                .turns
+                .get("turn")
+                .cloned()
+                .expect("turn state should exist after notification")
+        });
+        assert_eq!(stored.diff, diff);
+    }
+
+    #[test]
+    fn completed_turn_with_empty_diff_waits_for_trailing_turn_diff() {
+        with_native_state(|state| {
+            *state = NativeConversationState::default();
+            state.turns.insert(
+                "turn".to_string(),
+                NativeTurnState {
+                    thread_id: "thread".to_string(),
+                    status: "completed".to_string(),
+                    diff: String::new(),
+                    ..Default::default()
+                },
+            );
+        });
+
+        assert!(should_wait_for_trailing_turn_diff("turn"));
+    }
+
+    #[test]
+    fn completed_turn_with_diff_does_not_wait_for_trailing_turn_diff() {
+        with_native_state(|state| {
+            *state = NativeConversationState::default();
+            state.turns.insert(
+                "turn".to_string(),
+                NativeTurnState {
+                    thread_id: "thread".to_string(),
+                    status: "completed".to_string(),
+                    diff: "diff --git a/foo b/foo".to_string(),
+                    ..Default::default()
+                },
+            );
+        });
+
+        assert!(!should_wait_for_trailing_turn_diff("turn"));
+    }
+
+    #[tokio::test]
+    async fn local_turn_diff_tracker_backfills_completed_turn_without_remote_diff() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("codex-ohos-host-diff-{unique}"));
+        fs::create_dir_all(&dir).expect("temp test dir should create");
+        let file = dir.join("created.txt");
+        let tracker = build_local_turn_diff_tracker(Some(&dir))
+            .expect("tracker should be created for cwd");
+
+        fs::write(&file, "hello world\n").expect("file write should succeed");
+
+        with_native_state(|state| {
+            *state = NativeConversationState::default();
+            state.turns.insert(
+                "turn".to_string(),
+                NativeTurnState {
+                    thread_id: "thread".to_string(),
+                    status: "completed".to_string(),
+                    cwd: Some(dir.clone()),
+                    local_diff_tracker: Some(tracker),
+                    ..Default::default()
+                },
+            );
+        });
+
+        refresh_turn_diff_from_local_tracker("turn")
+            .await
+            .expect("local diff refresh should succeed");
+
+        let stored = with_native_state(|state| {
+            state
+                .turns
+                .get("turn")
+                .cloned()
+                .expect("turn state should exist after local diff refresh")
+        });
+        assert!(stored.diff.contains("created.txt"));
+        assert!(stored.diff.contains("+hello world"));
+        assert!(!stored.diff_authoritative);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
