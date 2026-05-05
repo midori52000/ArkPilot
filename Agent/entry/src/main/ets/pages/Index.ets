@@ -237,6 +237,9 @@ struct Index {
   private readonly rightDrawerMinWidth: number = 240;
   private dragStartLeftW: number = 0;
   private dragStartRightW: number = 0;
+  @State private recentWorkspaces: WorkspaceItem[] = [];
+  @State private directoryFilter: string = '';
+  @State private directoryFilterText: string = '使用默认工作区';
   @State private draft: string = '检查当前工作目录，并说明需要我批准的操作。';
   private savedDraft: string = '';
   @State private pendingApproval: CodexApprovalRequest | null = null;
@@ -338,6 +341,19 @@ struct Index {
     this.currentWorkspaceDescription = workspace.description;
   }
 
+  private syncRecentWorkspaces(): void {
+    const filter = this.directoryFilter.trim();
+    if (filter.length === 0) {
+      this.recentWorkspaces = [...this.workspaces].reverse();
+      return;
+    }
+    const filtered = this.workspaces.filter((item: WorkspaceItem) => {
+      const root = this.workspaceRoots.get(item.id) ?? '';
+      return root.trim().length === 0 || root.trim() === filter;
+    });
+    this.recentWorkspaces = [...filtered].reverse();
+  }
+
   private ensureWorkspaceBinding(item: WorkspaceItem): string {
     const existing: string | undefined = this.workspaceIds.get(item.id);
     if (existing !== undefined && existing.trim().length > 0) {
@@ -405,6 +421,7 @@ struct Index {
       `session:${workspaceId.toString()}`
     );
     this.workspaces = [workspace];
+    this.syncRecentWorkspaces();
     this.workspaceIds.set(workspace.id, workspace.workspaceId);
     this.currentWorkspaceTitle = workspace.title;
     this.currentWorkspaceDescription = workspace.description;
@@ -544,6 +561,7 @@ struct Index {
     }
 
     this.workspaces = [...nextWorkspaces];
+    this.syncRecentWorkspaces();
     this.workspaceIds.clear();
     this.workspaceRoots.clear();
     this.workspaceUris.clear();
@@ -629,6 +647,7 @@ struct Index {
       this.workspaceUris.set(restored.id, restored.workspaceUri);
     }
     this.workspaces = restoredWorkspaces;
+    this.syncRecentWorkspaces();
 
     const preferredActiveId: number = snapshot.activeWorkspaceId > 0 ? snapshot.activeWorkspaceId : restoredItems[0].id;
     const matched: WorkspaceItem | undefined = this.workspaces.find((item: WorkspaceItem) => item.id === preferredActiveId);
@@ -668,13 +687,9 @@ struct Index {
 
   private applyWorkspaceDirectorySelection(workspaceRoot: string, workspaceUri: string): void {
     const trimmedWorkspaceRoot: string = workspaceRoot.trim();
-    this.workspaceRoot = trimmedWorkspaceRoot;
-    this.workspaceDraftText = trimmedWorkspaceRoot;
-    this.workspaceRoots.set(this.activeWorkspaceId, trimmedWorkspaceRoot);
-    this.workspaceUris.set(this.activeWorkspaceId, workspaceUri);
-    this.syncWorkspaceSelectionText();
-    this.refreshWorkspaceBindingState();
-    this.persistWorkspaceBindings();
+    this.directoryFilter = trimmedWorkspaceRoot;
+    this.directoryFilterText = trimmedWorkspaceRoot.length > 0 ? trimmedWorkspaceRoot : '使用默认工作区';
+    this.syncRecentWorkspaces();
   }
 
   private syncWorkspaceSelectionText(): void {
@@ -1132,6 +1147,9 @@ struct Index {
     this.activeWorkspaceId = item.id;
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
     this.workspaceDraftText = this.workspaceRoot;
+    this.directoryFilter = this.workspaceRoot;
+    this.directoryFilterText = this.workspaceRoot.length > 0 ? this.workspaceRoot : '使用默认工作区';
+    this.syncRecentWorkspaces();
     this.refreshWorkspaceBindingState();
     this.syncCurrentWorkspaceState();
     this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
@@ -1157,6 +1175,10 @@ struct Index {
   private async openSessionSummary(summary: SessionSummary): Promise<void> {
     const existing: WorkspaceItem | undefined = this.findWorkspaceBySessionId(summary.sessionId);
     if (existing !== undefined) {
+      const summaryRoot: string = summary.workspaceRoot.trim();
+      if (summaryRoot.length > 0) {
+        this.workspaceRoots.set(existing.id, summaryRoot);
+      }
       await this.selectWorkspace(existing);
       return;
     }
@@ -1262,7 +1284,10 @@ struct Index {
         trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
         this.currentModelValue()
       );
-      await this.restoreSessionsFromBackend(session.sessionId);
+      this.directoryFilter = trimmedWorkspaceRoot;
+      this.directoryFilterText = trimmedWorkspaceRoot.length > 0 ? trimmedWorkspaceRoot : '使用默认工作区';
+      this.syncSessionSummariesFromCache(session.sessionId);
+      await this.loadSelectedWorkspaceHistory();
       this.activeSidebarView = 'chat';
       this.draft = `继续处理”${title}”，重点关注当前工作目录。`;
       this.showCreateWorkspaceDialog = false;
@@ -2332,9 +2357,9 @@ struct Index {
           this.panelTitle('会话概况', '')
 
           Column() {
-            this.panelTitle('工作目录', '为空时由 app-server 使用自己的默认 cwd')
+            this.panelTitle('筛选目录', '选择目录以筛选下方会话列表')
 
-            Text(this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText : '未选择目录，当前使用默认工作区')
+            Text(this.directoryFilterText)
               .width('100%')
               .margin({ top: 10 })
               .fontSize(12)
@@ -2344,22 +2369,36 @@ struct Index {
               .padding({ left: 12, right: 12, top: 11, bottom: 11 })
               .copyOption(CopyOptions.LocalDevice)
 
-            Button('选择目录')
-              .height(34)
-              .margin({ top: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#111827')
-              .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                void this.pickWorkspaceDirectory();
-              })
+            Row() {
+              Button('选择目录')
+                .layoutWeight(1)
+                .height(34)
+                .fontSize(12)
+                .backgroundColor('#FFFFFF')
+                .fontColor('#111827')
+                .borderRadius(16)
+                .border({ width: 1, color: '#CBD5E1' })
+                .onClick(() => {
+                  void this.pickWorkspaceDirectory();
+                })
 
-            Text(this.workspaceStatusText)
-              .fontSize(10)
-              .fontColor('#64748B')
-              .margin({ top: 6 })
+              Button('重置')
+                .layoutWeight(1)
+                .height(34)
+                .margin({ left: 8 })
+                .fontSize(12)
+                .backgroundColor('#FFFFFF')
+                .fontColor('#64748B')
+                .borderRadius(16)
+                .border({ width: 1, color: '#CBD5E1' })
+                .onClick(() => {
+                  this.directoryFilter = '';
+                  this.directoryFilterText = '使用默认工作区';
+                  this.syncRecentWorkspaces();
+                })
+            }
+            .width('100%')
+            .margin({ top: 10 })
           }
           .alignItems(HorizontalAlign.Start)
           .width('100%')
@@ -2380,33 +2419,30 @@ struct Index {
               void this.createWorkspace();
             })
 
-          Row() {
-            Text('会话')
+          if (this.recentWorkspaces.length === 0) {
+            Text('当前目录下暂无会话')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#94A3B8')
-
-            Blank()
-              .layoutWeight(1)
-
-            Text(this.workspaces.length.toString())
+              .margin({ top: 12 })
+          } else {
+            Text('当前目录下的所有会话')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#94A3B8')
-          }
-          .width('100%')
-          .margin({ top: 12, bottom: 8 })
+              .margin({ top: 12, bottom: 8 })
 
-          List({ space: 6 }) {
-            ForEach(this.workspaces, (item: WorkspaceItem) => {
-              ListItem() {
-                this.workspaceRow(item)
-              }
-            }, (item: WorkspaceItem) => `${item.id.toString()}:${item.title}`)
+            List({ space: 6 }) {
+              ForEach(this.recentWorkspaces, (item: WorkspaceItem) => {
+                ListItem() {
+                  this.workspaceRow(item)
+                }
+              }, (item: WorkspaceItem) => `${item.id.toString()}:${item.title}`)
+            }
+            .layoutWeight(1)
+            .width('100%')
+            .scrollBar(BarState.Off)
           }
-          .layoutWeight(1)
-          .width('100%')
-          .scrollBar(BarState.Off)
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -2698,7 +2734,30 @@ struct Index {
   @Builder
   private centerPanel() {
     Column() {
-      if (this.activeSidebarView === 'chat') {
+      if (this.activeSidebarView === 'chat' && this.recentWorkspaces.length === 0) {
+        Row() {
+          this.leftDrawerToggle()
+          Blank()
+            .layoutWeight(1)
+          this.rightDrawerToggle()
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Column() {
+          Text('当前目录下暂无会话')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(16)
+            .fontColor('#94A3B8')
+          Text(this.directoryFilterText)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(12)
+            .fontColor('#CBD5E1')
+            .margin({ top: 8 })
+        }
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.activeSidebarView === 'chat') {
         this.chatCenterView()
       } else if (this.activeSidebarView === 'sessions') {
         this.sessionsCenterView()
