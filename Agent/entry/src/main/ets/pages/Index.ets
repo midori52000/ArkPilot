@@ -91,13 +91,19 @@ class ChatMessage {
   role: string;
   content: string;
   timestamp: string;
+  itemType?: string;
+  status?: string;
+  metadata?: Record<string, Object>;
 
-  constructor(id: string, author: string, role: string, content: string, timestamp: string) {
+  constructor(id: string, author: string, role: string, content: string, timestamp: string, itemType?: string, status?: string, metadata?: Record<string, Object>) {
     this.id = id;
     this.author = author;
     this.role = role;
     this.content = content;
     this.timestamp = timestamp;
+    this.itemType = itemType;
+    this.status = status;
+    this.metadata = metadata;
   }
 }
 
@@ -756,7 +762,7 @@ struct Index {
   private applyBackendResult(result: CodexTurnResult): void {
     this.syncWorkspaceWithRemoteThreadId(result.threadId);
     this.messages = result.messages.map((item) => {
-      return new ChatMessage(item.messageId, item.author, item.role, item.content, item.timestamp);
+      return new ChatMessage(item.messageId, item.author, item.role, item.content, item.timestamp, item.itemType, item.status, item.metadata);
     });
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
@@ -1084,33 +1090,96 @@ struct Index {
   }
 
   private messageBackground(role: string): string {
-    if (role === 'assistant') {
-      return '#FFFFFF';
+    switch (role) {
+      case 'assistant':
+      case 'agent':
+        return '#FFFFFF';
+      case 'system':
+        return '#F8FAFC';
+      case 'reasoning':
+        return '#FFFBEB';
+      case 'command':
+        return '#F0FDF4';
+      case 'tool':
+        return '#EFF6FF';
+      case 'file':
+        return '#FDF4FF';
+      case 'search':
+        return '#ECFDF5';
+      case 'plan':
+        return '#FFF7ED';
+      case 'image':
+        return '#FDF2F8';
+      case 'hook':
+        return '#FEF3C7';
+      case 'review':
+        return '#FEF08A';
+      case 'user':
+      default:
+        return '#F6F3FF';
     }
-    if (role === 'system') {
-      return '#F8FAFC';
-    }
-    return '#F6F3FF';
   }
 
   private messageBorder(role: string): string {
-    if (role === 'assistant') {
-      return '#DBEAFE';
+    switch (role) {
+      case 'assistant':
+      case 'agent':
+        return '#DBEAFE';
+      case 'system':
+        return '#CBD5E1';
+      case 'reasoning':
+        return '#FEF3C7';
+      case 'command':
+        return '#BBF7D0';
+      case 'tool':
+        return '#BFDBFE';
+      case 'file':
+        return '#E9D5FF';
+      case 'search':
+        return '#A7F3D0';
+      case 'plan':
+        return '#FED7AA';
+      case 'image':
+        return '#FBCFE8';
+      case 'hook':
+        return '#FCD34D';
+      case 'review':
+        return '#FACC15';
+      case 'user':
+      default:
+        return '#DDD6FE';
     }
-    if (role === 'system') {
-      return '#CBD5E1';
-    }
-    return '#DDD6FE';
   }
 
   private authorColor(role: string): string {
-    if (role === 'assistant') {
-      return '#1D4ED8';
+    switch (role) {
+      case 'assistant':
+      case 'agent':
+        return '#1D4ED8';
+      case 'system':
+        return '#475569';
+      case 'reasoning':
+        return '#D97706';
+      case 'command':
+        return '#059669';
+      case 'tool':
+        return '#2563EB';
+      case 'file':
+        return '#9333EA';
+      case 'search':
+        return '#10B981';
+      case 'plan':
+        return '#EA580C';
+      case 'image':
+        return '#DB2777';
+      case 'hook':
+        return '#B45309';
+      case 'review':
+        return '#A16207';
+      case 'user':
+      default:
+        return '#7C3AED';
     }
-    if (role === 'system') {
-      return '#475569';
-    }
-    return '#7C3AED';
   }
 
   private diffBackground(kind: string): string {
@@ -1486,6 +1555,10 @@ struct Index {
   private messageCard(item: ChatMessage) {
     Column() {
       Row() {
+        Text(this.messageIcon(item.itemType))
+          .fontSize(12)
+          .margin({ right: 4 })
+
         Text(item.author)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
@@ -1497,6 +1570,16 @@ struct Index {
           .fontSize(10)
           .fontColor('#94A3B8')
           .margin({ left: 8 })
+
+        if (item.status && item.status !== 'completed') {
+          Text(this.statusLabel(item.status))
+            .fontSize(9)
+            .fontColor(this.statusColor(item.status))
+            .backgroundColor(this.statusBgColor(item.status))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(8)
+            .margin({ left: 8 })
+        }
       }
       .width('100%')
 
@@ -1504,18 +1587,96 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .lineHeight(19)
-        .fontColor('#334155')
+        .fontColor(this.messageContentColor(item.itemType))
         .margin({ top: 6 })
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(12)
-    .backgroundColor(this.messageBackground(item.role))
+    .backgroundColor(this.messageBackground(item.itemType ?? item.role))
     .border({
       width: 1,
-      color: this.messageBorder(item.role)
+      color: this.messageBorder(item.itemType ?? item.role)
     })
     .borderRadius(16)
+  }
+
+  private messageIcon(itemType?: string): string {
+    switch (itemType) {
+      case 'reasoning':
+        return '🧠';
+      case 'command':
+        return '⚡';
+      case 'tool':
+        return '🔧';
+      case 'file':
+        return '📄';
+      case 'search':
+        return '🔍';
+      case 'plan':
+        return '📋';
+      case 'image':
+        return '🖼️';
+      case 'hook':
+        return '🪝';
+      case 'review':
+        return '👁️';
+      case 'system':
+        return '⚙️';
+      default:
+        return '';
+    }
+  }
+
+  private statusLabel(status: string): string {
+    switch (status) {
+      case 'inProgress':
+        return '进行中';
+      case 'failed':
+        return '失败';
+      case 'declined':
+        return '已拒绝';
+      default:
+        return status;
+    }
+  }
+
+  private statusColor(status: string): string {
+    switch (status) {
+      case 'inProgress':
+        return '#0369A1';
+      case 'failed':
+        return '#DC2626';
+      case 'declined':
+        return '#D97706';
+      default:
+        return '#64748B';
+    }
+  }
+
+  private statusBgColor(status: string): string {
+    switch (status) {
+      case 'inProgress':
+        return '#E0F2FE';
+      case 'failed':
+        return '#FEE2E2';
+      case 'declined':
+        return '#FEF3C7';
+      default:
+        return '#F1F5F9';
+    }
+  }
+
+  private messageContentColor(itemType?: string): string {
+    switch (itemType) {
+      case 'reasoning':
+        return '#6B7280';
+      case 'command':
+      case 'tool':
+        return '#1E40AF';
+      default:
+        return '#334155';
+    }
   }
 
   @Builder

@@ -150,7 +150,7 @@ struct NativeTurnState {
     local_diff_tracker: Option<Arc<AsyncMutex<TurnDiffTracker>>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct NativeMessage {
     message_id: String,
@@ -158,6 +158,12 @@ struct NativeMessage {
     role: String,
     content: String,
     timestamp: String,
+    #[serde(default)]
+    item_type: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1110,7 +1116,7 @@ fn render_config_toml(settings: &ProviderSettings) -> String {
     }
 
     if !settings.model.trim().is_empty() {
-        lines.insert(1, format!("model = {}", toml_string(&settings.model)));
+        lines.insert(3, format!("model = {}", toml_string(&settings.model)));
     }
 
     lines.join("\n") + "\n"
@@ -2841,6 +2847,12 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "执行中".to_string();
                 push_turn_summary(turn, describe_started_item(&payload.item));
+                upsert_item_started_message(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item,
+                );
             });
         }
         ServerNotification::AgentMessageDelta(payload) => {
@@ -2894,10 +2906,8 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
-                push_turn_summary(
-                    turn,
-                    format!("推理摘要: {}", compact_text(&payload.delta, 160)),
-                );
+                push_turn_summary(turn, format!("推理摘要: {}", compact_text(&payload.delta, 160)));
+                append_reasoning_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
             });
         }
         ServerNotification::ReasoningTextDelta(payload) => {
@@ -2913,6 +2923,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
                 push_turn_summary(turn, format!("推理: {}", compact_text(&payload.delta, 160)));
+                append_reasoning_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
             });
         }
         ServerNotification::CommandExecutionOutputDelta(payload) => {
@@ -2992,6 +3003,12 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     append_turn_diff(turn, &diff);
                     turn.diff_authoritative = true;
                 }
+                upsert_item_completed_message(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item,
+                );
             });
         }
         ServerNotification::TurnCompleted(payload) => {
@@ -3396,6 +3413,54 @@ fn append_assistant_delta(
                 role: "assistant".to_string(),
                 content: delta.to_string(),
                 timestamp: current_timestamp_string(),
+                item_type: None,
+                status: None,
+                metadata: None,
+            });
+        }
+        thread.messages.clone()
+    };
+
+    if let Some(turn) = state.turns.get_mut(turn_id) {
+        turn.messages = thread_messages;
+    }
+}
+
+fn append_reasoning_delta(
+    state: &mut NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+    item_id: &str,
+    delta: &str,
+) {
+    let thread_messages = {
+        let thread = state
+            .threads
+            .entry(thread_id.to_string())
+            .or_insert_with(|| NativeThreadState {
+                remote_thread_id: thread_id.to_string(),
+                cwd: None,
+                messages: Vec::new(),
+            });
+        let target_message_id = format!("{turn_id}:{item_id}");
+        if let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.message_id == target_message_id)
+        {
+            // 如果消息已存在，追加增量内容
+            message.content.push_str(delta);
+        } else {
+            // 如果消息不存在，创建新的推理消息
+            thread.messages.push(NativeMessage {
+                message_id: target_message_id,
+                author: "思考过程".to_string(),
+                role: "reasoning".to_string(),
+                content: delta.to_string(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("reasoning".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: None,
             });
         }
         thread.messages.clone()
@@ -3436,6 +3501,9 @@ fn sync_thread_from_completed_item(
                     role: "assistant".to_string(),
                     content: text.clone(),
                     timestamp: current_timestamp_string(),
+                    item_type: None,
+                    status: None,
+                    metadata: None,
                 });
             }
             thread.messages.clone()
@@ -3859,6 +3927,9 @@ fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<Nat
                         role: "user".to_string(),
                         content: text,
                         timestamp: current_timestamp_string(),
+                        item_type: None,
+                        status: None,
+                        metadata: None,
                     });
                 }
                 codex_app_server_protocol::ThreadItem::AgentMessage { id, text, .. } => {
@@ -3868,13 +3939,675 @@ fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<Nat
                         role: "assistant".to_string(),
                         content: text.clone(),
                         timestamp: current_timestamp_string(),
+                        item_type: Some("agent".to_string()),
+                        status: Some("completed".to_string()),
+                        metadata: None,
                     });
                 }
-                _ => {}
+                item => {
+                    if let Some(msg) = thread_item_to_message(item) {
+                        messages.push(msg);
+                    }
+                }
             }
         }
     }
     messages
+}
+
+fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Option<NativeMessage> {
+    match item {
+        codex_app_server_protocol::ThreadItem::Plan { id, text } => {
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "计划".to_string(),
+                role: "plan".to_string(),
+                content: text.clone(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("plan".to_string()),
+                status: Some("completed".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::Reasoning { id, summary, content, .. } => {
+            let text = if !summary.is_empty() {
+                summary.join("\n")
+            } else {
+                content.join("\n")
+            };
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "思考过程".to_string(),
+                role: "reasoning".to_string(),
+                content: text,
+                timestamp: current_timestamp_string(),
+                item_type: Some("reasoning".to_string()),
+                status: Some("completed".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::CommandExecution {
+            id,
+            command,
+            cwd,
+            status,
+            aggregated_output,
+            exit_code,
+            duration_ms,
+            ..
+        } => {
+            let status_str = match status {
+                codex_app_server_protocol::CommandExecutionStatus::InProgress => "inProgress",
+                codex_app_server_protocol::CommandExecutionStatus::Completed => "completed",
+                codex_app_server_protocol::CommandExecutionStatus::Failed => "failed",
+                codex_app_server_protocol::CommandExecutionStatus::Declined => "declined",
+            };
+            let mut content_parts = vec![command.clone()];
+            if let Some(output) = aggregated_output {
+                if !output.trim().is_empty() {
+                    content_parts.push("--- 输出 ---".to_string());
+                    content_parts.push(output.clone());
+                }
+            }
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "命令执行".to_string(),
+                role: "command".to_string(),
+                content: content_parts.join("\n"),
+                timestamp: current_timestamp_string(),
+                item_type: Some("command".to_string()),
+                status: Some(status_str.to_string()),
+                metadata: Some(serde_json::json!({
+                    "command": command,
+                    "cwd": cwd.display().to_string(),
+                    "exitCode": exit_code,
+                    "durationMs": duration_ms,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::FileChange { id, changes, status, .. } => {
+            let status_str = match status {
+                codex_app_server_protocol::PatchApplyStatus::InProgress => "inProgress",
+                codex_app_server_protocol::PatchApplyStatus::Completed => "completed",
+                codex_app_server_protocol::PatchApplyStatus::Failed => "failed",
+                codex_app_server_protocol::PatchApplyStatus::Declined => "declined",
+            };
+            let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "文件变更".to_string(),
+                role: "file".to_string(),
+                content: format!("修改了 {} 个文件:\n{}", changes.len(), paths.join("\n")),
+                timestamp: current_timestamp_string(),
+                item_type: Some("file".to_string()),
+                status: Some(status_str.to_string()),
+                metadata: Some(serde_json::json!({
+                    "files": paths,
+                    "changeCount": changes.len(),
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::McpToolCall {
+            id,
+            server,
+            tool,
+            status,
+            arguments,
+            result,
+            error,
+            duration_ms,
+            ..
+        } => {
+            let status_str = match status {
+                codex_app_server_protocol::McpToolCallStatus::InProgress => "inProgress",
+                codex_app_server_protocol::McpToolCallStatus::Completed => "completed",
+                codex_app_server_protocol::McpToolCallStatus::Failed => "failed",
+            };
+            let mut content_parts = vec![format!("调用 {}/{}", server, tool)];
+            if let Some(err) = error {
+                content_parts.push(format!("错误: {}", err.message));
+            }
+            if let Some(res) = result {
+                let result_text: String = res.content
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+                if !result_text.trim().is_empty() {
+                    content_parts.push("--- 结果 ---".to_string());
+                    content_parts.push(result_text);
+                }
+            }
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "MCP 工具".to_string(),
+                role: "tool".to_string(),
+                content: content_parts.join("\n"),
+                timestamp: current_timestamp_string(),
+                item_type: Some("tool".to_string()),
+                status: Some(status_str.to_string()),
+                metadata: Some(serde_json::json!({
+                    "server": server,
+                    "tool": tool,
+                    "arguments": arguments,
+                    "durationMs": duration_ms,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::WebSearch { id, query, .. } => {
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "网络搜索".to_string(),
+                role: "search".to_string(),
+                content: format!("搜索: {}", query),
+                timestamp: current_timestamp_string(),
+                item_type: Some("search".to_string()),
+                status: Some("completed".to_string()),
+                metadata: Some(serde_json::json!({
+                    "query": query,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::DynamicToolCall {
+            id,
+            tool,
+            status,
+            arguments,
+            content_items,
+            ..
+        } => {
+            let status_str = match status {
+                codex_app_server_protocol::DynamicToolCallStatus::InProgress => "inProgress",
+                codex_app_server_protocol::DynamicToolCallStatus::Completed => "completed",
+                codex_app_server_protocol::DynamicToolCallStatus::Failed => "failed",
+            };
+            let mut content_parts = vec![format!("工具调用: {}", tool)];
+            if let Some(items) = content_items {
+                for item in items {
+                    match item {
+                        codex_app_server_protocol::DynamicToolCallOutputContentItem::InputText { text } => {
+                            content_parts.push(text.clone());
+                        }
+                        codex_app_server_protocol::DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                            content_parts.push(format!("[图片: {}]", image_url));
+                        }
+                    }
+                }
+            }
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "动态工具".to_string(),
+                role: "tool".to_string(),
+                content: content_parts.join("\n"),
+                timestamp: current_timestamp_string(),
+                item_type: Some("tool".to_string()),
+                status: Some(status_str.to_string()),
+                metadata: Some(serde_json::json!({
+                    "tool": tool,
+                    "arguments": arguments,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::ImageGeneration {
+            id,
+            status,
+            revised_prompt,
+            saved_path,
+            ..
+        } => {
+            let mut content_parts = vec![format!("图像生成状态: {}", status)];
+            if let Some(prompt) = revised_prompt {
+                content_parts.push(format!("Prompt: {}", prompt));
+            }
+            if let Some(path) = saved_path {
+                content_parts.push(format!("保存路径: {}", path));
+            }
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "图像生成".to_string(),
+                role: "image".to_string(),
+                content: content_parts.join("\n"),
+                timestamp: current_timestamp_string(),
+                item_type: Some("image".to_string()),
+                status: Some(status.clone()),
+                metadata: Some(serde_json::json!({
+                    "savedPath": saved_path,
+                    "revisedPrompt": revised_prompt,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall {
+            id,
+            tool,
+            status,
+            sender_thread_id,
+            receiver_thread_ids,
+            prompt,
+            model,
+            reasoning_effort,
+            agents_states,
+        } => {
+            let status_str = match status {
+                codex_app_server_protocol::CollabAgentToolCallStatus::InProgress => "inProgress",
+                codex_app_server_protocol::CollabAgentToolCallStatus::Completed => "completed",
+                codex_app_server_protocol::CollabAgentToolCallStatus::Failed => "failed",
+            };
+            let tool_name = match tool {
+                codex_app_server_protocol::CollabAgentTool::SpawnAgent => "创建子代理",
+                codex_app_server_protocol::CollabAgentTool::SendInput => "发送输入",
+                codex_app_server_protocol::CollabAgentTool::ResumeAgent => "恢复代理",
+                codex_app_server_protocol::CollabAgentTool::Wait => "等待",
+                codex_app_server_protocol::CollabAgentTool::CloseAgent => "关闭代理",
+            };
+            let mut content_parts = vec![format!("协作工具: {}", tool_name)];
+            if let Some(p) = prompt {
+                if !p.is_empty() {
+                    content_parts.push(format!("提示词: {}", p));
+                }
+            }
+            if let Some(m) = model {
+                content_parts.push(format!("模型: {}", m));
+            }
+            if !receiver_thread_ids.is_empty() {
+                content_parts.push(format!("接收线程: {}", receiver_thread_ids.join(", ")));
+            }
+            // 显示各代理的状态
+            for (agent_id, state) in agents_states {
+                let state_str = match state.status {
+                    codex_app_server_protocol::CollabAgentStatus::PendingInit => "等待初始化",
+                    codex_app_server_protocol::CollabAgentStatus::Running => "运行中",
+                    codex_app_server_protocol::CollabAgentStatus::Interrupted => "已中断",
+                    codex_app_server_protocol::CollabAgentStatus::Completed => "已完成",
+                    codex_app_server_protocol::CollabAgentStatus::Errored => "出错",
+                    codex_app_server_protocol::CollabAgentStatus::Shutdown => "已关闭",
+                    codex_app_server_protocol::CollabAgentStatus::NotFound => "未找到",
+                };
+                content_parts.push(format!("代理 {}: {}", agent_id, state_str));
+                if let Some(msg) = &state.message {
+                    content_parts.push(format!("  消息: {}", msg));
+                }
+            }
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "协作工具".to_string(),
+                role: "tool".to_string(),
+                content: content_parts.join("\n"),
+                timestamp: current_timestamp_string(),
+                item_type: Some("tool".to_string()),
+                status: Some(status_str.to_string()),
+                metadata: Some(serde_json::json!({
+                    "tool": format!("{:?}", tool),
+                    "senderThreadId": sender_thread_id,
+                    "receiverThreadIds": receiver_thread_ids,
+                    "model": model,
+                    "reasoningEffort": reasoning_effort.as_ref().map(|e| format!("{:?}", e)),
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::HookPrompt { id, fragments } => {
+            let text: String = fragments.iter().map(|f| f.text.as_str()).collect::<Vec<&str>>().join("");
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "Hook提示".to_string(),
+                role: "hook".to_string(),
+                content: if text.is_empty() { "Hook提示已触发".to_string() } else { text },
+                timestamp: current_timestamp_string(),
+                item_type: Some("hook".to_string()),
+                status: Some("completed".to_string()),
+                metadata: Some(serde_json::json!({
+                    "fragmentCount": fragments.len(),
+                    "hookRunIds": fragments.iter().map(|f| f.hook_run_id.clone()).collect::<Vec<String>>(),
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::ImageView { id, path } => {
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "图像查看".to_string(),
+                role: "image".to_string(),
+                content: format!("查看图片: {}", path),
+                timestamp: current_timestamp_string(),
+                item_type: Some("image".to_string()),
+                status: Some("completed".to_string()),
+                metadata: Some(serde_json::json!({
+                    "path": path,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { id, review } => {
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "审查模式".to_string(),
+                role: "review".to_string(),
+                content: format!("进入审查模式\n{}", review),
+                timestamp: current_timestamp_string(),
+                item_type: Some("review".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "review": review,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::ExitedReviewMode { id, review } => {
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "审查模式".to_string(),
+                role: "review".to_string(),
+                content: format!("退出审查模式\n{}", review),
+                timestamp: current_timestamp_string(),
+                item_type: Some("review".to_string()),
+                status: Some("completed".to_string()),
+                metadata: Some(serde_json::json!({
+                    "review": review,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::ContextCompaction { id } => {
+            Some(NativeMessage {
+                message_id: id.clone(),
+                author: "上下文压缩".to_string(),
+                role: "system".to_string(),
+                content: "上下文已压缩以释放空间".to_string(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("system".to_string()),
+                status: Some("completed".to_string()),
+                metadata: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn thread_item_id(item: &codex_app_server_protocol::ThreadItem) -> Option<String> {
+    match item {
+        codex_app_server_protocol::ThreadItem::UserMessage { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::HookPrompt { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::AgentMessage { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::Plan { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::Reasoning { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::CommandExecution { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::FileChange { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::McpToolCall { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::DynamicToolCall { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::WebSearch { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::ImageView { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::ImageGeneration { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::ExitedReviewMode { id, .. } => Some(id.clone()),
+        codex_app_server_protocol::ThreadItem::ContextCompaction { id, .. } => Some(id.clone()),
+    }
+}
+
+fn upsert_item_started_message(
+    state: &mut NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+    item: &codex_app_server_protocol::ThreadItem,
+) {
+    let item_id = match thread_item_id(item) {
+        Some(id) => id,
+        None => return,
+    };
+    let message_id = format!("{}:{}", turn_id, item_id);
+
+    if let Some(msg) = thread_item_started_to_message(item, &message_id) {
+        let thread = state
+            .threads
+            .entry(thread_id.to_string())
+            .or_insert_with(|| NativeThreadState {
+                remote_thread_id: thread_id.to_string(),
+                cwd: None,
+                messages: Vec::new(),
+            });
+
+        if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
+            *existing = msg.clone();
+        } else {
+            thread.messages.push(msg.clone());
+        }
+
+        if let Some(turn) = state.turns.get_mut(turn_id) {
+            turn.messages = thread.messages.clone();
+        }
+    }
+}
+
+fn upsert_item_completed_message(
+    state: &mut NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+    item: &codex_app_server_protocol::ThreadItem,
+) {
+    let item_id = match thread_item_id(item) {
+        Some(id) => id,
+        None => return,
+    };
+    let message_id = format!("{}:{}", turn_id, item_id);
+
+    if let Some(msg) = thread_item_to_message(item) {
+        let thread = state
+            .threads
+            .entry(thread_id.to_string())
+            .or_insert_with(|| NativeThreadState {
+                remote_thread_id: thread_id.to_string(),
+                cwd: None,
+                messages: Vec::new(),
+            });
+
+        // 检查是否是 Reasoning 消息，且已有内容
+        let is_reasoning = matches!(item, codex_app_server_protocol::ThreadItem::Reasoning { .. });
+
+        if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
+            // 对于 Reasoning 消息，如果已有内容，保留内容，只更新状态
+            if is_reasoning && !existing.content.is_empty() && existing.content != "正在思考..." {
+                existing.status = Some("completed".to_string());
+            } else {
+                let updated_msg = NativeMessage {
+                    message_id: message_id.clone(),
+                    ..msg
+                };
+                *existing = updated_msg;
+            }
+        } else {
+            let updated_msg = NativeMessage {
+                message_id: message_id.clone(),
+                ..msg
+            };
+            thread.messages.push(updated_msg);
+        }
+
+        if let Some(turn) = state.turns.get_mut(turn_id) {
+            turn.messages = thread.messages.clone();
+        }
+    }
+}
+
+fn thread_item_started_to_message(
+    item: &codex_app_server_protocol::ThreadItem,
+    message_id: &str,
+) -> Option<NativeMessage> {
+    match item {
+        codex_app_server_protocol::ThreadItem::Plan { .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "计划".to_string(),
+                role: "plan".to_string(),
+                content: "正在生成计划...".to_string(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("plan".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::Reasoning { .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "思考过程".to_string(),
+                role: "reasoning".to_string(),
+                content: "正在思考...".to_string(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("reasoning".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::CommandExecution { command, cwd, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "命令执行".to_string(),
+                role: "command".to_string(),
+                content: format!("正在执行: {}", command),
+                timestamp: current_timestamp_string(),
+                item_type: Some("command".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "command": command,
+                    "cwd": cwd.display().to_string(),
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::FileChange { changes, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "文件变更".to_string(),
+                role: "file".to_string(),
+                content: format!("正在修改 {} 个文件...", changes.len()),
+                timestamp: current_timestamp_string(),
+                item_type: Some("file".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::McpToolCall { server, tool, arguments, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "MCP 工具".to_string(),
+                role: "tool".to_string(),
+                content: format!("正在调用 {}/{}", server, tool),
+                timestamp: current_timestamp_string(),
+                item_type: Some("tool".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "server": server,
+                    "tool": tool,
+                    "arguments": arguments,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::WebSearch { query, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "网络搜索".to_string(),
+                role: "search".to_string(),
+                content: format!("正在搜索: {}", query),
+                timestamp: current_timestamp_string(),
+                item_type: Some("search".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "query": query,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "动态工具".to_string(),
+                role: "tool".to_string(),
+                content: format!("正在调用工具: {}", tool),
+                timestamp: current_timestamp_string(),
+                item_type: Some("tool".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::ImageGeneration { .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "图像生成".to_string(),
+                role: "image".to_string(),
+                content: "正在生成图像...".to_string(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("image".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: None,
+            })
+        }
+        codex_app_server_protocol::ThreadItem::CollabAgentToolCall { tool, prompt, model, .. } => {
+            let tool_name = match tool {
+                codex_app_server_protocol::CollabAgentTool::SpawnAgent => "创建子代理",
+                codex_app_server_protocol::CollabAgentTool::SendInput => "发送输入",
+                codex_app_server_protocol::CollabAgentTool::ResumeAgent => "恢复代理",
+                codex_app_server_protocol::CollabAgentTool::Wait => "等待",
+                codex_app_server_protocol::CollabAgentTool::CloseAgent => "关闭代理",
+            };
+            let mut content_parts = vec![format!("正在执行: {}", tool_name)];
+            if let Some(p) = prompt {
+                if !p.is_empty() {
+                    content_parts.push(format!("提示词: {}", p));
+                }
+            }
+            if let Some(m) = model {
+                content_parts.push(format!("模型: {}", m));
+            }
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "协作工具".to_string(),
+                role: "tool".to_string(),
+                content: content_parts.join("\n"),
+                timestamp: current_timestamp_string(),
+                item_type: Some("tool".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "tool": format!("{:?}", tool),
+                    "model": model,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::HookPrompt { fragments, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "Hook提示".to_string(),
+                role: "hook".to_string(),
+                content: "Hook提示正在处理...".to_string(),
+                timestamp: current_timestamp_string(),
+                item_type: Some("hook".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "fragmentCount": fragments.len(),
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::ImageView { path, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "图像查看".to_string(),
+                role: "image".to_string(),
+                content: format!("正在查看图片: {}", path),
+                timestamp: current_timestamp_string(),
+                item_type: Some("image".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "path": path,
+                })),
+            })
+        }
+        codex_app_server_protocol::ThreadItem::EnteredReviewMode { review, .. } => {
+            Some(NativeMessage {
+                message_id: message_id.to_string(),
+                author: "审查模式".to_string(),
+                role: "review".to_string(),
+                content: format!("进入审查模式\n{}", review),
+                timestamp: current_timestamp_string(),
+                item_type: Some("review".to_string()),
+                status: Some("inProgress".to_string()),
+                metadata: Some(serde_json::json!({
+                    "review": review,
+                })),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn map_turn_status(status: &TurnStatus) -> &'static str {
@@ -3922,6 +4655,7 @@ mod tests {
         assert!(config.contains("model = \"test-model\""));
         assert!(config.contains("base_url = \"https://example.com/v1\""));
         assert!(config.contains("experimental_bearer_token = \"secret\""));
+        assert!(config.contains("experimental_use_freeform_apply_patch = true"));
     }
 
     #[test]
