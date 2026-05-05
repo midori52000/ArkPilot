@@ -2329,21 +2329,45 @@ struct Index {
 
       if (this.activeSidebarView === 'chat') {
         Column() {
-          this.panelTitle('Chat 上下文', '查看当前会话、供应商与模型状态')
+          this.panelTitle('会话概况', '')
 
-          Button(this.connectionButtonLabel())
-            .height(34)
-            .margin({ top: 10 })
-            .fontSize(12)
-            .backgroundColor('#111827')
-            .fontColor('#FFFFFF')
-            .borderRadius(16)
-            .onClick(() => {
-              void this.connectOrDisconnect();
-            })
+          Column() {
+            this.panelTitle('工作目录', '为空时由 app-server 使用自己的默认 cwd')
 
-          this.infoRow('供应商', this.providerName)
-          this.infoRow('当前模型', this.manualModel.length > 0 ? this.manualModel : '未设置')
+            Text(this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText : '未选择目录，当前使用默认工作区')
+              .width('100%')
+              .margin({ top: 10 })
+              .fontSize(12)
+              .fontColor('#111827')
+              .backgroundColor('#FFFFFF')
+              .borderRadius(14)
+              .padding({ left: 12, right: 12, top: 11, bottom: 11 })
+              .copyOption(CopyOptions.LocalDevice)
+
+            Button('选择目录')
+              .height(34)
+              .margin({ top: 10 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .fontColor('#111827')
+              .borderRadius(16)
+              .border({ width: 1, color: '#CBD5E1' })
+              .onClick(() => {
+                void this.pickWorkspaceDirectory();
+              })
+
+            Text(this.workspaceStatusText)
+              .fontSize(10)
+              .fontColor('#64748B')
+              .margin({ top: 6 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(12)
+          .margin({ top: 10 })
+          .backgroundColor('#F8FAFC')
+          .border({ width: 1, color: '#E2E8F0' })
+          .borderRadius(16)
 
           Button('新建会话')
             .height(34)
@@ -2383,112 +2407,6 @@ struct Index {
           .layoutWeight(1)
           .width('100%')
           .scrollBar(BarState.Off)
-
-          Column() {
-            this.panelTitle('工作目录', '为空时由 app-server 使用自己的默认 cwd')
-
-            Text(this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText : '未选择目录，当前使用默认工作区')
-              .width('100%')
-              .margin({ top: 10 })
-              .fontSize(12)
-              .fontColor('#111827')
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .padding({ left: 12, right: 12, top: 11, bottom: 11 })
-              .copyOption(CopyOptions.LocalDevice)
-
-            Button('选择目录')
-              .height(34)
-              .margin({ top: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#111827')
-              .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                void this.pickWorkspaceDirectory();
-              })
-
-            Text(this.workspaceSelectionText)
-              .fontSize(10)
-              .fontColor('#64748B')
-              .margin({ top: 8 })
-
-            Text(this.workspaceStatusText)
-              .fontSize(10)
-              .fontColor('#64748B')
-              .margin({ top: 6 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(12)
-          .margin({ top: 10 })
-          .backgroundColor('#F8FAFC')
-          .border({ width: 1, color: '#E2E8F0' })
-          .borderRadius(16)
-
-          Column() {
-            this.panelTitle('Provider 调试', '临时入口：直接修改 base URL、API Key 和 model')
-
-            TextInput({ text: this.providerBaseUrl, placeholder: 'http://127.0.0.1:8317/v1' })
-              .width('100%')
-              .height(38)
-              .margin({ top: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .padding({ left: 12, right: 12 })
-              .onChange((value: string) => {
-                this.providerBaseUrl = value;
-              })
-
-            TextInput({ text: this.providerApiKey, placeholder: 'API key' })
-              .width('100%')
-              .height(38)
-              .margin({ top: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .padding({ left: 12, right: 12 })
-              .onChange((value: string) => {
-                this.providerApiKey = value;
-              })
-
-            TextInput({ text: this.manualModel, placeholder: 'gpt-5.4' })
-              .width('100%')
-              .height(38)
-              .margin({ top: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .padding({ left: 12, right: 12 })
-              .onChange((value: string) => {
-                this.manualModel = value;
-              })
-
-            Button(this.providerButtonLabel())
-              .height(34)
-              .margin({ top: 10 })
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(16)
-              .onClick(() => {
-                void this.saveProviderConfig();
-              })
-
-            Text(this.providerStatusText)
-              .fontSize(10)
-              .fontColor('#64748B')
-              .margin({ top: 8 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(12)
-          .margin({ top: 10 })
-          .backgroundColor('#F8FAFC')
-          .border({ width: 1, color: '#E2E8F0' })
-          .borderRadius(16)
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
