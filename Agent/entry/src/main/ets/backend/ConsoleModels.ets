@@ -281,6 +281,7 @@ export class McpServerRecord {
   argsText: string;
   url: string;
   envText: string;
+  httpHeadersText: string;
   toolCount: number;
   resourceCount: number;
   healthStatus: McpHealthStatus;
@@ -298,6 +299,7 @@ export class McpServerRecord {
     argsText: string,
     url: string,
     envText: string,
+    httpHeadersText: string,
     toolCount: number,
     resourceCount: number,
     healthStatus: McpHealthStatus,
@@ -314,6 +316,7 @@ export class McpServerRecord {
     this.argsText = argsText;
     this.url = url;
     this.envText = envText;
+    this.httpHeadersText = httpHeadersText;
     this.toolCount = toolCount;
     this.resourceCount = resourceCount;
     this.healthStatus = healthStatus;

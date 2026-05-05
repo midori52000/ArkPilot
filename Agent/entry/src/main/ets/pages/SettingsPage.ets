@@ -1,7 +1,7 @@
 import router from '@ohos.router';
 import { McpServerRecord, SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat } from '../backend/ConsoleModels';
 import { codexBackend } from '../backend/CodexBackend';
-import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult, ChatProbeResult } from '../apim/ApiTypes';
+import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult, ChatProbeResult, ApiValidationResult } from '../apim/ApiTypes';
 import { apiManagementVM } from '../apim/ApiManagementViewModel';
 import { InstalledSkill, SkillRepo, SkillBackupEntry } from '../skills/SkillTypes';
 import { skillsVM } from '../skills/SkillsViewModel';
@@ -105,12 +105,14 @@ struct SettingsPage {
   @State private mcpArgsDraft: string = '[]';
   @State private mcpUrlDraft: string = '';
   @State private mcpEnvDraft: string = '{}';
+  @State private mcpHttpHeadersDraft: string = '{}';
   @State private mcpEnabledDraft: boolean = true;
   @State private mcpStatusText: string = '等待 MCP backend 加载状态。';
   @State private mcpNewServerName: string = '';
   @State private showMcpAddDialog: boolean = false;
   @State private showMcpDeleteDialog: boolean = false;
   @State private pendingDeleteMcpName: string = '';
+  @State private mcpJsonPasteInput: string = '';
 
   @State private installedSkills: InstalledSkill[] = [];
   @State private skillRepos: SkillRepo[] = [];
@@ -125,6 +127,8 @@ struct SettingsPage {
   @State private showSkillDeleteDialog: boolean = false;
   @State private showSkillDetailDialog: boolean = false;
   @State private selectedSkillDetail: InstalledSkill | null = null;
+  @State private showValidationDialog: boolean = false;
+  @State private validationResult: ApiValidationResult | null = null;
 
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private prompts: PromptRecord[] = [];
@@ -216,6 +220,7 @@ struct SettingsPage {
     this.mcpArgsDraft = server.argsText.trim().length > 0 ? server.argsText : '[]';
     this.mcpUrlDraft = server.url;
     this.mcpEnvDraft = server.envText.trim().length > 0 ? server.envText : '{}';
+    this.mcpHttpHeadersDraft = server.httpHeadersText.trim().length > 0 ? server.httpHeadersText : '{}';
     this.mcpEnabledDraft = server.enabled;
   }
 
@@ -367,6 +372,15 @@ struct SettingsPage {
         this.promptsStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.promptsStatusText, 'error');
       });
+  }
+
+  private copyConfigObject(source: Record<string, Object>): Record<string, Object> {
+    const result: Record<string, Object> = {};
+    const keys: string[] = Object.keys(source);
+    for (let i = 0; i < keys.length; i += 1) {
+      result[keys[i]] = source[keys[i]];
+    }
+    return result;
   }
 
   private describeRuntimeError(err: Object): string {
@@ -556,7 +570,8 @@ struct SettingsPage {
       this.mcpCommandDraft,
       this.mcpArgsDraft,
       this.mcpUrlDraft,
-      this.mcpEnvDraft
+      this.mcpEnvDraft,
+      this.mcpHttpHeadersDraft
     )
       .then(() => {
         this.syncMcpStateFromBackend();
@@ -616,13 +631,86 @@ struct SettingsPage {
   private cancelMcpAdd(): void {
     this.showMcpAddDialog = false;
     this.mcpNewServerName = '';
+    this.mcpJsonPasteInput = '';
+  }
+
+  private parseMcpJsonInput(raw: string): Record<string, Object> | null {
+    const trimmed: string = raw.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    let root: Record<string, Object>;
+    try {
+      root = JSON.parse(trimmed) as Record<string, Object>;
+    } catch (_err) {
+      return null;
+    }
+    // 支持 Claude Desktop 格式: { "mcpServers": { "name": { ... } } }
+    const mcpServers: Object | undefined = root['mcpServers'];
+    if (typeof mcpServers === 'object' && mcpServers !== null) {
+      const keys: string[] = Object.keys(mcpServers as Record<string, Object>);
+      if (keys.length > 0) {
+        const firstName: string = keys[0];
+        const serverConfig: Object = (mcpServers as Record<string, Object>)[firstName];
+        if (typeof serverConfig === 'object' && serverConfig !== null) {
+          const result: Record<string, Object> = this.copyConfigObject(serverConfig as Record<string, Object>);
+          if (result['name'] === undefined) {
+            result['name'] = firstName;
+          }
+          return result;
+        }
+      }
+    }
+    return root;
+  }
+
+  private mcpAddPreviewText(): string {
+    const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
+    if (parsed === null) {
+      if (this.mcpJsonPasteInput.trim().length === 0) {
+        return '粘贴 JSON 后自动解析预览';
+      }
+      return 'JSON 格式不正确';
+    }
+    const name: string = this.mcpNewServerName.trim().length > 0
+      ? this.mcpNewServerName.trim()
+      : (typeof parsed['name'] === 'string' ? (parsed['name'] as string) : '');
+    const url: string = typeof parsed['url'] === 'string' ? (parsed['url'] as string) : '';
+    const command: string = typeof parsed['command'] === 'string' ? (parsed['command'] as string) : '';
+    const transport: string = url.length > 0 ? 'HTTP' : (command.length > 0 ? 'stdio' : '?');
+    const headers: Object | undefined = parsed['headers'];
+    const hasHeaders: boolean = typeof headers === 'object' && headers !== null && Object.keys(headers as Record<string, Object>).length > 0;
+    let preview: string = `名称: ${name.length > 0 ? name : '(未指定)'}\n传输: ${transport}`;
+    if (url.length > 0) {
+      preview += `\nURL: ${url}`;
+    }
+    if (command.length > 0) {
+      preview += `\nCommand: ${command}`;
+    }
+    if (hasHeaders) {
+      preview += `\nHeaders: 已配置`;
+    }
+    return preview;
   }
 
   private confirmMcpAdd(): void {
-    const name: string = this.mcpNewServerName.trim();
-    if (name.length === 0) {
-      this.triggerFeedback('server 名称不能为空。', 'warning');
+    this.confirmMcpAddFromJson();
+  }
+
+  private confirmMcpAddFromJson(): void {
+    const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
+    if (parsed === null) {
+      this.triggerFeedback('JSON 格式不正确，请检查后重试。', 'error');
       return;
+    }
+    let name: string = this.mcpNewServerName.trim();
+    if (name.length === 0) {
+      if (typeof parsed['name'] === 'string' && (parsed['name'] as string).trim().length > 0) {
+        name = (parsed['name'] as string).trim();
+      } else {
+        this.triggerFeedback('请输入名称，或在 JSON 中包含 "name" 字段。', 'warning');
+        return;
+      }
     }
     for (let i: number = 0; i < this.mcpServers.length; i += 1) {
       if (this.mcpServers[i].name === name) {
@@ -630,10 +718,24 @@ struct SettingsPage {
         return;
       }
     }
-    codexBackend.addMcpServer(name, 'stdio', '', '[]', '', '{}')
+    const url: string = typeof parsed['url'] === 'string' ? (parsed['url'] as string).trim() : '';
+    const command: string = typeof parsed['command'] === 'string' ? (parsed['command'] as string).trim() : '';
+    if (url.length === 0 && command.length === 0) {
+      this.triggerFeedback('JSON 中必须包含 "url"（HTTP）或 "command"（stdio）。', 'warning');
+      return;
+    }
+    const transportType: string = url.length > 0 ? 'http' : 'stdio';
+    const argsObj: Object | undefined = parsed['args'];
+    const argsText: string = argsObj !== undefined ? JSON.stringify(argsObj) : '[]';
+    const envObj: Object | undefined = parsed['env'];
+    const envText: string = envObj !== undefined ? JSON.stringify(envObj) : '{}';
+    const headersObj: Object | undefined = parsed['headers'];
+    const httpHeadersText: string = headersObj !== undefined ? JSON.stringify(headersObj) : '{}';
+    codexBackend.addMcpServer(name, transportType, command, argsText, url, envText, httpHeadersText)
       .then(() => {
         this.showMcpAddDialog = false;
         this.mcpNewServerName = '';
+        this.mcpJsonPasteInput = '';
         this.syncMcpStateFromBackend();
         this.triggerFeedback(`已添加 MCP server: ${name}`, 'success');
       })
@@ -1249,14 +1351,16 @@ struct SettingsPage {
     }
     apiManagementVM.validateProvider(provider)
       .then(() => {
-        if (apiManagementVM.state.validationResult !== null && apiManagementVM.state.validationResult.errorMessage.trim().length > 0) {
-          this.triggerFeedback(apiManagementVM.state.validationResult.errorMessage, 'warning');
-          return;
+        const result = apiManagementVM.state.validationResult;
+        if (result !== null) {
+          this.validationResult = result;
+          this.showValidationDialog = true;
+        } else {
+          const msg = apiManagementVM.state.errorText.trim().length > 0
+            ? apiManagementVM.state.errorText
+            : '验证未返回结果。';
+          this.triggerFeedback(msg, 'warning');
         }
-        const message = apiManagementVM.state.errorText.trim().length > 0
-          ? apiManagementVM.state.errorText
-          : '已生成前端校验结果。';
-        this.triggerFeedback(message, 'warning');
       })
       .catch((err: Object) => {
         this.triggerFeedback(this.describeRuntimeError(err), 'error');
@@ -1289,128 +1393,163 @@ struct SettingsPage {
       });
   }
 
+  private speedTestingLabel(): string {
+    return this.apiSpeedTesting ? '测速中...' : '';
+  }
+
+  private speedProbeDetail(r: EndpointSpeedResult): string {
+    if (r.chatProbe !== null && r.chatProbe.success) {
+      return `${r.chatProbe.latencyMs}ms`;
+    }
+    if (r.chatProbe !== null && !r.chatProbe.success && r.chatProbe.errorMessage.length > 0) {
+      return r.chatProbe.errorMessage;
+    }
+    return '';
+  }
+
+  private speedProbeDetailColor(r: EndpointSpeedResult): string {
+    if (r.chatProbe !== null && r.chatProbe.success) {
+      return '#64748B';
+    }
+    return '#94A3B8';
+  }
+
+  private speedProbeDetailSize(r: EndpointSpeedResult): number {
+    if (r.chatProbe !== null && r.chatProbe.success) {
+      return 9;
+    }
+    return 8;
+  }
+
   @Builder
   private apiSpeedResultsPanel() {
     if (this.apiShowSpeedResults && (this.apiSpeedResults.length > 0 || this.apiSpeedTesting)) {
-      Column() {
-        Row() {
-          Text('端点测速结果')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
-          Blank()
-            .layoutWeight(1)
-          if (this.apiSpeedTesting) {
-            Text('测速中...')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(10)
-              .fontColor('#2563EB')
-              .margin({ right: 10 })
-          }
-          Button('关闭')
-            .height(26)
-            .fontSize(10)
-            .fontColor('#64748B')
-            .backgroundColor('#FFFFFF')
-            .borderRadius(8)
-            .border({ width: 1, color: '#E5E7EB' })
-            .onClick(() => { this.apiShowSpeedResults = false; })
-        }
-        .width('100%')
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#0F172A')
+          .opacity(0.18)
+          .onClick(() => { this.apiShowSpeedResults = false; })
 
-        if (this.apiSpeedTesting && this.apiSpeedResults.length === 0) {
+        Column() {
           Row() {
-            LoadingProgress()
-              .width(16)
-              .height(16)
-              .color('#2563EB')
-            Text('正在测速，请稍候...')
+            Text('端点测速结果')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
+
+            Blank()
+              .layoutWeight(1)
+
+            Text(this.speedTestingLabel())
+              .copyOption(CopyOptions.LocalDevice)
               .fontSize(11)
-              .fontColor('#64748B')
-              .margin({ left: 8 })
+              .fontColor('#2563EB')
+
+            Text('✕')
+              .fontSize(16)
+              .fontColor('#94A3B8')
+              .margin({ left: 12 })
+              .onClick(() => { this.apiShowSpeedResults = false; })
           }
           .width('100%')
-          .padding({ top: 12, bottom: 12 })
-          .justifyContent(FlexAlign.Center)
-        }
 
-        List({ space: 0 }) {
-          ForEach(this.apiSpeedResults, (r: EndpointSpeedResult) => {
-            ListItem() {
-              Column() {
-                Row() {
-                  Text(r.endpointUrl)
-                    .copyOption(CopyOptions.LocalDevice)
-                    .fontSize(10)
-                    .fontColor('#334155')
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .layoutWeight(1)
-                  Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
-                    .copyOption(CopyOptions.LocalDevice)
-                    .fontSize(10)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor(r.success ? '#166534' : '#B91C1C')
-                    .margin({ left: 8, right: 8 })
-                  Text(r.success ? 'OK' : 'ERR')
-                    .copyOption(CopyOptions.LocalDevice)
-                    .fontSize(9)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor(r.success ? '#166534' : '#B91C1C')
-                    .padding({ left: 6, right: 6, top: 3, bottom: 3 })
-                    .backgroundColor(r.success ? '#DCFCE7' : '#FEE2E2')
-                    .borderRadius(8)
-                }
-                .width('100%')
+          if (this.apiSpeedTesting && this.apiSpeedResults.length === 0) {
+            Row() {
+              LoadingProgress()
+                .width(16)
+                .height(16)
+                .color('#2563EB')
+              Text('正在测速，请稍候...')
+                .fontSize(11)
+                .fontColor('#64748B')
+                .margin({ left: 8 })
+            }
+            .width('100%')
+            .padding({ top: 20, bottom: 20 })
+            .justifyContent(FlexAlign.Center)
+          }
 
-                Row() {
-                  Text('对话测试')
-                    .copyOption(CopyOptions.None)
-                    .fontSize(9)
-                    .fontColor('#94A3B8')
-                  Text(this.chatProbeLabel(r.chatProbe))
-                    .copyOption(CopyOptions.None)
-                    .fontSize(9)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor(this.chatProbeColor(r.chatProbe))
-                    .margin({ left: 6 })
-                  if (r.chatProbe !== null && r.chatProbe.success) {
-                    Text(`${r.chatProbe.latencyMs}ms`)
+          List({ space: 0 }) {
+            ForEach(this.apiSpeedResults, (r: EndpointSpeedResult) => {
+              ListItem() {
+                Column() {
+                  Row() {
+                    Text(r.endpointUrl)
                       .copyOption(CopyOptions.LocalDevice)
-                      .fontSize(9)
-                      .fontColor('#64748B')
-                      .margin({ left: 4 })
-                  }
-                  if (r.chatProbe !== null && !r.chatProbe.success && r.chatProbe.errorMessage.length > 0) {
-                    Text(r.chatProbe.errorMessage)
-                      .copyOption(CopyOptions.LocalDevice)
-                      .fontSize(8)
-                      .fontColor('#94A3B8')
+                      .fontSize(11)
+                      .fontColor('#334155')
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .margin({ left: 6 })
+                      .layoutWeight(1)
+                    Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(11)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(r.success ? '#166534' : '#B91C1C')
+                      .margin({ left: 8, right: 8 })
+                    Text(r.success ? 'OK' : 'ERR')
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(10)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(r.success ? '#166534' : '#B91C1C')
+                      .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+                      .backgroundColor(r.success ? '#DCFCE7' : '#FEE2E2')
+                      .borderRadius(8)
                   }
+                  .width('100%')
+
+                  Row() {
+                    Text('对话测试')
+                      .copyOption(CopyOptions.None)
+                      .fontSize(9)
+                      .fontColor('#94A3B8')
+                    Text(this.chatProbeLabel(r.chatProbe))
+                      .copyOption(CopyOptions.None)
+                      .fontSize(9)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(this.chatProbeColor(r.chatProbe))
+                      .margin({ left: 6 })
+                    Text(this.speedProbeDetail(r))
+                      .copyOption(CopyOptions.LocalDevice)
+                      .fontSize(this.speedProbeDetailSize(r))
+                      .fontColor(this.speedProbeDetailColor(r))
+                      .margin({ left: 4 })
+                  }
+                  .width('100%')
+                  .margin({ top: 4 })
                 }
                 .width('100%')
-                .margin({ top: 4 })
+                .padding({ top: 8, bottom: 8 })
               }
-              .width('100%')
-              .padding({ top: 6, bottom: 6 })
-            }
-          }, (r: EndpointSpeedResult) => r.endpointUrl)
+            }, (r: EndpointSpeedResult) => r.endpointUrl)
+          }
+          .width('100%')
+          .margin({ top: 10 })
+          .height(200)
+          .scrollBar(BarState.Off)
+
+          Button('关闭')
+            .height(38)
+            .width('100%')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#111827')
+            .borderRadius(14)
+            .margin({ top: 16 })
+            .onClick(() => { this.apiShowSpeedResults = false; })
         }
-        .width('100%')
-        .margin({ top: 6 })
-        .height(140)
-        .scrollBar(BarState.Off)
+        .width(420)
+        .padding(22)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' })
+        .borderRadius(24)
       }
       .width('100%')
-      .padding(14)
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2EAF3' })
-      .borderRadius(18)
-      .margin({ top: 12 })
+      .height('100%')
     }
   }
 
@@ -2084,6 +2223,16 @@ struct SettingsPage {
             .padding({ left: 12, right: 12 })
             .margin({ top: 6 })
             .onChange((value: string) => { this.mcpUrlDraft = value; })
+
+          this.formLabel('HTTP Headers')
+          TextArea({ text: this.mcpHttpHeadersDraft, placeholder: '{"Authorization":"Bearer your-token"}' })
+            .width('100%')
+            .height(94)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(16)
+            .padding(12)
+            .margin({ top: 6 })
+            .onChange((value: string) => { this.mcpHttpHeadersDraft = value; })
         }
 
         this.formLabel('Environment')
@@ -3377,7 +3526,6 @@ struct SettingsPage {
           this.apiPresetsPanel()
         } else {
           this.apiProvidersPanel()
-          this.apiSpeedResultsPanel()
         }
       }
       .width('100%')
@@ -3514,21 +3662,43 @@ struct SettingsPage {
             .fontWeight(FontWeight.Bold)
             .fontColor('#0F172A')
 
-          Text('输入 server 名称，创建后可在编辑器中配置详细参数。')
+          Text('粘贴 JSON 配置即可添加，兼容 Claude Desktop / Cursor 格式。')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontColor('#64748B')
             .lineHeight(20)
             .margin({ top: 10 })
 
-          TextInput({ text: this.mcpNewServerName, placeholder: '例如 my-mcp-server' })
+          TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 时自动识别）' })
             .width('100%')
             .height(40)
             .backgroundColor('#F8FAFC')
             .borderRadius(14)
             .padding({ left: 12, right: 12 })
-            .margin({ top: 14 })
+            .margin({ top: 12 })
             .onChange((value: string) => { this.mcpNewServerName = value; })
+
+          TextArea({ text: this.mcpJsonPasteInput, placeholder: '{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer xxx"}}' })
+            .width('100%')
+            .height(150)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(16)
+            .padding(12)
+            .margin({ top: 10 })
+            .onChange((value: string) => { this.mcpJsonPasteInput = value; })
+
+          Column() {
+            Text(this.mcpAddPreviewText())
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(11)
+              .fontColor('#475569')
+              .lineHeight(18)
+          }
+          .width('100%')
+          .padding(10)
+          .margin({ top: 8 })
+          .backgroundColor('#F1F5F9')
+          .borderRadius(12)
 
           Row() {
             Button('取消')
@@ -3545,7 +3715,7 @@ struct SettingsPage {
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-cancel', event); })
               .onClick(() => { this.cancelMcpAdd(); })
 
-            Button('创建')
+            Button('添加')
               .height(40)
               .layoutWeight(1)
               .fontSize(12)
@@ -3560,9 +3730,9 @@ struct SettingsPage {
               .onClick(() => { this.confirmMcpAdd(); })
           }
           .width('100%')
-          .margin({ top: 20 })
+          .margin({ top: 14 })
         }
-        .width(420)
+        .width(460)
         .padding(22)
         .backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' })
@@ -3638,6 +3808,162 @@ struct SettingsPage {
       }
       .width('100%')
       .height('100%')
+    }
+  }
+
+  private validationStatusCodeText(): string {
+    if (this.validationResult === null) return '—';
+    return this.validationResult.statusCode > 0 ? `${this.validationResult.statusCode}` : '—';
+  }
+
+  private validationLatencyText(): string {
+    if (this.validationResult === null) return '—';
+    return this.validationResult.latencyMs > 0 ? `${this.validationResult.latencyMs} ms` : '—';
+  }
+
+  private validationModelsText(): string {
+    if (this.validationResult === null) return '';
+    return this.validationResult.modelsCount > 0 ? `${this.validationResult.modelsCount}` : '';
+  }
+
+  private validationAccountText(): string {
+    if (this.validationResult === null) return '';
+    return this.validationResult.accountInfo.trim();
+  }
+
+  private validationErrorText(): string {
+    if (this.validationResult === null) return '';
+    return this.validationResult.errorMessage.trim();
+  }
+
+  private validationTitleText(): string {
+    if (this.validationResult === null) return '验证结果';
+    return this.validationResult.success ? '验证通过' : '验证失败';
+  }
+
+  private validationTitleColor(): string {
+    if (this.validationResult === null) return '#0F172A';
+    return this.validationResult.success ? '#16A34A' : '#DC2626';
+  }
+
+  @Builder
+  private validationResultDialog() {
+    if (this.showValidationDialog && this.validationResult !== null) {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#0F172A')
+          .opacity(0.18)
+          .onClick(() => { this.showValidationDialog = false; })
+
+        Column() {
+        Row() {
+          Text(this.validationTitleText())
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.validationTitleColor())
+
+          Blank()
+            .layoutWeight(1)
+
+          Text('✕')
+            .fontSize(16)
+            .fontColor('#94A3B8')
+            .onClick(() => { this.showValidationDialog = false; })
+        }
+        .width('100%')
+
+        Column() {
+          Row() {
+            Text('状态码')
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width(80)
+            Text(this.validationStatusCodeText())
+              .fontSize(12)
+              .fontColor('#0F172A')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .margin({ top: 14 })
+
+          Row() {
+            Text('延迟')
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width(80)
+            Text(this.validationLatencyText())
+              .fontSize(12)
+              .fontColor('#0F172A')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .margin({ top: 10 })
+
+          Row() {
+            Text('模型数')
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width(80)
+            Text(this.validationModelsText().length > 0 ? this.validationModelsText() : '—')
+              .fontSize(12)
+              .fontColor('#0F172A')
+              .fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          .margin({ top: 10 })
+
+          Row() {
+            Text('账户')
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width(80)
+            Text(this.validationAccountText().length > 0 ? this.validationAccountText() : '—')
+              .fontSize(12)
+              .fontColor('#0F172A')
+              .fontWeight(FontWeight.Medium)
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .margin({ top: 10 })
+
+          Row() {
+            Text('错误')
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width(80)
+            Text(this.validationErrorText().length > 0 ? this.validationErrorText() : '无')
+              .fontSize(12)
+              .fontColor(this.validationErrorText().length > 0 ? '#DC2626' : '#94A3B8')
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .margin({ top: 10 })
+        }
+        .width('100%')
+        .padding({ left: 4, right: 4 })
+
+        Button('关闭')
+          .height(38)
+          .width('100%')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#111827')
+          .borderRadius(14)
+          .margin({ top: 18 })
+          .onClick(() => { this.showValidationDialog = false; })
+      }
+      .width(360)
+      .padding(22)
+      .backgroundColor('#FFFFFF')
+      .border({ width: 1, color: '#E2EAF3' })
+      .borderRadius(24)
+    }
+    .width('100%')
+    .height('100%')
     }
   }
 
@@ -3806,6 +4132,8 @@ struct SettingsPage {
       this.skillDetailDialog()
       this.mcpAddDialog()
       this.mcpDeleteDialog()
+      this.validationResultDialog()
+      this.apiSpeedResultsPanel()
     }
     .width('100%')
     .height('100%')
