@@ -61,6 +61,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use codex_arg0::Arg0DispatchPaths;
+use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::config::types::McpServerConfig;
@@ -120,6 +121,7 @@ enum PendingApprovalResolutionKind {
     Permissions,
     LegacyPatch,
     LegacyExec,
+    McpToolApproval,
 }
 
 #[derive(Debug, Clone)]
@@ -1038,10 +1040,66 @@ fn persist_provider_settings(codex_home: &Path, settings: &ProviderSettings) -> 
     std::fs::write(&provider_path, provider_json)
         .with_context(|| format!("failed to write {}", provider_path.display()))?;
 
-    let config_path = codex_config_path(codex_home);
-    let config_toml = render_config_toml(settings);
-    std::fs::write(&config_path, config_toml)
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
+    // Use ConfigEditsBuilder to edit config.toml in-place, preserving
+    // existing sections like [mcp_servers] that render_config_toml would destroy.
+    let mp = CUSTOM_PROVIDER_ID;
+    let mut edits = vec![
+        ConfigEdit::SetPath {
+            segments: vec!["approval_policy".to_string()],
+            value: toml_edit::value(DEFAULT_APPROVAL_POLICY),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["sandbox_mode".to_string()],
+            value: toml_edit::value(DEFAULT_SANDBOX_MODE),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["model_provider".to_string()],
+            value: toml_edit::value(mp),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["model_providers".to_string(), mp.to_string(), "name".to_string()],
+            value: toml_edit::value("Harmony OpenAI Compatible"),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["model_providers".to_string(), mp.to_string(), "base_url".to_string()],
+            value: toml_edit::value(&settings.base_url),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["model_providers".to_string(), mp.to_string(), "wire_api".to_string()],
+            value: toml_edit::value("responses"),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["model_providers".to_string(), mp.to_string(), "requires_openai_auth".to_string()],
+            value: toml_edit::value(false),
+        },
+        ConfigEdit::SetPath {
+            segments: vec!["model_providers".to_string(), mp.to_string(), "supports_websockets".to_string()],
+            value: toml_edit::value(false),
+        },
+    ];
+
+    if !settings.model.trim().is_empty() {
+        edits.push(ConfigEdit::SetPath {
+            segments: vec!["model".to_string()],
+            value: toml_edit::value(&settings.model),
+        });
+    }
+
+    if !settings.api_key.trim().is_empty() {
+        edits.push(ConfigEdit::SetPath {
+            segments: vec![
+                "model_providers".to_string(),
+                mp.to_string(),
+                "experimental_bearer_token".to_string(),
+            ],
+            value: toml_edit::value(&settings.api_key),
+        });
+    }
+
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits(edits)
+        .apply_blocking()
+        .with_context(|| "failed to write provider settings to config.toml")?;
 
     Ok(())
 }
@@ -1263,6 +1321,14 @@ fn resolve_codex_home(codex_home: Option<PathBuf>) -> PathBuf {
             } else {
                 Some(PathBuf::from(state.codex_home.clone()))
             }
+        })
+        .or_else(|| {
+            // Fallback: check CODEX_HOME env var (set by configure_environment).
+            // This bridges the gap when startHost() hasn't populated HOST_STATE yet.
+            std::env::var("CODEX_HOME")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
         })
         .unwrap_or_else(default_codex_home)
 }
@@ -2032,11 +2098,22 @@ pub extern "C" fn codex_ohos_host_mcp_config_read(params_json: *const c_char) ->
     let _request =
         serde_json::from_str::<NativeMcpConfigReadRequest>(&params_text).unwrap_or_default();
     let codex_home = resolve_codex_home(None);
+    let config_path = codex_home.join("config.toml");
 
     let json = match mcp_servers_to_config_json(&codex_home) {
-        Ok(json) => json,
+        Ok(json) => {
+            set_host_message(format!(
+                "MCP config read ok, config_path={}, json_len={}",
+                config_path.display(),
+                json.len()
+            ));
+            json
+        }
         Err(err) => {
-            set_host_message(format!("failed to read MCP config: {err}"));
+            set_host_message(format!(
+                "failed to read MCP config (config_path={}): {err}",
+                config_path.display()
+            ));
             "{\"config\":{}}".to_string()
         }
     };
@@ -2099,6 +2176,7 @@ pub extern "C" fn codex_ohos_host_mcp_config_add(params_json: *const c_char) -> 
         return 1;
     }
     let codex_home = resolve_codex_home(None);
+    let config_path = codex_home.join("config.toml");
     let result = (|| -> Result<()> {
         let mut servers = with_runtime_result(async {
             load_global_mcp_servers(&codex_home)
@@ -2113,9 +2191,19 @@ pub extern "C" fn codex_ohos_host_mcp_config_add(params_json: *const c_char) -> 
         write_mcp_servers(&codex_home, &servers)
     })();
     match result {
-        Ok(()) => 0,
+        Ok(()) => {
+            set_host_message(format!(
+                "MCP server '{}' added, config_path={}",
+                request.name.trim(),
+                config_path.display()
+            ));
+            0
+        }
         Err(err) => {
-            set_host_message(format!("failed to add MCP server: {err}"));
+            set_host_message(format!(
+                "failed to add MCP server (config_path={}): {err}",
+                config_path.display()
+            ));
             1
         }
     }
@@ -2754,20 +2842,41 @@ async fn handle_server_request(
             Ok(())
         }
         ServerRequest::ToolRequestUserInput { request_id, params } => {
-            client
-                .reject_server_request(
-                    request_id,
-                    codex_app_server_protocol::JSONRPCErrorError {
-                        code: -32601,
-                        data: None,
-                        message: format!(
-                            "tool/requestUserInput is not supported in Harmony UI yet for turn `{}`",
-                            params.turn_id
-                        ),
+            let request_id_json = request_id_to_json_value(&request_id);
+            let first_question = params.questions.first();
+            let title = first_question
+                .map(|q| q.header.clone())
+                .unwrap_or_else(|| "MCP 工具调用需要审批".to_string());
+            let question_text = first_question
+                .map(|q| q.question.clone())
+                .unwrap_or_default();
+            let questions_json = serde_json::to_value(&params.questions)
+                .unwrap_or(serde_json::Value::Array(vec![]));
+            let detail = serde_json::json!({
+                "question": question_text,
+                "questions": questions_json,
+            })
+            .to_string();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::McpToolApproval,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "mcpToolApproval",
+                            "title": title,
+                            "detail": detail,
+                            "threadId": params.thread_id,
+                            "turnId": params.turn_id,
+                            "itemId": params.item_id,
+                        })
+                        .to_string(),
                     },
-                )
-                .await
-                .map_err(anyhow::Error::from)
+                );
+            });
+            Ok(())
         }
         ServerRequest::McpServerElicitationRequest { request_id, params } => {
             client
@@ -3159,6 +3268,53 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
                 serde_json::to_value(codex_app_server_protocol::ExecCommandApprovalResponse {
                     decision,
                 })?
+            }
+            PendingApprovalResolutionKind::McpToolApproval => {
+                if approved {
+                    // Resolve with "Allow" answer for the first question
+                    let detail_value: serde_json::Value =
+                        serde_json::from_str(&pending.payload_json).unwrap_or(serde_json::Value::Null);
+                    let detail_str = detail_value
+                        .get("detail")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("");
+                    let detail_parsed: serde_json::Value =
+                        serde_json::from_str(detail_str).unwrap_or(serde_json::Value::Null);
+                    let question_id = detail_parsed
+                        .get("questions")
+                        .and_then(|q| q.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|first| first.get("id"))
+                        .and_then(|id| id.as_str())
+                        .unwrap_or("mcp_tool_call_approval")
+                        .to_string();
+                    serde_json::json!({
+                        "answers": {
+                            question_id: {
+                                "answers": ["Allow"]
+                            }
+                        }
+                    })
+                } else {
+                    // Decline: reject the server request to produce Cancel decision
+                    client
+                        .reject_server_request(
+                            pending.request_id.clone(),
+                            codex_app_server_protocol::JSONRPCErrorError {
+                                code: -32600,
+                                data: None,
+                                message: "user rejected MCP tool call".to_string(),
+                            },
+                        )
+                        .await
+                        .map_err(anyhow::Error::from)?;
+                    with_native_state(|state| {
+                        state.client = Some(client);
+                        state.pending_approval = None;
+                    });
+                    clear_pending_approval();
+                    return Ok::<(), anyhow::Error>(());
+                }
             }
         };
         client

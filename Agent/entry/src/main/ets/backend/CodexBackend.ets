@@ -5,6 +5,8 @@ import {
   approvalApproveNative,
   approvalDeclineNative,
   approvalPollNative,
+  CodexHostStatus,
+  getEmbeddedCodexHostStatus,
   initializeNative,
   mcpConfigAddNative,
   mcpConfigBatchWriteNative,
@@ -60,7 +62,7 @@ export type CodexMessageRole = 'user' | 'assistant' | 'system' | 'reasoning' | '
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
 export type CodexDiffKind = 'add' | 'delete' | 'context';
 export type CodexConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
-export type CodexApprovalKind = 'command' | 'fileChange' | 'permissions';
+export type CodexApprovalKind = 'command' | 'fileChange' | 'permissions' | 'mcpToolApproval';
 export type CodexAuthMode = 'none' | 'apiKey' | 'chatgpt' | 'chatgptAuthTokens' | 'unknown';
 export type CodexTurnUpdateHandler = (result: CodexTurnResult) => void;
 type BackendListener = (snapshot: CodexBackendSnapshot) => void;
@@ -1505,27 +1507,31 @@ export class CodexBackend {
     batchWriteRequest.edits = edits;
     const ok: boolean = mcpConfigBatchWriteNative(JSON.stringify(batchWriteRequest));
     if (!ok) {
-      throw new Error('MCP 配置写入失败');
+      const hostStatus: CodexHostStatus = getEmbeddedCodexHostStatus();
+      const detail: string = hostStatus.message.trim().length > 0 ? hostStatus.message : '未知错误';
+      throw new Error(`MCP 配置写入失败: ${detail}`);
     }
     this.mcpStatusText = 'MCP 配置已保存';
     this.mcpErrorText = '';
     this.notifyListeners();
   }
 
-  async saveMcpServerConfig(serverName: string, enabled: boolean, transportType: string, command: string, argsText: string, url: string, envText: string): Promise<void> {
+  async saveMcpServerConfig(serverName: string, enabled: boolean, transportType: string, command: string, argsText: string, url: string, envText: string, httpHeadersText: string): Promise<void> {
     await this.ensureConnected();
     this.readMcpConfig();
     const existingConfig: Record<string, Object> = this.copyConfigObject((this.mcpConfigByName.get(serverName) as Record<string, Object> | undefined) ?? {});
     const nextConfig: Record<string, Object> = this.copyConfigObject(existingConfig);
     nextConfig['enabled'] = enabled;
-    nextConfig['args'] = parseJsonText(argsText, new Array<Object>() as Object);
-    nextConfig['env'] = parseJsonText(envText, new Object() as Object);
     if (transportType === 'http') {
       nextConfig['url'] = url.trim();
-      nextConfig['command'] = '';
+      const headers: Object = parseJsonText(httpHeadersText, new Object() as Object);
+      if (typeof headers === 'object' && headers !== null && Object.keys(headers as Record<string, Object>).length > 0) {
+        nextConfig['http_headers'] = headers;
+      }
     } else {
       nextConfig['command'] = command.trim();
-      nextConfig['url'] = '';
+      nextConfig['args'] = parseJsonText(argsText, new Array<Object>() as Object);
+      nextConfig['env'] = parseJsonText(envText, new Object() as Object);
     }
     const edit: McpConfigBatchEditPayload = new McpConfigBatchEditPayload();
     edit.keyPath = `mcp_servers.${serverName}`;
@@ -1550,23 +1556,29 @@ export class CodexBackend {
     await this.reloadMcpServers();
   }
 
-  async addMcpServer(serverName: string, transportType: string, command: string, argsText: string, url: string, envText: string): Promise<void> {
+  async addMcpServer(serverName: string, transportType: string, command: string, argsText: string, url: string, envText: string, httpHeadersText: string): Promise<void> {
     await this.ensureConnected();
     const config: Record<string, Object> = {} as Record<string, Object>;
     config['enabled'] = true;
-    config['args'] = parseJsonText(argsText, new Array<Object>() as Object);
-    config['env'] = parseJsonText(envText, new Object() as Object);
     if (transportType === 'http') {
       config['url'] = url.trim();
+      const headers: Object = parseJsonText(httpHeadersText, new Object() as Object);
+      if (typeof headers === 'object' && headers !== null && Object.keys(headers as Record<string, Object>).length > 0) {
+        config['http_headers'] = headers;
+      }
     } else {
       config['command'] = command.trim();
+      config['args'] = parseJsonText(argsText, new Array<Object>() as Object);
+      config['env'] = parseJsonText(envText, new Object() as Object);
     }
     const request: McpConfigAddRequestPayload = new McpConfigAddRequestPayload();
     request.name = serverName;
     request.config = config as Object;
     const ok: boolean = mcpConfigAddNative(JSON.stringify(request));
     if (!ok) {
-      throw new Error('添加 MCP server 失败');
+      const hostStatus: CodexHostStatus = getEmbeddedCodexHostStatus();
+      const detail: string = hostStatus.message.trim().length > 0 ? hostStatus.message : '未知错误';
+      throw new Error(`添加 MCP server 失败: ${detail}`);
     }
     this.mcpStatusText = `已添加 MCP server: ${serverName}`;
     this.mcpErrorText = '';
@@ -2141,7 +2153,7 @@ export class CodexBackend {
     if (kindRaw.length === 0) {
       return null;
     }
-    const kind: CodexApprovalKind = kindRaw === 'fileChange' || kindRaw === 'permissions' ? kindRaw : 'command';
+    const kind: CodexApprovalKind = kindRaw === 'fileChange' || kindRaw === 'permissions' || kindRaw === 'mcpToolApproval' ? kindRaw : 'command';
     const approval = new CodexApprovalRequest(
       typeof payload['requestId'] === 'string' || typeof payload['requestId'] === 'number' ? payload['requestId'] as string | number : `approval-${Date.now()}`,
       kind,
@@ -2372,7 +2384,7 @@ export class CodexBackend {
   }
 
   private cloneMcpServer(server: McpServerRecord): McpServerRecord {
-    return new McpServerRecord(server.id, server.name, server.enabled, server.transportType, server.command, server.argsText, server.url, server.envText, server.toolCount, server.resourceCount, server.healthStatus, server.authStatus, server.lastError, server.syncStatus, server.updatedAt);
+    return new McpServerRecord(server.id, server.name, server.enabled, server.transportType, server.command, server.argsText, server.url, server.envText, server.httpHeadersText, server.toolCount, server.resourceCount, server.healthStatus, server.authStatus, server.lastError, server.syncStatus, server.updatedAt);
   }
 
   private readMcpConfig(): void {
@@ -2403,13 +2415,14 @@ export class CodexBackend {
     const url: string = this.readStringField(config, 'url');
     const argsText: string = this.stringifyJsonField(config['args']);
     const envText: string = this.stringifyJsonField(config['env']);
+    const httpHeadersText: string = this.stringifyJsonField(config['http_headers']);
     const enabled: boolean = this.readBooleanField(config, 'enabled', true);
     const transportType: string = url.trim().length > 0 ? 'http' : (command.trim().length > 0 ? 'stdio' : 'unknown');
     const tools: Record<string, Object> = status.tools as Record<string, Object>;
     const toolCount: number = Object.keys(tools).length;
     const resourceCount: number = status.resources.length + status.resourceTemplates.length;
     const inferredHealth: McpHealthStatus = toolCount > 0 ? 'ok' : 'warning';
-    return new McpServerRecord(status.name, status.name, enabled, transportType, command, argsText, url, envText, toolCount, resourceCount, inferredHealth, this.normalizeMcpAuthStatus(status.authStatus), '', 'synced', currentTimestamp());
+    return new McpServerRecord(status.name, status.name, enabled, transportType, command, argsText, url, envText, httpHeadersText, toolCount, resourceCount, inferredHealth, this.normalizeMcpAuthStatus(status.authStatus), '', 'synced', currentTimestamp());
   }
 
   private normalizeMcpAuthStatus(rawStatus: string): McpAuthStatus {

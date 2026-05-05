@@ -4,7 +4,6 @@ import { ApiWireFormat, CustomHeadersEntry, ProviderCategory, ProviderRecord } f
 import { configManagerFacade } from '../backend/CodexBackend';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
-type AddProviderMode = 'claude' | 'unified';
 
 class UiToastItem {
   id: number;
@@ -25,7 +24,6 @@ struct AddProviderPage {
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
-  @State private activeMode: AddProviderMode = 'claude';
   @State private selectedPresetId: string = 'anthropic-official';
   @State private providerName: string = 'Claude Official';
   @State private providerNote: string = '';
@@ -35,15 +33,6 @@ struct AddProviderPage {
   @State private wireApi: ApiWireFormat = 'anthropic';
   @State private requestFullUrl: boolean = false;
   @State private advancedExpanded: boolean = false;
-  @State private writeGeneralConfig: boolean = true;
-  @State private configJson: string = '{\n  "env": {},\n  "autoUpdatesChannel": "latest"\n}';
-  @State private aliasEnabled: boolean = false;
-  @State private teammatesEnabled: boolean = false;
-  @State private toolSearchEnabled: boolean = true;
-  @State private intenseThinkingEnabled: boolean = false;
-  @State private autoUpdateDisabled: boolean = false;
-  @State private modelTestSingleConfig: boolean = false;
-  @State private billingSingleConfig: boolean = false;
 
   aboutToAppear(): void {
     this.applyPreset(this.selectedPresetId, false);
@@ -65,10 +54,6 @@ struct AddProviderPage {
 
   private dismissToast(toastId: number): void {
     this.toasts = this.toasts.filter((toast: UiToastItem) => toast.id !== toastId);
-  }
-
-  private notePending(action: string): void {
-    this.triggerFeedback(`${action}暂未接入后端，当前仅前端模拟。`, 'warning');
   }
 
   private updatePressed(key: string, event: TouchEvent): void {
@@ -128,10 +113,6 @@ struct AddProviderPage {
     }
   }
 
-  private modeLabel(mode: AddProviderMode): string {
-    return mode === 'claude' ? 'Claude 供应商' : '统一供应商';
-  }
-
   private presetAccent(presetId: string): string {
     const preset = this.findPreset(presetId);
     if (preset !== null && preset.iconColor.trim().length > 0) {
@@ -187,14 +168,7 @@ struct AddProviderPage {
   private visiblePresets(): ProviderPreset[] {
     const result: ProviderPreset[] = [];
     for (let index = 0; index < BUILTIN_PROVIDER_PRESETS.length; index += 1) {
-      const preset = BUILTIN_PROVIDER_PRESETS[index];
-      if (this.activeMode === 'claude') {
-        if (preset.wireApi === 'anthropic' || preset.name.indexOf('Claude') >= 0 || preset.defaultModel.indexOf('claude') >= 0) {
-          result.push(preset);
-        }
-      } else {
-        result.push(preset);
-      }
+      result.push(BUILTIN_PROVIDER_PRESETS[index]);
     }
     return result;
   }
@@ -207,7 +181,7 @@ struct AddProviderPage {
       this.websiteUrl = '';
       this.apiKey = '';
       this.baseUrl = '';
-      this.wireApi = this.activeMode === 'claude' ? 'anthropic' : 'responses';
+      this.wireApi = 'anthropic';
       if (withToast) {
         this.triggerFeedback('已切换到自定义配置。', 'info');
       }
@@ -227,13 +201,6 @@ struct AddProviderPage {
     if (withToast) {
       this.triggerFeedback(`已载入 ${preset.name} 预设。`, 'success');
     }
-  }
-
-  private switchMode(mode: AddProviderMode): void {
-    this.activeMode = mode;
-    this.selectedPresetId = 'custom';
-    this.applyPreset(mode === 'claude' ? 'anthropic-official' : 'custom', false);
-    this.triggerFeedback(`已切换到${this.modeLabel(mode)}视图。`, 'info');
   }
 
   private submitAddProvider(): void {
@@ -396,22 +363,6 @@ struct AddProviderPage {
   }
 
   @Builder
-  private modeChip(label: string, mode: AddProviderMode) {
-    Button(label)
-      .height(40)
-      .layoutWeight(1)
-      .fontSize(12)
-      .fontWeight(FontWeight.Medium)
-      .fontColor(this.activeMode === mode ? '#FFFFFF' : '#94A3B8')
-      .backgroundColor(this.activeMode === mode ? '#2284F6' : '#F4F6FB')
-      .borderRadius(12)
-      .scale({ x: this.pressScale(`mode-${mode}`), y: this.pressScale(`mode-${mode}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(`mode-${mode}`, event); })
-      .onClick(() => { this.switchMode(mode); })
-  }
-
-  @Builder
   private formLabel(label: string) {
     Text(label)
       .copyOption(CopyOptions.None)
@@ -461,25 +412,6 @@ struct AddProviderPage {
       .animation({ duration: 120, curve: Curve.EaseOut })
       .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onClick(onClick)
-  }
-
-  @Builder
-  private toggleChip(label: string, enabled: boolean, key: string, onClick: () => void) {
-    Row() {
-      Text(enabled ? '☑' : '☐')
-        .fontSize(13)
-        .fontColor(enabled ? '#D946EF' : '#94A3B8')
-      Text(label)
-        .copyOption(CopyOptions.None)
-        .fontSize(11)
-        .fontColor('#64748B')
-        .margin({ left: 6 })
-    }
-    .padding({ left: 4, right: 10, top: 4, bottom: 4 })
-    .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
-    .onClick(onClick)
   }
 
   @Builder
@@ -652,110 +584,8 @@ struct AddProviderPage {
   }
 
   @Builder
-  private configSection() {
-    Column() {
-      Row() {
-        Text('配置 JSON')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#0F172A')
-        Blank()
-          .layoutWeight(1)
-        Row() {
-          Text(this.writeGeneralConfig ? '☑' : '☐')
-            .fontSize(13)
-            .fontColor('#D946EF')
-          Text('写入通用配置')
-            .copyOption(CopyOptions.None)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ left: 6 })
-        }
-        .scale({ x: this.pressScale('write-general-config'), y: this.pressScale('write-general-config') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => { this.updatePressed('write-general-config', event); })
-        .onClick(() => { this.writeGeneralConfig = !this.writeGeneralConfig; })
-      }
-      .width('100%')
-
-      Row() {
-        this.toggleChip('隐藏 AI 署名', this.aliasEnabled, 'toggle-alias', () => { this.aliasEnabled = !this.aliasEnabled; })
-        this.toggleChip('Teammates 模式', this.teammatesEnabled, 'toggle-teammates', () => { this.teammatesEnabled = !this.teammatesEnabled; })
-        this.toggleChip('启用 Tool Search', this.toolSearchEnabled, 'toggle-tool-search', () => { this.toolSearchEnabled = !this.toolSearchEnabled; })
-        this.toggleChip('最大强度思考', this.intenseThinkingEnabled, 'toggle-intense', () => { this.intenseThinkingEnabled = !this.intenseThinkingEnabled; })
-        this.toggleChip('禁用自动升级', this.autoUpdateDisabled, 'toggle-updates', () => { this.autoUpdateDisabled = !this.autoUpdateDisabled; })
-      }
-      .width('100%')
-            .margin({ top: 10 })
-
-      TextArea({ text: this.configJson, placeholder: '{\n  "env": {}\n}' })
-        .width('100%')
-        .height(180)
-        .margin({ top: 10 })
-        .padding(12)
-        .backgroundColor('#F7FAFF')
-        .border({ width: 1, color: '#D9E3F2' })
-        .borderRadius(14)
-        .fontFamily('monospace')
-        .fontSize(11)
-        .onChange((value: string) => { this.configJson = value; })
-    }
-    .width('100%')
-    .margin({ top: 18 })
-  }
-
-  @Builder
-  private collapseCard(title: string, enabled: boolean, key: string, onClick: () => void) {
-    Row() {
-      Row() {
-        Text('◌')
-          .fontSize(15)
-          .fontColor('#64748B')
-        Text(title)
-          .copyOption(CopyOptions.None)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#0F172A')
-          .margin({ left: 10 })
-      }
-
-      Blank()
-        .layoutWeight(1)
-
-      Text('使用单独配置')
-        .copyOption(CopyOptions.None)
-        .fontSize(11)
-        .fontColor('#64748B')
-        .margin({ right: 10 })
-
-      this.ghostSwitch(enabled, key, onClick)
-
-      Text('›')
-        .fontSize(16)
-        .fontColor('#94A3B8')
-        .margin({ left: 14 })
-    }
-    .width('100%')
-    .padding({ left: 16, right: 16, top: 18, bottom: 18 })
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E2EAF3' })
-    .borderRadius(18)
-    .margin({ top: 14 })
-  }
-
-  @Builder
   private contentPanel() {
     Column() {
-      Row() {
-        this.modeChip('Claude 供应商', 'claude')
-        this.modeChip('统一供应商', 'unified')
-      }
-      .width('100%')
-      .padding({ left: 4, right: 4, top: 4, bottom: 4 })
-      .backgroundColor('#F5F7FB')
-      .borderRadius(16)
-
       this.presetSection()
 
       this.previewBadge()
@@ -817,33 +647,6 @@ struct AddProviderPage {
       this.inputField(this.baseUrl, 'https://your-api-endpoint.com', 'base-url', (value: string) => { this.baseUrl = value; })
       this.requestHint()
       this.advancedSection()
-      this.configSection()
-
-      Row() {
-        Text('✎')
-          .fontSize(12)
-          .fontColor('#64748B')
-        Text('格式化')
-          .copyOption(CopyOptions.None)
-          .fontSize(11)
-          .fontColor('#64748B')
-          .margin({ left: 8 })
-      }
-      .margin({ top: 18 })
-      .scale({ x: this.pressScale('format-json'), y: this.pressScale('format-json') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed('format-json', event); })
-      .onClick(() => { this.notePending('JSON 格式化'); })
-
-      this.collapseCard('模型测试配置', this.modelTestSingleConfig, 'model-test-switch', () => {
-        this.modelTestSingleConfig = !this.modelTestSingleConfig;
-        this.notePending('模型测试配置');
-      })
-
-      this.collapseCard('计费配置', this.billingSingleConfig, 'billing-switch', () => {
-        this.billingSingleConfig = !this.billingSingleConfig;
-        this.notePending('计费配置');
-      })
     }
     .width('100%')
     .padding(18)
