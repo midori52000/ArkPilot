@@ -122,6 +122,7 @@ enum PendingApprovalResolutionKind {
     LegacyPatch,
     LegacyExec,
     McpToolApproval,
+    McpElicitationApproval,
 }
 
 #[derive(Debug, Clone)]
@@ -2879,20 +2880,42 @@ async fn handle_server_request(
             Ok(())
         }
         ServerRequest::McpServerElicitationRequest { request_id, params } => {
-            client
-                .reject_server_request(
-                    request_id,
-                    codex_app_server_protocol::JSONRPCErrorError {
-                        code: -32601,
-                        data: None,
-                        message: format!(
-                            "mcpServer/elicitation/request is not supported in Harmony UI yet for server `{}`",
-                            params.server_name
-                        ),
+            let request_id_json = request_id_to_json_value(&request_id);
+            let message = match &params.request {
+                codex_app_server_protocol::McpServerElicitationRequest::Form {
+                    message, ..
+                } => message.clone(),
+                codex_app_server_protocol::McpServerElicitationRequest::Url {
+                    message, ..
+                } => message.clone(),
+            };
+            let title = format!("MCP 服务器 '{}' 请求审批", params.server_name);
+            let detail = serde_json::json!({
+                "serverName": params.server_name,
+                "message": message,
+            })
+            .to_string();
+            let turn_id = params.turn_id.clone().unwrap_or_default();
+            with_native_state(|state| {
+                set_pending_approval(
+                    state,
+                    PendingApprovalState {
+                        request_id,
+                        resolution_kind: PendingApprovalResolutionKind::McpElicitationApproval,
+                        payload_json: serde_json::json!({
+                            "requestId": request_id_json,
+                            "kind": "mcpToolApproval",
+                            "title": title,
+                            "detail": detail,
+                            "threadId": params.thread_id,
+                            "turnId": turn_id,
+                            "itemId": "",
+                        })
+                        .to_string(),
                     },
-                )
-                .await
-                .map_err(anyhow::Error::from)
+                );
+            });
+            Ok(())
         }
         ServerRequest::DynamicToolCall { request_id, .. } => {
             client
@@ -3202,7 +3225,7 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
         serde_json::from_str::<NativeApprovalActionRequest>(&params_text).unwrap_or_default();
     let request_id_from_payload = parse_request_id_value(&request.request_id);
     let result = with_runtime_result(async move {
-        let (mut client, pending) = with_native_state(|state| {
+        let (client, pending) = with_native_state(|state| {
             let client = state.client.take();
             let pending = state.pending_approval.clone();
             if pending.is_none() {
@@ -3210,7 +3233,7 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
             }
             (client, pending)
         });
-        let mut client = client.context("remote app-server client is not initialized")?;
+        let client = client.context("remote app-server client is not initialized")?;
         let pending = pending.context("no pending approval request")?;
         if let Some(request_id) = request_id_from_payload {
             if request_id != pending.request_id {
@@ -3314,6 +3337,22 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
                     });
                     clear_pending_approval();
                     return Ok::<(), anyhow::Error>(());
+                }
+            }
+            PendingApprovalResolutionKind::McpElicitationApproval => {
+                if approved {
+                    // Accept elicitation: action=accept, content=null
+                    // Per parse_mcp_tool_approval_elicitation_response (mcp_tool_call.rs:1315):
+                    // Accept with content=None → Cancel → mapped to Accept
+                    serde_json::json!({
+                        "action": "accept",
+                        "content": null
+                    })
+                } else {
+                    // Decline elicitation
+                    serde_json::json!({
+                        "action": "decline"
+                    })
                 }
             }
         };
