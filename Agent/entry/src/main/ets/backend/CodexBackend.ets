@@ -1026,7 +1026,7 @@ class CodexThreadRecord {
   constructor(localKey: string, title: string) {
     this.localKey = localKey;
     this.title = title;
-    this.updatedAt = currentTimestamp();
+    this.updatedAt = currentThreadTimestamp();
     this.changedFiles = NO_FILE_CHANGES_TEXT;
   }
 }
@@ -1036,6 +1036,19 @@ function currentTimestamp(): string {
   const hours: string = now.getHours().toString().padStart(2, '0');
   const minutes: string = now.getMinutes().toString().padStart(2, '0');
   return `${hours}:${minutes}`;
+}
+
+function formatDetailedTimestamp(date: Date): string {
+  const year: string = date.getFullYear().toString();
+  const month: string = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day: string = date.getDate().toString().padStart(2, '0');
+  const hours: string = date.getHours().toString().padStart(2, '0');
+  const minutes: string = date.getMinutes().toString().padStart(2, '0');
+  return `${year}年${month}月${day}日 ${hours}:${minutes}`;
+}
+
+function currentThreadTimestamp(): string {
+  return formatDetailedTimestamp(new Date());
 }
 
 function safeJsonParse(rawText: string): Object | null {
@@ -1106,7 +1119,6 @@ export class CodexBackend {
   sessionSummaries(): SessionSummary[] {
     const sessions: SessionSummary[] = [];
     this.threads.forEach((thread: CodexThreadRecord) => {
-      const lastMessageTimestamp: string = thread.messages.length > 0 ? thread.messages[thread.messages.length - 1].timestamp : thread.updatedAt;
       const workspace: WorkspaceDescriptor = this.workspaceDescriptorForThread(thread);
       sessions.push(new SessionSummary(
         thread.localKey,
@@ -1117,7 +1129,7 @@ export class CodexBackend {
         workspace.permissionState,
         workspace.accessKind,
         thread.messages.length,
-        lastMessageTimestamp,
+        thread.updatedAt,
         thread.summaryTitle,
         thread.lastTurnStatus,
         thread.changedFiles
@@ -1323,7 +1335,7 @@ export class CodexBackend {
       workspaceAccessKind,
       writableRoots
     );
-    thread.updatedAt = currentTimestamp();
+    thread.updatedAt = currentThreadTimestamp();
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
     return this.sessionSummaries().find((item: SessionSummary) => item.sessionId === remoteThreadId)
@@ -1429,7 +1441,7 @@ export class CodexBackend {
     if (rawStatus === 'failed' || pendingTurn.turnId.trim().length === 0) {
       thread.activeTurn = null;
       thread.lastTurnStatus = 'failed';
-      thread.updatedAt = currentTimestamp();
+      thread.updatedAt = currentThreadTimestamp();
       thread.summaryTitle = '本轮失败';
       thread.summaryPoints = [errorMessage.trim().length > 0 ? errorMessage : 'turn/start 未返回有效的 turnId。'];
       const failedSnapshot: CodexTurnResult = this.snapshotForThread(thread, 'failed');
@@ -1914,18 +1926,22 @@ export class CodexBackend {
   private timestampFromPayload(rawValue: Object): string {
     if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
       const date: Date = new Date((rawValue as number) * 1000);
-      const hours: string = date.getHours().toString().padStart(2, '0');
-      const minutes: string = date.getMinutes().toString().padStart(2, '0');
-      return `${hours}:${minutes}`;
+      return formatDetailedTimestamp(date);
     }
-    return currentTimestamp();
+    if (typeof rawValue === 'string' && rawValue.trim().length > 0) {
+      const parsedDate: Date = new Date(rawValue);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        return formatDetailedTimestamp(parsedDate);
+      }
+    }
+    return currentThreadTimestamp();
   }
 
   private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
     this.upsertMessage(thread, `user-${Date.now()}`, '你', 'user', prompt, currentTimestamp());
     thread.turnCount += 1;
     thread.lastTurnStatus = 'inProgress';
-    thread.updatedAt = currentTimestamp();
+    thread.updatedAt = currentThreadTimestamp();
     thread.changedFiles = NO_FILE_CHANGES_TEXT;
     thread.diffLines = [];
     thread.diffStat = '+0 -0';
@@ -2086,7 +2102,7 @@ export class CodexBackend {
     thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : (status === 'completed' ? '本轮已完成' : '执行中');
     thread.summaryPoints = summaryPoints.length > 0 ? summaryPoints : [status === 'completed' ? '本轮执行已结束。' : '等待更多轮询结果。'];
     thread.lastTurnStatus = status;
-    thread.updatedAt = currentTimestamp();
+    thread.updatedAt = currentThreadTimestamp();
     return this.snapshotForThread(thread, status, turnId);
   }
 
