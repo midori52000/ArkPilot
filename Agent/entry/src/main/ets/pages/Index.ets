@@ -211,6 +211,7 @@ struct Index {
   private dragStartLeftW: number = 0;
   private dragStartRightW: number = 0;
   @State private draft: string = '检查当前工作目录，并说明需要我批准的操作。';
+  private savedDraft: string = '';
   @State private pendingApproval: CodexApprovalRequest | null = null;
   @State private messages: ChatMessage[] = [
     new ChatMessage(
@@ -711,6 +712,8 @@ struct Index {
     if (prompt.length === 0 || this.isRunning) {
       return;
     }
+    this.savedDraft = this.draft;
+    this.draft = '';
     void this.runTurn(prompt);
   }
 
@@ -750,10 +753,15 @@ struct Index {
         }
       );
       this.applyBackendResult(result);
-      this.draft = '';
+      if (result.status === 'interrupted') {
+        this.draft = this.savedDraft;
+      }
+      this.savedDraft = '';
     } catch (err) {
       this.summaryTitle = '调用失败';
       this.summaryPoints = [this.describeError(err)];
+      this.draft = this.savedDraft;
+      this.savedDraft = '';
     } finally {
       this.isRunning = false;
     }
@@ -1337,7 +1345,7 @@ struct Index {
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -1367,18 +1375,18 @@ struct Index {
   private selectorButton(label: string, value: string, active: boolean, onPress: () => void) {
     Row() {
       Text(label)
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(10)
         .fontColor('#64748B')
 
       Text(value)
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(10)
         .fontColor('#0F172A')
         .margin({ left: 6 })
 
       Text('▾')
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(10)
         .fontColor('#94A3B8')
         .margin({ left: 6 })
@@ -1395,7 +1403,7 @@ struct Index {
   @Builder
   private optionChip(option: SelectorOption, selected: boolean, onPress: () => void) {
     Text(option.label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor(selected ? '#1D4ED8' : '#475569')
       .padding({ left: 8, right: 8, top: 5, bottom: 5 })
@@ -1447,7 +1455,7 @@ struct Index {
     Column() {
       Row() {
         Text(item.label)
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(12)
           .fontWeight(this.isSidebarActive(item.view) ? FontWeight.Medium : FontWeight.Regular)
           .fontColor('#0F172A')
@@ -1535,7 +1543,7 @@ struct Index {
   private summaryBullet(text: string) {
     Row() {
       Text('•')
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(12)
         .fontColor('#475569')
         .margin({ right: 6 })
@@ -1752,7 +1760,7 @@ struct Index {
   @Builder
   private actionChip(label: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor('#475569')
       .padding({ left: 8, right: 8, top: 5, bottom: 5 })
@@ -2339,13 +2347,18 @@ struct Index {
             .onSubmit(() => {
               this.sendMessage();
             })
+            .onKeyEvent((event: KeyEvent) => {
+              if (event.type === KeyType.Down && event.keyCode === 27 && this.isRunning) {
+                this.stopTurn();
+              }
+            })
 
           Button() {
             Text(this.isRunning ? '■' : '发送')
               .fontSize(this.isRunning ? 14 : 12)
               .fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
           }
             .width(64)
             .height(36)

@@ -26,7 +26,7 @@ export struct PromptsPage {
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -129,7 +129,7 @@ export struct PromptsPage {
                     Column() {
                       Row() {
                         Text(prompt.enabled ? '●' : '○')
-                          .copyOption(CopyOptions.LocalDevice)
+                          .copyOption(CopyOptions.None)
                           .fontSize(14)
                           .fontColor(prompt.enabled ? '#4ADE80' : '#ccc')
                           .margin({ right: 6 })
@@ -306,7 +306,7 @@ export struct PromptsPage {
 
           Row() {
             Text('名称')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(13)
               .fontColor('#334155')
               .width(60)
@@ -328,7 +328,7 @@ export struct PromptsPage {
 
           Row() {
             Text('描述')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(13)
               .fontColor('#334155')
               .width(60)

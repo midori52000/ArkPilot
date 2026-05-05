@@ -1366,11 +1366,11 @@ struct SettingsPage {
 
                 Row() {
                   Text('对话测试')
-                    .copyOption(CopyOptions.LocalDevice)
+                    .copyOption(CopyOptions.None)
                     .fontSize(9)
                     .fontColor('#94A3B8')
                   Text(this.chatProbeLabel(r.chatProbe))
-                    .copyOption(CopyOptions.LocalDevice)
+                    .copyOption(CopyOptions.None)
                     .fontSize(9)
                     .fontWeight(FontWeight.Medium)
                     .fontColor(this.chatProbeColor(r.chatProbe))
@@ -1491,7 +1491,7 @@ struct SettingsPage {
       this.particleCluster()
 
       Text('Frontend Mock Mode')
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(11)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0A84FF')
@@ -1553,7 +1553,7 @@ struct SettingsPage {
     Column() {
       Row() {
         Text('CONTROL')
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(10)
           .fontWeight(FontWeight.Medium)
           .fontColor('#0A84FF')
@@ -1562,7 +1562,7 @@ struct SettingsPage {
           .borderRadius(10)
 
         Text('MOCK')
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(10)
           .fontWeight(FontWeight.Medium)
           .fontColor('#166534')
@@ -1627,7 +1627,7 @@ struct SettingsPage {
       Row() {
         Column() {
           Text(item.label)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(15)
             .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
             .fontColor('#0F172A')
@@ -1813,7 +1813,7 @@ struct SettingsPage {
           .backgroundColor(color)
           .borderRadius(10)
         Text('Ready')
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(10)
           .fontColor(color)
           .margin({ left: 6 })
@@ -1854,7 +1854,7 @@ struct SettingsPage {
   @Builder
   private pill(label: string, background: string, color: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontWeight(FontWeight.Medium)
       .fontColor(color)
@@ -1883,7 +1883,7 @@ struct SettingsPage {
   @Builder
   private optionChip(label: string, selected: boolean, key: string, onClick: () => void) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(11)
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(selected ? '#0A84FF' : '#475569')
@@ -1901,7 +1901,7 @@ struct SettingsPage {
   @Builder
   private formLabel(label: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontWeight(FontWeight.Medium)
       .fontColor('#64748B')
@@ -2196,7 +2196,7 @@ struct SettingsPage {
   @Builder
   private skillInlineTag(label: string, accent: boolean = false) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontWeight(FontWeight.Medium)
       .fontColor(accent ? '#94A3B8' : '#A3AFBF')
@@ -2238,7 +2238,7 @@ struct SettingsPage {
 
               if (skill.enabled) {
                 Text('启用')
-                  .copyOption(CopyOptions.LocalDevice)
+                  .copyOption(CopyOptions.None)
                   .fontSize(9)
                   .fontColor('#16A34A')
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -2716,7 +2716,7 @@ struct SettingsPage {
   @Builder
   private apiSubTabChip(label: string, tab: ApiSubTab) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(11)
       .fontWeight(this.apiActiveSubTab === tab ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.apiActiveSubTab === tab ? '#1D4ED8' : '#64748B')
@@ -2734,7 +2734,7 @@ struct SettingsPage {
   @Builder
   private apiFilterChip(label: string, category: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontWeight(this.apiPresetCategory === category ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.apiPresetCategory === category ? '#1D4ED8' : '#64748B')
@@ -2841,7 +2841,7 @@ struct SettingsPage {
           .borderRadius(21)
 
         Text(this.apiProviderInitial(provider))
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor(provider.iconColor.trim().length > 0 ? provider.iconColor : (provider.isActive ? '#D97757' : '#64748B'))
@@ -2860,7 +2860,7 @@ struct SettingsPage {
 
           if (provider.isActive) {
             Text('当前')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(9)
               .fontWeight(FontWeight.Medium)
               .fontColor('#1D4ED8')
@@ -3236,7 +3236,7 @@ struct SettingsPage {
             .borderRadius(19)
 
           Text(preset.name.substring(0, 1).toUpperCase())
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor(preset.accent)
@@ -3690,7 +3690,7 @@ struct SettingsPage {
               .layoutWeight(1)
 
             Text(this.selectedSkillDetail.enabled ? '启用' : '禁用')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(11)
               .fontColor(this.selectedSkillDetail.enabled ? '#16A34A' : '#94A3B8')
               .padding({ left: 8, right: 8, top: 3, bottom: 3 })

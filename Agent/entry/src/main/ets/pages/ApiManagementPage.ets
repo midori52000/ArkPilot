@@ -312,7 +312,7 @@ export struct ApiManagementPage {
   @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 3, bottom: 3 })
@@ -360,7 +360,7 @@ export struct ApiManagementPage {
   @Builder
   private subTabChip(label: string, tab: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(11)
       .fontWeight(this.activeSubTab === tab ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.activeSubTab === tab ? '#1D4ED8' : '#64748B')
@@ -424,7 +424,7 @@ export struct ApiManagementPage {
   @Builder
   private filterChip(label: string, category: string) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor(this.filterCategory === category ? '#1D4ED8' : '#64748B')
       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -608,7 +608,7 @@ export struct ApiManagementPage {
     Row() {
       Row() {
         Text('⋮⋮')
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(12)
           .fontColor('#C0CAD8')
           .opacity(0.95)
@@ -626,7 +626,7 @@ export struct ApiManagementPage {
           .borderRadius(21)
 
         Text(this.providerInitial(provider))
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor(provider.iconColor.trim().length > 0 ? provider.iconColor : (provider.isActive ? '#D97757' : '#64748B'))
@@ -647,7 +647,7 @@ export struct ApiManagementPage {
 
           if (provider.isActive) {
             Text('当前')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(9)
               .fontWeight(FontWeight.Medium)
               .fontColor('#1D4ED8')
@@ -855,7 +855,7 @@ export struct ApiManagementPage {
           .onChange((value: string) => { this.editorModel = value; })
 
         Text('API 格式')
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(10).fontColor('#64748B').margin({ top: 10 })
         Row() {
           this.optionChip('Responses', this.editorWireApi === 'responses', () => { this.editorWireApi = 'responses'; })
@@ -864,7 +864,7 @@ export struct ApiManagementPage {
         }
 
         Text('分类')
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(10).fontColor('#64748B').margin({ top: 8 })
         Row() {
           this.optionChip('官方', this.editorCategory === 'official', () => { this.editorCategory = 'official'; })
@@ -920,7 +920,7 @@ export struct ApiManagementPage {
   @Builder
   private optionChip(label: string, selected: boolean, onClick: () => void) {
     Text(label)
-      .copyOption(CopyOptions.LocalDevice)
+      .copyOption(CopyOptions.None)
       .fontSize(10)
       .fontColor(selected ? '#1D4ED8' : '#64748B')
       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -1053,11 +1053,11 @@ export struct ApiManagementPage {
 
                 Row() {
                   Text('对话测试')
-                    .copyOption(CopyOptions.LocalDevice)
+                    .copyOption(CopyOptions.None)
                     .fontSize(9)
                     .fontColor('#94A3B8')
                   Text(this.chatProbeLabel(r.chatProbe))
-                    .copyOption(CopyOptions.LocalDevice)
+                    .copyOption(CopyOptions.None)
                     .fontSize(9)
                     .fontWeight(FontWeight.Medium)
                     .fontColor(this.chatProbeColor(r.chatProbe))
