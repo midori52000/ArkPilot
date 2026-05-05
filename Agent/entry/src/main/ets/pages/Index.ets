@@ -229,11 +229,12 @@ struct Index {
   @State private diffFiles: CodeDiffFile[] = [];
   @State private selectedDiffFilePath: string = '';
   @State private isRunning: boolean = false;
-  @State private leftPanelWidth: number = 240;
-  @State private rightPanelWidth: number = 330;
-  private rowContainerWidth: number = 1000;
-  private readonly panelMinWidth: number = 120;
-  private readonly splitterBarWidth: number = 8;
+  @State private showLeftDrawer: boolean = true;
+  @State private showRightDrawer: boolean = true;
+  @State private leftPanelWidth: number = 280;
+  @State private rightPanelWidth: number = 360;
+  private readonly leftDrawerMinWidth: number = 200;
+  private readonly rightDrawerMinWidth: number = 240;
   private dragStartLeftW: number = 0;
   private dragStartRightW: number = 0;
   @State private draft: string = '检查当前工作目录，并说明需要我批准的操作。';
@@ -1465,11 +1466,16 @@ struct Index {
     return this.activeSidebarView === view;
   }
 
-  private computeCenterWidth(): number {
-    const totalSplitterW = this.splitterBarWidth * 2;
-    const available = this.rowContainerWidth - 20 - totalSplitterW;
-    const centerW = available - this.leftPanelWidth - this.rightPanelWidth;
-    return Math.max(this.panelMinWidth, centerW);
+  private toggleLeftDrawer(): void {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+      this.showLeftDrawer = !this.showLeftDrawer;
+    });
+  }
+
+  private toggleRightDrawer(): void {
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+      this.showRightDrawer = !this.showRightDrawer;
+    });
   }
 
   private describeError(err: Object): string {
@@ -2021,47 +2027,6 @@ struct Index {
   }
 
   @Builder
-  private splitterBar(isLeft: boolean) {
-    Column() {
-      Column()
-        .width(2)
-        .height('60%')
-        .backgroundColor('#CBD5E1')
-        .borderRadius(1)
-    }
-    .width(this.splitterBarWidth)
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor('#F1F5F9')
-    .borderRadius(4)
-    .hitTestBehavior(HitTestMode.Block)
-    .gesture(
-      PanGesture({ direction: PanDirection.Horizontal })
-        .onActionStart(() => {
-          this.dragStartLeftW = this.leftPanelWidth;
-          this.dragStartRightW = this.rightPanelWidth;
-        })
-        .onActionUpdate((event: GestureEvent) => {
-          const totalSplit = this.splitterBarWidth * 2;
-          const available = this.rowContainerWidth - 20 - totalSplit;
-          if (isLeft) {
-            const newLeft = this.dragStartLeftW + event.offsetX;
-            const centerW = available - newLeft - this.rightPanelWidth;
-            if (newLeft >= this.panelMinWidth && centerW >= this.panelMinWidth) {
-              this.leftPanelWidth = newLeft;
-            }
-          } else {
-            const newRight = this.dragStartRightW - event.offsetX;
-            const centerW = available - this.leftPanelWidth - newRight;
-            if (newRight >= this.panelMinWidth && centerW >= this.panelMinWidth) {
-              this.rightPanelWidth = newRight;
-            }
-          }
-        })
-    )
-  }
-
-  @Builder
   private approvalCard(approval: CodexApprovalRequest) {
     Column() {
       Row() {
@@ -2218,6 +2183,11 @@ struct Index {
   private sessionsCenterView() {
     Column() {
       Row() {
+        this.leftDrawerToggle()
+
+        Blank()
+          .width(6)
+
         this.panelTitle('Sessions', '集中查看、切换并删除当前项目的会话')
 
         Blank()
@@ -2234,6 +2204,7 @@ struct Index {
           })
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       if (this.sessionSummaries.length === 0) {
         Column() {
@@ -2270,6 +2241,11 @@ struct Index {
   private usageCenterView() {
     Column() {
       Row() {
+        this.leftDrawerToggle()
+
+        Blank()
+          .width(6)
+
         this.panelTitle('Usage', '基于当前对话线程派生的基础统计')
 
         Blank()
@@ -2278,6 +2254,7 @@ struct Index {
         this.chip(this.connectionText, '#F8FAFC', '#64748B')
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
         this.metricCard('会话数', this.workspaces.length.toString(), '当前工作台中已创建的线程数')
@@ -2600,6 +2577,11 @@ struct Index {
   private chatCenterView() {
     Column() {
       Row() {
+        this.leftDrawerToggle()
+
+        Blank()
+          .width(6)
+
         Column() {
           Text(this.currentWorkspaceTitle)
             .copyOption(CopyOptions.LocalDevice)
@@ -2623,9 +2605,14 @@ struct Index {
           Blank()
             .width(6)
           this.chip(this.currentEffortLabel(), '#F8FAFC', '#64748B')
+          Blank()
+            .width(6)
+          this.rightDrawerToggle()
         }
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       Column() {
         Text(this.summaryTitle)
@@ -2802,7 +2789,7 @@ struct Index {
       }
     }
     .height('100%')
-    .width(this.computeCenterWidth())
+    .layoutWeight(1)
     .padding(12)
     .backgroundColor('#F8FAFC')
     .border({ width: 1, color: '#E2E8F0' })
@@ -3189,6 +3176,105 @@ struct Index {
     .borderRadius(20)
   }
 
+  @Builder
+  private splitterBar(isLeft: boolean) {
+    Column() {
+      Column()
+        .width(2)
+        .height('60%')
+        .backgroundColor('#CBD5E1')
+        .borderRadius(1)
+    }
+    .width(8)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#F1F5F9')
+    .borderRadius(4)
+    .hitTestBehavior(HitTestMode.Block)
+    .gesture(
+      PanGesture({ direction: PanDirection.Horizontal })
+        .onActionStart(() => {
+          this.dragStartLeftW = this.leftPanelWidth;
+          this.dragStartRightW = this.rightPanelWidth;
+        })
+        .onActionUpdate((event: GestureEvent) => {
+          if (isLeft) {
+            const newLeft = this.dragStartLeftW + event.offsetX;
+            if (newLeft >= this.leftDrawerMinWidth) {
+              this.leftPanelWidth = newLeft;
+            }
+          } else {
+            const newRight = this.dragStartRightW - event.offsetX;
+            if (newRight >= this.rightDrawerMinWidth) {
+              this.rightPanelWidth = newRight;
+            }
+          }
+        })
+    )
+  }
+
+  @Builder
+  private leftDrawerToggle() {
+    Button() {
+      Stack() {
+        Column()
+          .width(16)
+          .height(12)
+          .borderRadius(3)
+          .border({ width: 1.5, color: '#64748B' })
+          .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+
+        Column()
+          .width(1.5)
+          .height(8)
+          .backgroundColor('#64748B')
+          .position({ x: 4, y: 2 })
+      }
+      .width(16)
+      .height(12)
+    }
+    .type(ButtonType.Normal)
+    .width(32)
+    .height(28)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .border({ width: 1, color: '#E2E8F0' })
+    .onClick(() => {
+      this.toggleLeftDrawer();
+    })
+  }
+
+  @Builder
+  private rightDrawerToggle() {
+    Button() {
+      Stack() {
+        Column()
+          .width(16)
+          .height(12)
+          .borderRadius(3)
+          .border({ width: 1.5, color: '#64748B' })
+          .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+
+        Column()
+          .width(1.5)
+          .height(8)
+          .backgroundColor('#64748B')
+          .position({ x: 10.5, y: 2 })
+      }
+      .width(16)
+      .height(12)
+    }
+    .type(ButtonType.Normal)
+    .width(32)
+    .height(28)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .border({ width: 1, color: '#E2E8F0' })
+    .onClick(() => {
+      this.toggleRightDrawer();
+    })
+  }
+
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {}
@@ -3197,26 +3283,31 @@ struct Index {
         .backgroundColor('#EEF2F7')
 
       Row() {
-        this.leftPanel()
-        this.splitterBar(true)
+        if (this.showLeftDrawer) {
+          Column() {
+            this.leftPanel()
+          }
+          .height('100%')
+          .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+
+          this.splitterBar(true)
+        }
+
         this.centerPanel()
-        this.splitterBar(false)
-        this.rightPanel()
+
+        if (this.showRightDrawer) {
+          this.splitterBar(false)
+
+          Column() {
+            this.rightPanel()
+          }
+          .height('100%')
+          .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: 300, curve: Curve.EaseOut }))
+        }
       }
       .width('100%')
       .height('100%')
       .padding(10)
-      .onAreaChange((oldValue: Area, newValue: Area) => {
-        const newW = newValue.width as number;
-        if (newW > 0 && this.rowContainerWidth !== newW) {
-          if (this.rowContainerWidth > 0) {
-            const scale = newW / this.rowContainerWidth;
-            this.leftPanelWidth = Math.max(this.panelMinWidth, this.leftPanelWidth * scale);
-            this.rightPanelWidth = Math.max(this.panelMinWidth, this.rightPanelWidth * scale);
-          }
-          this.rowContainerWidth = newW;
-        }
-      })
 
       this.createWorkspaceDialog()
       this.renameSessionDialog()
