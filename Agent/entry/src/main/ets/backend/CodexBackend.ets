@@ -55,7 +55,7 @@ import {
 } from '../skills/SkillTypes';
 import { SkillError, SkillsBackendService } from '../skills/SkillsBackendService';
 
-export type CodexMessageRole = 'user' | 'assistant' | 'system';
+export type CodexMessageRole = 'user' | 'assistant' | 'system' | 'reasoning' | 'command' | 'tool' | 'file' | 'search' | 'plan' | 'image';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
 export type CodexDiffKind = 'add' | 'delete' | 'context';
 export type CodexConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -824,14 +824,30 @@ export class CodexChatMessage {
   role: CodexMessageRole;
   content: string;
   timestamp: string;
+  itemType?: string;
+  status?: string;
+  metadata?: Record<string, Object>;
 
-  constructor(messageId: string, sequence: number, author: string, role: CodexMessageRole, content: string, timestamp: string) {
+  constructor(
+    messageId: string,
+    sequence: number,
+    author: string,
+    role: CodexMessageRole,
+    content: string,
+    timestamp: string,
+    itemType?: string,
+    status?: string,
+    metadata?: Record<string, Object>
+  ) {
     this.messageId = messageId;
     this.sequence = sequence;
     this.author = author;
     this.role = role;
     this.content = content;
     this.timestamp = timestamp;
+    this.itemType = itemType;
+    this.status = status;
+    this.metadata = metadata;
   }
 }
 
@@ -1839,14 +1855,22 @@ export class CodexBackend {
     return messages.map((item: Object, index: number) => {
       const message = item as Record<string, Object>;
       const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
-      const role: CodexMessageRole = roleRaw === 'user' || roleRaw === 'system' ? roleRaw : 'assistant';
+      const role: CodexMessageRole = this.mapMessageRole(roleRaw);
+      const itemType: string | undefined = typeof message['itemType'] === 'string' ? (message['itemType'] as string) : undefined;
+      const itemStatus: string | undefined = typeof message['status'] === 'string' ? (message['status'] as string) : undefined;
+      const metadata: Record<string, Object> | undefined = message['metadata'] !== undefined && message['metadata'] !== null
+        ? (message['metadata'] as Record<string, Object>)
+        : undefined;
       return new CodexChatMessage(
         typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
         index + 1,
         typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'ArkPilot' : '系统'),
         role,
         typeof message['content'] === 'string' ? (message['content'] as string) : '',
-        typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp()
+        typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp(),
+        itemType,
+        itemStatus,
+        metadata
       );
     });
   }
@@ -1991,14 +2015,22 @@ export class CodexBackend {
       const nextMessages: CodexChatMessage[] = messages.map((item: Object, index: number) => {
         const message = item as Record<string, Object>;
         const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
-        const role: CodexMessageRole = roleRaw === 'user' || roleRaw === 'system' ? roleRaw : 'assistant';
+        const role: CodexMessageRole = this.mapMessageRole(roleRaw);
+        const itemType: string | undefined = typeof message['itemType'] === 'string' ? (message['itemType'] as string) : undefined;
+        const itemStatus: string | undefined = typeof message['status'] === 'string' ? (message['status'] as string) : undefined;
+        const metadata: Record<string, Object> | undefined = message['metadata'] !== undefined && message['metadata'] !== null
+          ? (message['metadata'] as Record<string, Object>)
+          : undefined;
         return new CodexChatMessage(
           typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
           index + 1,
           typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'ArkPilot' : '系统'),
           role,
           typeof message['content'] === 'string' ? (message['content'] as string) : '',
-          typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp()
+          typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp(),
+          itemType,
+          itemStatus,
+          metadata
         );
       });
       thread.messages = this.mergeThreadMessages(thread.messages, nextMessages);
@@ -2051,7 +2083,10 @@ export class CodexBackend {
         current.author,
         current.role,
         current.content,
-        current.timestamp
+        current.timestamp,
+        current.itemType,
+        current.status,
+        current.metadata
       );
     }
     return merged;
@@ -2132,6 +2167,16 @@ export class CodexBackend {
       return 'interrupted';
     }
     return 'inProgress';
+  }
+
+  private mapMessageRole(role: string): CodexMessageRole {
+    if (role === 'user' || role === 'system') {
+      return role;
+    }
+    if (role === 'reasoning' || role === 'command' || role === 'tool' || role === 'file' || role === 'search' || role === 'plan' || role === 'image') {
+      return role;
+    }
+    return 'assistant';
   }
 
   private normalizeChangedFilesText(value: string, hasDiff: boolean): string {
@@ -2266,7 +2311,7 @@ export class CodexBackend {
   }
 
   private cloneMessage(message: CodexChatMessage): CodexChatMessage {
-    return new CodexChatMessage(message.messageId, message.sequence, message.author, message.role, message.content, message.timestamp);
+    return new CodexChatMessage(message.messageId, message.sequence, message.author, message.role, message.content, message.timestamp, message.itemType, message.status, message.metadata);
   }
 
   private cloneDiffLine(line: CodexDiffLine): CodexDiffLine {
