@@ -167,8 +167,7 @@ struct Index {
   ];
   private readonly sidebarItems: SidebarItem[] = [
     new SidebarItem('chat', 'Chat', '继续与内置 ArkPilot 协作'),
-    new SidebarItem('sessions', 'Sessions', '查看、切换并删除历史会话'),
-    new SidebarItem('usage', 'Usage', '查看当前工作台统计')
+    new SidebarItem('sessions', 'Sessions', '查看、切换并删除历史会话')
   ];
   private backendSubscriptionId: number = -1;
   private reconnectTimerId: number = -1;
@@ -1785,37 +1784,6 @@ struct Index {
     .margin({ top: 8 })
   }
 
-  @Builder
-  private metricCard(title: string, value: string, hint: string) {
-    Column() {
-      Text(title)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#94A3B8')
-
-      Text(value)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-        .margin({ top: 8 })
-
-      Text(hint)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#64748B')
-        .margin({ top: 6 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('48%')
-    .padding(12)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E2E8F0' })
-    .borderRadius(16)
-    .margin({ bottom: 8 })
-  }
 
   @Builder
   private summaryBullet(text: string) {
@@ -2263,50 +2231,6 @@ struct Index {
   }
 
   @Builder
-  private usageCenterView() {
-    Column() {
-      Row() {
-        this.leftDrawerToggle()
-
-        Blank()
-          .width(6)
-
-        this.panelTitle('Usage', '基于当前对话线程派生的基础统计')
-
-        Blank()
-          .layoutWeight(1)
-
-        this.chip(this.connectionText, '#F8FAFC', '#64748B')
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.metricCard('会话数', this.workspaces.length.toString(), '当前工作台中已创建的线程数')
-        this.metricCard('消息总数', this.messages.length.toString(), '当前线程缓存的消息条数')
-        this.metricCard('Diff 行数', this.codeLines.length.toString(), '右栏当前缓存的 diff 行')
-        this.metricCard('连接状态', this.connectionText, '当前 原生桥接 连接状态')
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      Column() {
-        this.panelTitle('说明', '第一阶段先做本地派生统计，不做精确 token/cost 账单')
-        this.summaryBullet('统计来自 ArkPilot 内部线程快照，后续会继续收敛到原生桥接主链路。')
-        this.summaryBullet('Provider / MCP / Skills 管理请通过左下角 Settings 按钮进入。')
-      }
-      .width('100%')
-      .padding(14)
-      .margin({ top: 6 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
-    }
-    .height('100%')
-    .width('100%')
-  }
-
-  @Builder
   private leftPanel() {
     Column() {
     Scroll() {
@@ -2408,16 +2332,33 @@ struct Index {
           .border({ width: 1, color: '#E2E8F0' })
           .borderRadius(16)
 
-          Button('新建会话')
-            .height(34)
-            .margin({ top: 12 })
-            .fontSize(12)
-            .backgroundColor('#111827')
-            .fontColor('#FFFFFF')
-            .borderRadius(16)
-            .onClick(() => {
-              void this.createWorkspace();
-            })
+          Row() {
+            Button('新建会话')
+              .layoutWeight(1)
+              .height(34)
+              .fontSize(12)
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(16)
+              .onClick(() => {
+                void this.createWorkspace();
+              })
+
+            Button('会话管理')
+              .layoutWeight(1)
+              .height(34)
+              .margin({ left: 8 })
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .fontColor('#334155')
+              .borderRadius(16)
+              .border({ width: 1, color: '#CBD5E1' })
+              .onClick(() => {
+                this.activeSidebarView = 'sessions';
+              })
+          }
+          .width('100%')
+          .margin({ top: 12 })
 
           if (this.recentWorkspaces.length === 0) {
             Text('当前目录下暂无会话')
@@ -2467,19 +2408,6 @@ struct Index {
             .onClick(() => {
               this.createWorkspace();
             })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 10 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2E8F0' })
-        .borderRadius(18)
-      } else {
-        Column() {
-          this.panelTitle('Usage 概览', '基于当前 ArkPilot 线程状态派生')
-          this.infoRow('会话', this.workspaces.length.toString())
-          this.infoRow('状态', this.connectionText)
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
@@ -2759,10 +2687,8 @@ struct Index {
         .justifyContent(FlexAlign.Center)
       } else if (this.activeSidebarView === 'chat') {
         this.chatCenterView()
-      } else if (this.activeSidebarView === 'sessions') {
-        this.sessionsCenterView()
       } else {
-        this.usageCenterView()
+        this.sessionsCenterView()
       }
     }
     .height('100%')
@@ -3127,18 +3053,6 @@ struct Index {
           this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
           this.summaryBullet('在中间列表里点击“打开”会切回 Chat 并加载该会话。')
           this.summaryBullet('点击“删除”会归档该线程，并从左侧/中间列表里移除。')
-        }
-        .alignItems(HorizontalAlign.Start)
-        .height('100%')
-        .width('100%')
-      } else {
-        Column() {
-          this.panelTitle('Usage 上下文', '当前统计口径与最近状态')
-          this.infoRow('会话数', this.workspaces.length.toString())
-          this.infoRow('消息总数', this.messages.length.toString())
-          this.infoRow('Diff 行数', this.codeLines.length.toString())
-          this.infoRow('连接状态', this.connectionText)
-          this.infoRow('当前 Provider', this.providerStatusText)
         }
         .alignItems(HorizontalAlign.Start)
         .height('100%')
