@@ -322,9 +322,9 @@ struct Index {
     }, delayMs);
   }
 
-  private activeWorkspace(): WorkspaceItem {
+  private activeWorkspace(): WorkspaceItem | undefined {
     if (this.workspaces.length === 0) {
-      this.ensurePlaceholderWorkspace();
+      return undefined;
     }
     for (let index: number = 0; index < this.workspaces.length; index += 1) {
       if (this.workspaces[index].id === this.activeWorkspaceId) {
@@ -335,7 +335,12 @@ struct Index {
   }
 
   private syncCurrentWorkspaceState(): void {
-    const workspace: WorkspaceItem = this.activeWorkspace();
+    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (workspace === undefined) {
+      this.currentWorkspaceTitle = '';
+      this.currentWorkspaceDescription = '';
+      return;
+    }
     this.currentWorkspaceTitle = workspace.title;
     this.currentWorkspaceDescription = workspace.description;
   }
@@ -366,7 +371,14 @@ struct Index {
   }
 
   private refreshWorkspaceBindingState(): void {
-    const active: WorkspaceItem = this.activeWorkspace();
+    if (this.workspaces.length === 0) {
+      this.activeWorkspaceBindingId = '';
+      this.activeWorkspacePermissionState = 'unavailable';
+      this.activeWorkspaceAccessKind = 'unknown';
+      this.workspaceStatusText = '';
+      return;
+    }
+    const active: WorkspaceItem = this.activeWorkspace()!;
     this.activeWorkspaceBindingId = this.ensureWorkspaceBinding(active);
     const currentWorkspaceRoot: string = this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText.trim() : this.workspaceRoot.trim();
     if (currentWorkspaceRoot.length > 0) {
@@ -481,14 +493,14 @@ struct Index {
   private applySessionSummariesToWorkspaces(summaries: SessionSummary[], preferredThreadId?: string): void {
     if (summaries.length === 0) {
       this.workspaces = [];
-      const preferredId: number = this.activeWorkspaceId > 0 ? this.activeWorkspaceId : 1;
-      const workspace: WorkspaceItem = this.ensurePlaceholderWorkspace(preferredId);
-      this.activeWorkspaceId = workspace.id;
-      this.workspaceRoot = this.workspaceRoots.get(workspace.id) ?? this.workspaceRoot;
-      this.workspaceDraftText = this.workspaceRoot;
+      this.activeWorkspaceId = 0;
+      this.workspaceRoot = '';
+      this.workspaceDraftText = '';
+      this.currentWorkspaceTitle = '';
+      this.currentWorkspaceDescription = '';
+      this.syncRecentWorkspaces();
       this.syncWorkspaceSelectionText();
       this.refreshWorkspaceBindingState();
-      this.syncCurrentWorkspaceState();
       this.persistWorkspaceBindings();
       return;
     }
@@ -510,8 +522,8 @@ struct Index {
       }
     }
 
-    const activeWorkspace: WorkspaceItem = this.activeWorkspace();
-    const activePlaceholderId: number = !this.isRemoteThreadId(activeWorkspace.workspaceId) ? activeWorkspace.id : 0;
+    const activeWorkspace: WorkspaceItem | undefined = this.activeWorkspace();
+    const activePlaceholderId: number = activeWorkspace !== undefined && !this.isRemoteThreadId(activeWorkspace.workspaceId) ? activeWorkspace.id : 0;
     const nextWorkspaces: WorkspaceItem[] = [];
     const nextWorkspaceIds: Map<number, string> = new Map();
     const nextWorkspaceRoots: Map<number, string> = new Map();
@@ -577,7 +589,11 @@ struct Index {
   }
 
   private async loadSelectedWorkspaceHistory(): Promise<void> {
-    const workspace: WorkspaceItem = this.activeWorkspace();
+    if (this.workspaces.length === 0) {
+      this.resetConversationSurface('当前目录下暂无会话', ['请先创建一个新会话。']);
+      return;
+    }
+    const workspace: WorkspaceItem = this.activeWorkspace()!;
     if (!this.isRemoteThreadId(workspace.workspaceId)) {
       this.resetConversationSurface('等待创建新会话', ['当前会话尚未在 app-server 中创建，发送第一条消息后会自动建立线程。']);
       return;
@@ -593,10 +609,13 @@ struct Index {
 
   private syncWorkspaceWithRemoteThreadId(remoteThreadId: string): void {
     const trimmedThreadId: string = remoteThreadId.trim();
-    if (trimmedThreadId.length === 0) {
+    if (trimmedThreadId.length === 0 || this.workspaces.length === 0) {
       return;
     }
-    const workspace: WorkspaceItem = this.activeWorkspace();
+    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (workspace === undefined) {
+      return;
+    }
     workspace.workspaceId = trimmedThreadId;
     this.workspaceIds.set(workspace.id, trimmedThreadId);
     this.activeWorkspaceBindingId = trimmedThreadId;
@@ -857,6 +876,9 @@ struct Index {
   }
 
   private async runTurn(prompt: string): Promise<void> {
+    if (this.workspaces.length === 0) {
+      return;
+    }
     this.isRunning = true;
     if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
       this.applyWorkspaceRootBinding();
@@ -865,7 +887,11 @@ struct Index {
     this.refreshWorkspaceBindingState();
     codexBackend.configureServerUrl(this.serverUrl);
 
-    const workspace: WorkspaceItem = this.activeWorkspace();
+    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (workspace === undefined) {
+      this.isRunning = false;
+      return;
+    }
     const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
     const threadKey: string = workspace.workspaceId.trim().length > 0 ? workspace.workspaceId : this.activeWorkspaceBindingId;
     this.applyEmbeddedHostStatus();
@@ -2092,7 +2118,7 @@ struct Index {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#94A3B8')
-            .margin({ top: 4 })
+            .margin({ top: 2 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -2101,16 +2127,7 @@ struct Index {
       }
       .width('100%')
 
-      Text(this.sessionSummaryHint(summary))
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#475569')
-        .margin({ top: 10 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
       this.infoRow('工作目录', summary.workspaceRoot.trim().length > 0 ? summary.workspaceRoot : '默认 cwd')
-      this.infoRow('消息数', summary.messageCount.toString())
       this.infoRow('最近更新', summary.lastUpdatedAt)
 
       Row() {
@@ -2158,12 +2175,12 @@ struct Index {
           })
       }
       .width('100%')
-      .margin({ top: 12 })
+      .margin({ top: 8 })
       .alignItems(VerticalAlign.Center)
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(14)
+    .padding(10)
     .backgroundColor(this.isSessionSummaryActive(summary) ? '#F8FBFF' : '#FFFFFF')
     .border({
       width: 1,
@@ -2396,7 +2413,7 @@ struct Index {
         Column() {
           this.panelTitle('会话概览', '查看当前项目线程并进入会话管理页')
           this.infoRow('会话数', this.sessionSummaries.length.toString())
-          this.infoRow('当前会话', this.activeWorkspace().title)
+          this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
 
           Button('新建会话')
             .height(34)
@@ -3048,7 +3065,7 @@ struct Index {
       } else if (this.activeSidebarView === 'sessions') {
         Column() {
           this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-          this.infoRow('当前会话', this.activeWorkspace().title)
+          this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
           this.infoRow('会话总数', this.sessionSummaries.length.toString())
           this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
           this.summaryBullet('在中间列表里点击“打开”会切回 Chat 并加载该会话。')
