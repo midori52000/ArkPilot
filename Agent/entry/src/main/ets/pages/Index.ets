@@ -17,7 +17,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState } from '../backend/ConsoleModels';
+import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import router from '@ohos.router';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -252,6 +252,10 @@ struct Index {
   @State private codeLines: CodeDiffLine[] = [
     new CodeDiffLine('placeholder-1', '1', ' ', '等待 turn/diff/updated 通知。', 'context')
   ];
+  @State private tokenUsage: TurnTokenUsage | null = null;
+  @State private tokenAggregate: TokenUsageAggregate | null = null;
+  @State private tokenCardExpanded: boolean = true;
+  @State private tokenTab: number = 0;
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -277,6 +281,9 @@ struct Index {
     this.connectionState = snapshot.connectionState;
     this.connectionText = snapshot.connectionText;
     this.pendingApproval = snapshot.pendingApproval;
+    if (snapshot.tokenUsage !== null && snapshot.tokenUsage !== undefined) {
+      this.tokenUsage = snapshot.tokenUsage;
+    }
   }
 
   private applyEmbeddedHostStatus(): void {
@@ -908,6 +915,10 @@ struct Index {
     this.summaryPoints = result.summaryPoints.length > 0 ? result.summaryPoints : ['没有可展示的摘要信息。'];
     this.changedFiles = result.changedFiles;
     this.diffStat = result.diffStat;
+    if (result.tokenUsage !== null && result.tokenUsage !== undefined) {
+      this.tokenUsage = result.tokenUsage;
+    }
+    this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
     this.scheduleMessageScrollToBottom();
   }
 
@@ -3058,33 +3069,41 @@ struct Index {
   @Builder
   private rightPanel() {
     Column() {
-      if (this.activeSidebarView === 'chat') {
-        this.chatContextPanel()
-      } else if (this.activeSidebarView === 'sessions') {
-        Column() {
-          this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-          this.infoRow('当前会话', this.activeWorkspace().title)
-          this.infoRow('会话总数', this.sessionSummaries.length.toString())
-          this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
-          this.summaryBullet('在中间列表里点击“打开”会切回 Chat 并加载该会话。')
-          this.summaryBullet('点击“删除”会归档该线程，并从左侧/中间列表里移除。')
+      // 主内容区
+      Column() {
+        if (this.activeSidebarView === 'chat') {
+          this.chatContextPanel()
+        } else if (this.activeSidebarView === 'sessions') {
+          Column() {
+            this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
+            this.infoRow('当前会话', this.activeWorkspace().title)
+            this.infoRow('会话总数', this.sessionSummaries.length.toString())
+            this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
+            this.summaryBullet('在中间列表里点击”打开”会切回 Chat 并加载该会话。')
+            this.summaryBullet('点击”删除”会归档该线程，并从左侧/中间列表里移除。')
+          }
+          .alignItems(HorizontalAlign.Start)
+          .height('100%')
+          .width('100%')
+        } else {
+          Column() {
+            this.panelTitle('Usage 上下文', '当前统计口径与最近状态')
+            this.infoRow('会话数', this.workspaces.length.toString())
+            this.infoRow('消息总数', this.messages.length.toString())
+            this.infoRow('Diff 行数', this.codeLines.length.toString())
+            this.infoRow('连接状态', this.connectionText)
+            this.infoRow('当前 Provider', this.providerStatusText)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .height('100%')
+          .width('100%')
         }
-        .alignItems(HorizontalAlign.Start)
-        .height('100%')
-        .width('100%')
-      } else {
-        Column() {
-          this.panelTitle('Usage 上下文', '当前统计口径与最近状态')
-          this.infoRow('会话数', this.workspaces.length.toString())
-          this.infoRow('消息总数', this.messages.length.toString())
-          this.infoRow('Diff 行数', this.codeLines.length.toString())
-          this.infoRow('连接状态', this.connectionText)
-          this.infoRow('当前 Provider', this.providerStatusText)
-        }
-        .alignItems(HorizontalAlign.Start)
-        .height('100%')
-        .width('100%')
       }
+      .layoutWeight(1)
+      .width('100%')
+
+      // Token 用量卡片（底部）
+      this.tokenUsageCard()
     }
     .height('100%')
     .width(this.rightPanelWidth)
@@ -3191,6 +3210,288 @@ struct Index {
     .onClick(() => {
       this.toggleRightDrawer();
     })
+  }
+
+  private formatTokenCount(count: number): string {
+    if (count <= 0) return '0';
+    if (count < 1000) return count.toString();
+    if (count < 1000000) return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+
+  private get contextUsedTokens(): number {
+    return this.tokenUsage?.total?.totalTokens ?? 0;
+  }
+
+  private get contextWindowTotal(): number {
+    return this.tokenUsage?.modelContextWindow ?? 0;
+  }
+
+  private get contextUsedPercent(): number {
+    if (this.contextWindowTotal <= 0) return 0;
+    return (this.contextUsedTokens / this.contextWindowTotal) * 100;
+  }
+
+  private contextPercentColor(): ResourceColor {
+    const pct = this.contextUsedPercent;
+    if (pct > 90) return '#EF4444';
+    if (pct > 70) return '#F59E0B';
+    return '#3B82F6';
+  }
+
+  private tokenMiniText(): string {
+    const total = this.tokenUsage?.total?.totalTokens ?? 0;
+    const pct = this.contextWindowTotal > 0
+      ? ` · ${this.contextUsedPercent.toFixed(0)}%`
+      : '';
+    return `总 ${this.formatTokenCount(total)}${pct}`;
+  }
+
+  @Builder tokenUsageCard() {
+    Column() {
+      // 箭头指示器
+      Row() {
+        Text(this.tokenCardExpanded ? '▼' : '▲')
+          .fontSize(10)
+          .fontColor('#94A3B8')
+      }
+      .width(40)
+      .height(16)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor(this.tokenCardExpanded ? '#FFFFFF' : '#F1F5F9')
+      .borderRadius({ topLeft: 8, topRight: 8 })
+      .border({ width: 1, color: '#E2E8F0' })
+      .margin({ bottom: -1 })
+      .onClick(() => {
+        animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+          this.tokenCardExpanded = !this.tokenCardExpanded;
+        });
+      })
+
+      // 卡片内容
+      Column() {
+        if (!this.tokenCardExpanded) {
+          // 收起状态：只显示摘要
+          Row() {
+            Text(this.tokenMiniText())
+              .fontSize(11)
+              .fontColor('#64748B')
+              .maxLines(1)
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+        } else {
+          // 展开状态：完整内容
+          // 标题行
+          Row() {
+            Text('Token 用量')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#1E293B')
+            Blank()
+            Text(this.providerName)
+              .fontSize(11)
+              .fontColor('#94A3B8')
+          }
+          .width('100%')
+
+          // 上下文占用
+          if (this.contextWindowTotal > 0) {
+            Column() {
+              Row() {
+                Text(`${this.contextUsedPercent.toFixed(1)}%`)
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.contextPercentColor())
+                Blank()
+                Text(`${this.formatTokenCount(this.contextUsedTokens)} / ${this.formatTokenCount(this.contextWindowTotal)}`)
+                  .fontSize(11)
+                  .fontColor('#94A3B8')
+              }
+              .width('100%')
+              Stack({ alignContent: Alignment.Start }) {
+                Row().width('100%').height(6).backgroundColor('#E2E8F0').borderRadius(3)
+                Row()
+                  .width(`${Math.min(this.contextUsedPercent, 100)}%`)
+                  .height(6)
+                  .backgroundColor(this.contextPercentColor())
+                  .borderRadius(3)
+              }
+              .width('100%')
+              .height(6)
+              .margin({ top: 4 })
+            }
+            .margin({ top: 8 })
+          }
+
+          // 标签页
+          Row() {
+            Text('当前轮')
+              .fontSize(12)
+              .fontColor(this.tokenTab === 0 ? '#3B82F6' : '#94A3B8')
+              .fontWeight(this.tokenTab === 0 ? FontWeight.Medium : FontWeight.Normal)
+              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+              .borderRadius(6)
+              .backgroundColor(this.tokenTab === 0 ? '#EFF6FF' : 'transparent')
+              .onClick(() => { this.tokenTab = 0; })
+            Text('趋势')
+              .fontSize(12)
+              .fontColor(this.tokenTab === 1 ? '#3B82F6' : '#94A3B8')
+              .fontWeight(this.tokenTab === 1 ? FontWeight.Medium : FontWeight.Normal)
+              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+              .borderRadius(6)
+              .backgroundColor(this.tokenTab === 1 ? '#EFF6FF' : 'transparent')
+              .onClick(() => { this.tokenTab = 1; })
+          }
+          .margin({ top: 10 })
+          .width('100%')
+
+          // 当前轮 tab
+          if (this.tokenTab === 0) {
+            Column() {
+              if (this.tokenUsage === null) {
+                Text('等待数据...')
+                  .fontSize(11)
+                  .fontColor('#94A3B8')
+                  .margin({ top: 8 })
+              } else {
+                // 堆叠条
+                if (this.tokenUsage!.last.totalTokens <= 0) {
+                  Row().width('100%').height(8).backgroundColor('#F1F5F9').borderRadius(4)
+                } else {
+                  Row() {
+                    if (this.tokenUsage!.last.inputTokens > 0) {
+                      Row()
+                        .width(`${(this.tokenUsage!.last.inputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .height(8)
+                        .backgroundColor('#3B82F6')
+                    }
+                    if (this.tokenUsage!.last.cachedInputTokens > 0) {
+                      Row()
+                        .width(`${(this.tokenUsage!.last.cachedInputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .height(8)
+                        .backgroundColor('#94A3B8')
+                    }
+                    if (this.tokenUsage!.last.outputTokens > 0) {
+                      Row()
+                        .width(`${(this.tokenUsage!.last.outputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .height(8)
+                        .backgroundColor('#10B981')
+                    }
+                    if (this.tokenUsage!.last.reasoningOutputTokens > 0) {
+                      Row()
+                        .width(`${(this.tokenUsage!.last.reasoningOutputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .height(8)
+                        .backgroundColor('#8B5CF6')
+                    }
+                  }
+                  .width('100%')
+                  .height(8)
+                  .borderRadius(4)
+                  .clip(true)
+                }
+                // 细分数字
+                Column() {
+                  Row() {
+                    Circle({ width: 6, height: 6 }).fill('#3B82F6')
+                    Text('输入').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Blank()
+                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
+                  }.width('100%').margin({ top: 4 })
+                  Row() {
+                    Circle({ width: 6, height: 6 }).fill('#94A3B8')
+                    Text('缓存').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Blank()
+                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
+                  }.width('100%').margin({ top: 4 })
+                  Row() {
+                    Circle({ width: 6, height: 6 }).fill('#10B981')
+                    Text('输出').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Blank()
+                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
+                  }.width('100%').margin({ top: 4 })
+                  Row() {
+                    Circle({ width: 6, height: 6 }).fill('#8B5CF6')
+                    Text('推理').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Blank()
+                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
+                  }.width('100%').margin({ top: 4 })
+                }
+                .margin({ top: 8 })
+              }
+            }
+            .margin({ top: 8 })
+            .width('100%')
+          }
+
+          // 趋势 tab
+          if (this.tokenTab === 1) {
+            Column() {
+              if (this.tokenAggregate === null) {
+                Text('加载中...')
+                  .fontSize(11)
+                  .fontColor('#94A3B8')
+                  .margin({ top: 8 })
+              } else {
+                Row() {
+                  // 今日
+                  Column() {
+                    Text(this.formatTokenCount(this.tokenAggregate!.today))
+                      .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1E293B')
+                    Text('今日').fontSize(10).fontColor('#94A3B8').margin({ top: 2 })
+                    Column() {
+                      Column()
+                        .width(20)
+                        .height(this.tokenAggregate!.thisMonth > 0 ? `${Math.max((this.tokenAggregate!.today / this.tokenAggregate!.thisMonth) * 48, 2)}px` : '2px')
+                        .backgroundColor('#3B82F6').borderRadius(3)
+                    }.height(48).width(20).alignItems(HorizontalAlign.End).justifyContent(FlexAlign.End).margin({ top: 4 })
+                  }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+                  // 本周
+                  Column() {
+                    Text(this.formatTokenCount(this.tokenAggregate!.thisWeek))
+                      .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1E293B')
+                    Text('本周').fontSize(10).fontColor('#94A3B8').margin({ top: 2 })
+                    Column() {
+                      Column()
+                        .width(20)
+                        .height(this.tokenAggregate!.thisMonth > 0 ? `${Math.max((this.tokenAggregate!.thisWeek / this.tokenAggregate!.thisMonth) * 48, 2)}px` : '2px')
+                        .backgroundColor('#3B82F6').borderRadius(3)
+                    }.height(48).width(20).alignItems(HorizontalAlign.End).justifyContent(FlexAlign.End).margin({ top: 4 })
+                  }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+                  // 本月
+                  Column() {
+                    Text(this.formatTokenCount(this.tokenAggregate!.thisMonth))
+                      .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1E293B')
+                    Text('本月').fontSize(10).fontColor('#94A3B8').margin({ top: 2 })
+                    Column() {
+                      Column()
+                        .width(20)
+                        .height('48px')
+                        .backgroundColor('#3B82F6').borderRadius(3)
+                    }.height(48).width(20).alignItems(HorizontalAlign.End).justifyContent(FlexAlign.End).margin({ top: 4 })
+                  }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.SpaceBetween)
+              }
+            }
+            .margin({ top: 8 })
+            .width('100%')
+          }
+        }
+      }
+      .padding(this.tokenCardExpanded ? 12 : 0)
+      .width('100%')
+      .backgroundColor('#FFFFFF')
+      .borderRadius({ bottomLeft: 12, bottomRight: 12 })
+      .border({ width: 1, color: '#E2E8F0' })
+      .shadow(this.tokenCardExpanded ? { radius: 8, color: '#0D000000', offsetY: 2 } : undefined)
+      .animation({ duration: 250, curve: Curve.EaseInOut })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.End)
   }
 
   build() {

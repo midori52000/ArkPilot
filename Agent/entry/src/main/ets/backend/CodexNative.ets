@@ -6,7 +6,7 @@ import entry, {
   NativeCodexProviderRecord,
   NativeWorkspaceAccessStatus
 } from 'libentry.so';
-import { ProviderCatalog, ProviderRecord } from './ConsoleModels';
+import { ProviderCatalog, ProviderRecord, TokenUsageAggregate } from './ConsoleModels';
 
 const nativeBridge: EntryBridgeModule | null = entry ?? null;
 
@@ -726,5 +726,23 @@ export function checkWorkspaceAccess(rootPath: string): WorkspaceAccessStatus {
     return parseWorkspaceAccessStatus(nativeBridge!.checkWorkspaceAccess(JSON.stringify({ rootPath })));
   } catch (_err) {
     return new WorkspaceAccessStatus(rootPath, 'unknown', 'unavailable', false, false, 'workspace access check failed');
+  }
+}
+
+export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAggregate | null {
+  if (nativeModuleUnavailable()) {
+    return null;
+  }
+  try {
+    const raw = nativeBridge!.tokenUsageAggregate(codexHome);
+    if (raw === null || raw === undefined || raw.length === 0) return null;
+    const parsed: Record<string, Object> = JSON.parse(raw) as Record<string, Object>;
+    return new TokenUsageAggregate(
+      typeof parsed['today'] === 'number' ? (parsed['today'] as number) : 0,
+      typeof parsed['thisWeek'] === 'number' ? (parsed['thisWeek'] as number) : 0,
+      typeof parsed['thisMonth'] === 'number' ? (parsed['thisMonth'] as number) : 0
+    );
+  } catch (_err) {
+    return null;
   }
 }

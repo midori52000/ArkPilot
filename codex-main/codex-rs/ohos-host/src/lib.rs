@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::net::SocketAddr;
@@ -139,6 +140,83 @@ struct NativeThreadState {
     messages: Vec<NativeMessage>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTokenUsageBreakdown {
+    input_tokens: i64,
+    output_tokens: i64,
+    cached_input_tokens: i64,
+    reasoning_output_tokens: i64,
+    total_tokens: i64,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTokenUsage {
+    total: NativeTokenUsageBreakdown,
+    last: NativeTokenUsageBreakdown,
+    model_context_window: Option<i64>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct TokenUsageAggregateFile {
+    updated_at: i64,
+    threads: HashMap<String, ThreadTokenSnapshot>,
+}
+
+#[derive(Default, Serialize, Deserialize, Clone)]
+struct ThreadTokenSnapshot {
+    date: String,
+    total_tokens: i64,
+}
+
+fn load_token_usage_aggregate(codex_home: &Path) -> Result<TokenUsageAggregateFile> {
+    let path = codex_home.join("runtime").join("token-usage.json");
+    if !path.exists() {
+        return Ok(TokenUsageAggregateFile::default());
+    }
+    let data = std::fs::read_to_string(&path)?;
+    Ok(serde_json::from_str(&data)?)
+}
+
+fn persist_token_usage_aggregate(
+    codex_home: &Path,
+    agg: &TokenUsageAggregateFile,
+) -> Result<()> {
+    let dir = codex_home.join("runtime");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("token-usage.json");
+    let json = serde_json::to_string_pretty(agg)?;
+    std::fs::write(&path, json)?;
+    Ok(())
+}
+
+fn compute_aggregate(file: &TokenUsageAggregateFile) -> (i64, i64, i64) {
+    let now = chrono::Utc::now();
+    let today = now.format("%Y-%m-%d").to_string();
+    let days_since_monday = now.format("%u").to_string().parse::<i64>().unwrap_or(1) - 1;
+    let week_start = (now - chrono::Duration::days(days_since_monday))
+        .format("%Y-%m-%d").to_string();
+    let month_start = now.format("%Y-%m-01").to_string();
+
+    let mut today_total: i64 = 0;
+    let mut week_total: i64 = 0;
+    let mut month_total: i64 = 0;
+
+    for snapshot in file.threads.values() {
+        if snapshot.date >= month_start {
+            month_total += snapshot.total_tokens;
+        }
+        if snapshot.date >= week_start {
+            week_total += snapshot.total_tokens;
+        }
+        if snapshot.date == today {
+            today_total += snapshot.total_tokens;
+        }
+    }
+    (today_total, week_total, month_total)
+}
+
 #[derive(Clone, Default)]
 struct NativeTurnState {
     thread_id: String,
@@ -151,6 +229,7 @@ struct NativeTurnState {
     error_message: String,
     cwd: Option<PathBuf>,
     local_diff_tracker: Option<Arc<AsyncMutex<TurnDiffTracker>>>,
+    token_usage: Option<NativeTokenUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -455,6 +534,8 @@ static LAST_ACCOUNT_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
 });
 static LAST_WORKSPACE_ACCESS_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_TOKEN_USAGE_AGGREGATE_JSON: Lazy<Mutex<CString>> =
+    Lazy::new(|| Mutex::new(CString::new("{\"today\":0,\"thisWeek\":0,\"thisMonth\":0}").expect("empty cstring")));
 static NATIVE_CONVERSATION_STATE: Lazy<Mutex<NativeConversationState>> =
     Lazy::new(|| Mutex::new(NativeConversationState::default()));
 static NATIVE_ASYNC_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
@@ -878,6 +959,21 @@ pub extern "C" fn codex_ohos_host_disable_all_prompts(codex_home: *const c_char)
         Ok(()) => 0,
         Err(_) => 1,
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_token_usage_aggregate(
+    codex_home: *const c_char,
+) -> *const c_char {
+    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
+    let agg = load_token_usage_aggregate(&codex_home).unwrap_or_default();
+    let (today, week, month) = compute_aggregate(&agg);
+    let json = serde_json::json!({
+        "today": today,
+        "thisWeek": week,
+        "thisMonth": month,
+    });
+    write_cstring(&LAST_TOKEN_USAGE_AGGREGATE_JSON, &json.to_string())
 }
 
 fn start_host(codex_home: Option<PathBuf>, listen_url: String) -> Result<()> {
@@ -1892,6 +1988,7 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
                     error_message: String::new(),
                     cwd: turn_cwd,
                     local_diff_tracker,
+                    token_usage: None,
                 },
             );
         });
@@ -3201,6 +3298,47 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 entry.summary = vec![payload.error.message.clone()];
             });
         }
+        ServerNotification::ThreadTokenUsageUpdated(payload) => {
+            with_native_state(|state| {
+                let entry = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                entry.token_usage = Some(NativeTokenUsage {
+                    total: NativeTokenUsageBreakdown {
+                        input_tokens: payload.token_usage.total.input_tokens,
+                        output_tokens: payload.token_usage.total.output_tokens,
+                        cached_input_tokens: payload.token_usage.total.cached_input_tokens,
+                        reasoning_output_tokens: payload.token_usage.total.reasoning_output_tokens,
+                        total_tokens: payload.token_usage.total.total_tokens,
+                    },
+                    last: NativeTokenUsageBreakdown {
+                        input_tokens: payload.token_usage.last.input_tokens,
+                        output_tokens: payload.token_usage.last.output_tokens,
+                        cached_input_tokens: payload.token_usage.last.cached_input_tokens,
+                        reasoning_output_tokens: payload.token_usage.last.reasoning_output_tokens,
+                        total_tokens: payload.token_usage.last.total_tokens,
+                    },
+                    model_context_window: payload.token_usage.model_context_window,
+                });
+            });
+            // 更新 token 用量聚合
+            let codex_home = resolve_codex_home(None);
+            if let Ok(mut agg) = load_token_usage_aggregate(&codex_home) {
+                let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                let total = payload.token_usage.total.total_tokens.max(0);
+                agg.threads.insert(
+                    payload.thread_id.clone(),
+                    ThreadTokenSnapshot { date: today, total_tokens: total },
+                );
+                agg.updated_at = chrono::Utc::now().timestamp_millis();
+                let _ = persist_token_usage_aggregate(&codex_home, &agg);
+            }
+        }
         _ => {}
     }
 }
@@ -3912,6 +4050,23 @@ fn build_turn_poll_payload(
         "summaryTitle": summary_title,
         "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
         "diff": turn.diff,
+        "tokenUsage": turn.token_usage.as_ref().map(|tu| serde_json::json!({
+            "total": {
+                "inputTokens": tu.total.input_tokens,
+                "outputTokens": tu.total.output_tokens,
+                "cachedInputTokens": tu.total.cached_input_tokens,
+                "reasoningOutputTokens": tu.total.reasoning_output_tokens,
+                "totalTokens": tu.total.total_tokens,
+            },
+            "last": {
+                "inputTokens": tu.last.input_tokens,
+                "outputTokens": tu.last.output_tokens,
+                "cachedInputTokens": tu.last.cached_input_tokens,
+                "reasoningOutputTokens": tu.last.reasoning_output_tokens,
+                "totalTokens": tu.last.total_tokens,
+            },
+            "modelContextWindow": tu.model_context_window,
+        })).unwrap_or(serde_json::Value::Null),
     })
 }
 

@@ -397,3 +397,46 @@ export class UsageSummary {
     this.lastTurnStatus = lastTurnStatus;
   }
 }
+
+export class TokenUsageBreakdown {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+
+  constructor(
+    inputTokens: number, outputTokens: number, cachedInputTokens: number,
+    reasoningOutputTokens: number, totalTokens: number
+  ) {
+    this.inputTokens = inputTokens;
+    this.outputTokens = outputTokens;
+    this.cachedInputTokens = cachedInputTokens;
+    this.reasoningOutputTokens = reasoningOutputTokens;
+    this.totalTokens = totalTokens;
+  }
+}
+
+export class TurnTokenUsage {
+  total: TokenUsageBreakdown;
+  last: TokenUsageBreakdown;
+  modelContextWindow: number;
+
+  constructor(total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number) {
+    this.total = total;
+    this.last = last;
+    this.modelContextWindow = modelContextWindow;
+  }
+}
+
+export class TokenUsageAggregate {
+  today: number;
+  thisWeek: number;
+  thisMonth: number;
+
+  constructor(today: number, thisWeek: number, thisMonth: number) {
+    this.today = today;
+    this.thisWeek = thisWeek;
+    this.thisMonth = thisMonth;
+  }
+}
