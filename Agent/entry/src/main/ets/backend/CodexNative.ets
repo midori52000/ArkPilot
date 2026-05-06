@@ -6,7 +6,7 @@ import entry, {
   NativeCodexProviderRecord,
   NativeWorkspaceAccessStatus
 } from 'libentry.so';
-import { ProviderCatalog, ProviderRecord, TokenUsageAggregate } from './ConsoleModels';
+import { ProviderCatalog, ProviderRecord, TokenUsageAggregate, TodayTokenDetail, DailyTokenSnapshot } from './ConsoleModels';
 
 const nativeBridge: EntryBridgeModule | null = entry ?? null;
 
@@ -737,11 +737,33 @@ export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAgg
     const raw = nativeBridge!.tokenUsageAggregate(codexHome);
     if (raw === null || raw === undefined || raw.length === 0) return null;
     const parsed: Record<string, Object> = JSON.parse(raw) as Record<string, Object>;
-    return new TokenUsageAggregate(
-      typeof parsed['today'] === 'number' ? (parsed['today'] as number) : 0,
-      typeof parsed['thisWeek'] === 'number' ? (parsed['thisWeek'] as number) : 0,
-      typeof parsed['thisMonth'] === 'number' ? (parsed['thisMonth'] as number) : 0
+
+    // 解析 today
+    const todayRaw = parsed['today'] as Record<string, Object> | undefined;
+    const today = new TodayTokenDetail(
+      typeof todayRaw?.['totalTokens'] === 'number' ? (todayRaw['totalTokens'] as number) : 0,
+      typeof todayRaw?.['inputTokens'] === 'number' ? (todayRaw['inputTokens'] as number) : 0,
+      typeof todayRaw?.['outputTokens'] === 'number' ? (todayRaw['outputTokens'] as number) : 0,
+      typeof todayRaw?.['cachedInputTokens'] === 'number' ? (todayRaw['cachedInputTokens'] as number) : 0,
+      typeof todayRaw?.['reasoningOutputTokens'] === 'number' ? (todayRaw['reasoningOutputTokens'] as number) : 0,
+      typeof todayRaw?.['requestCount'] === 'number' ? (todayRaw['requestCount'] as number) : 0
     );
+
+    // 解析 daily
+    const dailyRaw = parsed['daily'] as Array<Record<string, Object>> | undefined;
+    const daily: DailyTokenSnapshot[] = [];
+    if (Array.isArray(dailyRaw)) {
+      for (let i = 0; i < dailyRaw.length; i++) {
+        const item = dailyRaw[i];
+        daily.push(new DailyTokenSnapshot(
+          typeof item['date'] === 'string' ? (item['date'] as string) : '',
+          typeof item['totalTokens'] === 'number' ? (item['totalTokens'] as number) : 0,
+          typeof item['requestCount'] === 'number' ? (item['requestCount'] as number) : 0
+        ));
+      }
+    }
+
+    return new TokenUsageAggregate(today, daily);
   } catch (_err) {
     return null;
   }

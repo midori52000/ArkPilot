@@ -429,15 +429,46 @@ export class TurnTokenUsage {
   }
 }
 
-export class TokenUsageAggregate {
-  today: number;
-  thisWeek: number;
-  thisMonth: number;
+export class TodayTokenDetail {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  requestCount: number;
 
-  constructor(today: number, thisWeek: number, thisMonth: number) {
+  constructor(
+    totalTokens: number, inputTokens: number, outputTokens: number,
+    cachedInputTokens: number, reasoningOutputTokens: number, requestCount: number
+  ) {
+    this.totalTokens = totalTokens;
+    this.inputTokens = inputTokens;
+    this.outputTokens = outputTokens;
+    this.cachedInputTokens = cachedInputTokens;
+    this.reasoningOutputTokens = reasoningOutputTokens;
+    this.requestCount = requestCount;
+  }
+}
+
+export class DailyTokenSnapshot {
+  date: string;
+  totalTokens: number;
+  requestCount: number;
+
+  constructor(date: string, totalTokens: number, requestCount: number) {
+    this.date = date;
+    this.totalTokens = totalTokens;
+    this.requestCount = requestCount;
+  }
+}
+
+export class TokenUsageAggregate {
+  today: TodayTokenDetail;
+  daily: DailyTokenSnapshot[];
+
+  constructor(today: TodayTokenDetail, daily: DailyTokenSnapshot[]) {
     this.today = today;
-    this.thisWeek = thisWeek;
-    this.thisMonth = thisMonth;
+    this.daily = daily;
   }
 }
 

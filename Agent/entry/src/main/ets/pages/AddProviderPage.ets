@@ -20,18 +20,18 @@ class UiToastItem {
 @Entry
 @Component
 struct AddProviderPage {
-  @State private pressedKey: string = '';
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
-  @State private selectedPresetId: string = 'anthropic-official';
-  @State private providerName: string = 'Claude Official';
+  @State private selectedPresetId: string = 'custom';
+  @State private providerName: string = '';
   @State private providerNote: string = '';
-  @State private websiteUrl: string = 'https://console.anthropic.com';
+  @State private websiteUrl: string = '';
   @State private apiKey: string = '';
-  @State private baseUrl: string = 'https://api.anthropic.com/v1';
+  @State private baseUrl: string = '';
   @State private wireApi: ApiWireFormat = 'anthropic';
   @State private requestFullUrl: boolean = false;
+  @State private defaultModel: string = '';
   @State private advancedExpanded: boolean = false;
 
   aboutToAppear(): void {
@@ -54,20 +54,6 @@ struct AddProviderPage {
 
   private dismissToast(toastId: number): void {
     this.toasts = this.toasts.filter((toast: UiToastItem) => toast.id !== toastId);
-  }
-
-  private updatePressed(key: string, event: TouchEvent): void {
-    if (event.type === TouchType.Down) {
-      this.pressedKey = key;
-      return;
-    }
-    if (this.pressedKey === key) {
-      this.pressedKey = '';
-    }
-  }
-
-  private pressScale(key: string): number {
-    return this.pressedKey === key ? 0.985 : 1;
   }
 
   private toneBackground(tone: ToastTone): string {
@@ -173,6 +159,14 @@ struct AddProviderPage {
     return result;
   }
 
+  private currentPresetModels(): string[] {
+    const preset = this.findPreset(this.selectedPresetId);
+    if (preset === null) {
+      return [];
+    }
+    return preset.models;
+  }
+
   private applyPreset(presetId: string, withToast: boolean = true): void {
     this.selectedPresetId = presetId;
     if (presetId === 'custom') {
@@ -181,6 +175,7 @@ struct AddProviderPage {
       this.websiteUrl = '';
       this.apiKey = '';
       this.baseUrl = '';
+      this.defaultModel = '';
       this.wireApi = 'anthropic';
       if (withToast) {
         this.triggerFeedback('已切换到自定义配置。', 'info');
@@ -197,6 +192,7 @@ struct AddProviderPage {
     this.providerNote = preset.description;
     this.websiteUrl = preset.websiteUrl;
     this.baseUrl = preset.baseUrl;
+    this.defaultModel = preset.defaultModel;
     this.wireApi = preset.wireApi;
     if (withToast) {
       this.triggerFeedback(`已载入 ${preset.name} 预设。`, 'success');
@@ -222,7 +218,9 @@ struct AddProviderPage {
       const category: ProviderCategory = preset !== null ? preset.category : 'custom';
       const icon: string = preset !== null ? preset.icon : '';
       const iconColor: string = preset !== null ? preset.iconColor : '';
-      const defaultModel: string = preset !== null ? preset.defaultModel : '';
+      const defaultModel: string = this.defaultModel.trim().length > 0
+        ? this.defaultModel
+        : (preset !== null ? preset.defaultModel : '');
       const authMode: string = preset !== null ? preset.authMode : 'apiKey';
       const headers: CustomHeadersEntry[] = [];
       if (preset !== null) {
@@ -333,9 +331,6 @@ struct AddProviderPage {
       .backgroundColor('#FFFFFF')
       .borderRadius(18)
       .border({ width: 1, color: '#D8E1EE' })
-      .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed('back', event); })
       .onClick(() => { router.back(); })
 
       Column() {
@@ -373,19 +368,6 @@ struct AddProviderPage {
   }
 
   @Builder
-  private inputField(text: string, placeholder: string, key: string, onChange: (value: string) => void) {
-    TextInput({ text: text, placeholder: placeholder })
-      .width('100%')
-      .height(42)
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#DEE6F2' })
-      .borderRadius(14)
-      .padding({ left: 14, right: 14 })
-      .margin({ top: 8 })
-      .onChange(onChange)
-  }
-
-  @Builder
   private chip(label: string, background: string, color: string) {
     Text(label)
       .copyOption(CopyOptions.None)
@@ -394,24 +376,6 @@ struct AddProviderPage {
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
       .backgroundColor(background)
       .borderRadius(10)
-  }
-
-  @Builder
-  private presetChip(label: string, selected: boolean, key: string, onClick: () => void) {
-    Button(label)
-      .height(36)
-      .fontSize(11)
-      .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(selected ? '#FFFFFF' : '#64748B')
-      .backgroundColor(selected ? '#2284F6' : '#F5F7FB')
-      .borderRadius(12)
-      .border({ width: selected ? 0 : 1, color: '#E1E7F0' })
-      .padding({ left: 14, right: 14 })
-      .margin({ right: 10, bottom: 10 })
-      .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
-      .onClick(onClick)
   }
 
   @Builder
@@ -431,9 +395,6 @@ struct AddProviderPage {
       .backgroundColor(enabled ? '#D946EF' : '#E5E7EB')
       .borderRadius(11)
     }
-    .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
     .onClick(onClick)
   }
 
@@ -461,10 +422,31 @@ struct AddProviderPage {
     Column() {
       this.sectionCard('预设供应商', '先选预设，再补齐名称、API Key 和请求地址。')
 
-      Row() {
-        this.presetChip('自定义配置', this.selectedPresetId === 'custom', 'preset-custom', () => { this.applyPreset('custom'); })
+      Flex({ wrap: FlexWrap.Wrap }) {
+        Button('自定义配置')
+          .height(36)
+          .fontSize(11)
+          .fontWeight(this.selectedPresetId === 'custom' ? FontWeight.Medium : FontWeight.Regular)
+          .fontColor(this.selectedPresetId === 'custom' ? '#FFFFFF' : '#64748B')
+          .backgroundColor(this.selectedPresetId === 'custom' ? '#2284F6' : '#F5F7FB')
+          .borderRadius(12)
+          .border({ width: this.selectedPresetId === 'custom' ? 0 : 1, color: '#E1E7F0' })
+          .padding({ left: 14, right: 14 })
+          .margin({ right: 10, bottom: 10 })
+          .onClick(() => { this.applyPreset('custom'); })
+
         ForEach(this.visiblePresets(), (preset: ProviderPreset) => {
-          this.presetChip(preset.name, this.selectedPresetId === preset.id, `preset-${preset.id}`, () => { this.applyPreset(preset.id); })
+          Button(preset.name)
+            .height(36)
+            .fontSize(11)
+            .fontWeight(this.selectedPresetId === preset.id ? FontWeight.Medium : FontWeight.Regular)
+            .fontColor(this.selectedPresetId === preset.id ? '#FFFFFF' : '#64748B')
+            .backgroundColor(this.selectedPresetId === preset.id ? '#2284F6' : '#F5F7FB')
+            .borderRadius(12)
+            .border({ width: this.selectedPresetId === preset.id ? 0 : 1, color: '#E1E7F0' })
+            .padding({ left: 14, right: 14 })
+            .margin({ right: 10, bottom: 10 })
+            .onClick(() => { this.applyPreset(preset.id); })
         }, (preset: ProviderPreset) => preset.id)
       }
       .width('100%')
@@ -554,9 +536,6 @@ struct AddProviderPage {
           .margin({ left: 8 })
       }
       .width('100%')
-      .scale({ x: this.pressScale('advanced-toggle'), y: this.pressScale('advanced-toggle') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed('advanced-toggle', event); })
       .onClick(() => { this.advancedExpanded = !this.advancedExpanded; })
 
       Text('包含 API 格式、认证字段、模型映射等配置。大多数场景下保持默认即可。')
@@ -570,9 +549,22 @@ struct AddProviderPage {
         Column() {
           this.formLabel('Wire API')
           Row() {
-            this.presetChip('responses', this.wireApi === 'responses', 'wire-responses', () => { this.wireApi = 'responses'; })
-            this.presetChip('chat', this.wireApi === 'chat', 'wire-chat', () => { this.wireApi = 'chat'; })
-            this.presetChip('anthropic', this.wireApi === 'anthropic', 'wire-anthropic', () => { this.wireApi = 'anthropic'; })
+            ForEach(['responses', 'chat', 'anthropic'], (api: string) => {
+              Button(api)
+                .height(36)
+                .fontSize(11)
+                .fontWeight(this.wireApi === api ? FontWeight.Medium : FontWeight.Regular)
+                .fontColor(this.wireApi === api ? '#FFFFFF' : '#64748B')
+                .backgroundColor(this.wireApi === api ? '#2284F6' : '#F5F7FB')
+                .borderRadius(12)
+                .border({ width: this.wireApi === api ? 0 : 1, color: '#E1E7F0' })
+                .padding({ left: 14, right: 14 })
+                .margin({ right: 10 })
+                .onClick(() => {
+                  this.wireApi = api as ApiWireFormat;
+                  this.triggerFeedback(`已切换为 ${api} 格式。`, 'info');
+                })
+            }, (api: string) => api)
           }
           .width('100%')
         }
@@ -593,13 +585,19 @@ struct AddProviderPage {
       Row() {
         Column() {
           this.formLabel('供应商名称')
-          this.inputField(this.providerName, '例如：Claude 官方', 'provider-name', (value: string) => { this.providerName = value; })
+          TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
+            .width('100%').height(42).backgroundColor('#FFFFFF')
+            .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+            .padding({ left: 14, right: 14 }).margin({ top: 8 })
         }
         .layoutWeight(1)
 
         Column() {
           this.formLabel('备注')
-          this.inputField(this.providerNote, '例如：公司专用账号', 'provider-note', (value: string) => { this.providerNote = value; })
+          TextInput({ text: $$this.providerNote, placeholder: '例如：公司专用账号' })
+            .width('100%').height(42).backgroundColor('#FFFFFF')
+            .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+            .padding({ left: 14, right: 14 }).margin({ top: 8 })
         }
         .layoutWeight(1)
         .margin({ left: 14 })
@@ -608,10 +606,45 @@ struct AddProviderPage {
       .alignItems(VerticalAlign.Top)
 
       this.formLabel('官网链接')
-      this.inputField(this.websiteUrl, 'https://example.com（可选）', 'website-url', (value: string) => { this.websiteUrl = value; })
+      TextInput({ text: $$this.websiteUrl, placeholder: 'https://example.com（可选）' })
+        .width('100%').height(42).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+        .padding({ left: 14, right: 14 }).margin({ top: 8 })
 
       this.formLabel('API Key')
-      this.inputField(this.apiKey, '只需要填这里，下方配置会自动填充', 'api-key', (value: string) => { this.apiKey = value; })
+      TextInput({ text: $$this.apiKey, placeholder: '只需要填这里，下方配置会自动填充' })
+        .width('100%').height(42).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+        .padding({ left: 14, right: 14 }).margin({ top: 8 })
+
+      this.formLabel('默认模型')
+      TextInput({ text: $$this.defaultModel, placeholder: '例如：claude-sonnet-4-6' })
+        .width('100%').height(42).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+        .padding({ left: 14, right: 14 }).margin({ top: 8 })
+
+      if (this.currentPresetModels().length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.currentPresetModels(), (model: string) => {
+            Button(model)
+              .height(28)
+              .fontSize(10)
+              .fontWeight(this.defaultModel === model ? FontWeight.Medium : FontWeight.Regular)
+              .fontColor(this.defaultModel === model ? '#FFFFFF' : '#64748B')
+              .backgroundColor(this.defaultModel === model ? '#2284F6' : '#F5F7FB')
+              .borderRadius(10)
+              .border({ width: this.defaultModel === model ? 0 : 1, color: '#E1E7F0' })
+              .padding({ left: 10, right: 10 })
+              .margin({ right: 8, bottom: 8 })
+              .onClick(() => {
+                this.defaultModel = model;
+                this.triggerFeedback(`已选择模型 ${model}`, 'success');
+              })
+          }, (model: string) => model)
+        }
+        .width('100%')
+        .margin({ top: 10 })
+      }
 
       Row() {
         Text('请求地址')
@@ -625,7 +658,10 @@ struct AddProviderPage {
             .fontSize(10)
             .fontColor('#64748B')
             .margin({ right: 8 })
-          this.ghostSwitch(this.requestFullUrl, 'request-full-url', () => { this.requestFullUrl = !this.requestFullUrl; })
+          this.ghostSwitch(this.requestFullUrl, 'request-full-url', () => {
+            this.requestFullUrl = !this.requestFullUrl;
+            this.triggerFeedback(this.requestFullUrl ? '已开启完整 URL 模式。' : '已关闭完整 URL 模式。', 'info');
+          })
         }
         .margin({ left: 14 })
         Blank()
@@ -640,11 +676,19 @@ struct AddProviderPage {
             .fontColor('#64748B')
             .margin({ left: 6 })
         }
+        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+        .borderRadius(8)
+        .backgroundColor('#F8FAFC')
+        .border({ width: 1, color: '#E2E8F0' })
+        .onClick(() => { this.triggerFeedback('测速功能将在后端接入后可用。', 'info'); })
       }
       .width('100%')
       .margin({ top: 16 })
 
-      this.inputField(this.baseUrl, 'https://your-api-endpoint.com', 'base-url', (value: string) => { this.baseUrl = value; })
+      TextInput({ text: $$this.baseUrl, placeholder: 'https://your-api-endpoint.com' })
+        .width('100%').height(42).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+        .padding({ left: 14, right: 14 }).margin({ top: 8 })
       this.requestHint()
       this.advancedSection()
     }
@@ -670,9 +714,6 @@ struct AddProviderPage {
         .borderRadius(14)
         .border({ width: 1, color: '#D5E0ED' })
         .padding({ left: 18, right: 18 })
-        .scale({ x: this.pressScale('cancel-add'), y: this.pressScale('cancel-add') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => { this.updatePressed('cancel-add', event); })
         .onClick(() => { router.back(); })
 
       Button('+ 添加')
@@ -684,9 +725,6 @@ struct AddProviderPage {
         .borderRadius(14)
         .padding({ left: 20, right: 20 })
         .margin({ left: 12 })
-        .scale({ x: this.pressScale('submit-add'), y: this.pressScale('submit-add') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
-        .onTouch((event: TouchEvent) => { this.updatePressed('submit-add', event); })
         .onClick(() => { this.submitAddProvider(); })
     }
     .width('100%')
@@ -717,7 +755,7 @@ struct AddProviderPage {
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        .width(360)
+        .constraintSize({ maxWidth: 360 })
         .padding({ left: 14, right: 14, top: 12, bottom: 12 })
         .backgroundColor(this.toneBackground(toast.tone))
         .border({ width: 1, color: '#FFFFFF' })
@@ -726,7 +764,9 @@ struct AddProviderPage {
       }, (toast: UiToastItem) => `${toast.id}`)
     }
     .alignItems(HorizontalAlign.End)
-    .position({ x: 700, y: 28 })
+    .position({ x: 0, y: 28 })
+    .width('100%')
+    .padding({ right: 28 })
   }
 
   build() {

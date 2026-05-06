@@ -162,12 +162,34 @@ struct NativeTokenUsage {
 struct TokenUsageAggregateFile {
     updated_at: i64,
     threads: HashMap<String, ThreadTokenSnapshot>,
+    #[serde(default)]
+    daily: HashMap<String, DailyTokenSnapshot>,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
 struct ThreadTokenSnapshot {
     date: String,
     total_tokens: i64,
+    #[serde(default)]
+    input_tokens: i64,
+    #[serde(default)]
+    output_tokens: i64,
+    #[serde(default)]
+    cached_input_tokens: i64,
+    #[serde(default)]
+    reasoning_output_tokens: i64,
+    #[serde(default)]
+    request_count: i64,
+}
+
+#[derive(Default, Serialize, Deserialize, Clone)]
+struct DailyTokenSnapshot {
+    total_tokens: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cached_input_tokens: i64,
+    reasoning_output_tokens: i64,
+    request_count: i64,
 }
 
 fn load_token_usage_aggregate(codex_home: &Path) -> Result<TokenUsageAggregateFile> {
@@ -191,30 +213,44 @@ fn persist_token_usage_aggregate(
     Ok(())
 }
 
-fn compute_aggregate(file: &TokenUsageAggregateFile) -> (i64, i64, i64) {
+fn compute_aggregate(file: &TokenUsageAggregateFile) -> serde_json::Value {
     let now = chrono::Utc::now();
     let today = now.format("%Y-%m-%d").to_string();
-    let days_since_monday = now.format("%u").to_string().parse::<i64>().unwrap_or(1) - 1;
-    let week_start = (now - chrono::Duration::days(days_since_monday))
-        .format("%Y-%m-%d").to_string();
-    let month_start = now.format("%Y-%m-01").to_string();
 
-    let mut today_total: i64 = 0;
-    let mut week_total: i64 = 0;
-    let mut month_total: i64 = 0;
+    // 今日详情
+    let today_snap = file.daily.get(&today).cloned().unwrap_or_default();
 
-    for snapshot in file.threads.values() {
-        if snapshot.date >= month_start {
-            month_total += snapshot.total_tokens;
-        }
-        if snapshot.date >= week_start {
-            week_total += snapshot.total_tokens;
-        }
-        if snapshot.date == today {
-            today_total += snapshot.total_tokens;
+    // 近30天每日数据
+    let mut daily: Vec<serde_json::Value> = Vec::new();
+    for i in (0..30).rev() {
+        let date = (now - chrono::Duration::days(i))
+            .format("%Y-%m-%d").to_string();
+        if let Some(snap) = file.daily.get(&date) {
+            daily.push(serde_json::json!({
+                "date": date,
+                "totalTokens": snap.total_tokens,
+                "requestCount": snap.request_count,
+            }));
+        } else {
+            daily.push(serde_json::json!({
+                "date": date,
+                "totalTokens": 0,
+                "requestCount": 0,
+            }));
         }
     }
-    (today_total, week_total, month_total)
+
+    serde_json::json!({
+        "today": {
+            "totalTokens": today_snap.total_tokens,
+            "inputTokens": today_snap.input_tokens,
+            "outputTokens": today_snap.output_tokens,
+            "cachedInputTokens": today_snap.cached_input_tokens,
+            "reasoningOutputTokens": today_snap.reasoning_output_tokens,
+            "requestCount": today_snap.request_count,
+        },
+        "daily": daily,
+    })
 }
 
 #[derive(Clone, Default)]
@@ -967,12 +1003,7 @@ pub extern "C" fn codex_ohos_host_token_usage_aggregate(
 ) -> *const c_char {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     let agg = load_token_usage_aggregate(&codex_home).unwrap_or_default();
-    let (today, week, month) = compute_aggregate(&agg);
-    let json = serde_json::json!({
-        "today": today,
-        "thisWeek": week,
-        "thisMonth": month,
-    });
+    let json = compute_aggregate(&agg);
     write_cstring(&LAST_TOKEN_USAGE_AGGREGATE_JSON, &json.to_string())
 }
 
@@ -3330,11 +3361,44 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             let codex_home = resolve_codex_home(None);
             if let Ok(mut agg) = load_token_usage_aggregate(&codex_home) {
                 let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-                let total = payload.token_usage.total.total_tokens.max(0);
+                let new_total = payload.token_usage.total.total_tokens.max(0);
+                let new_input = payload.token_usage.total.input_tokens.max(0);
+                let new_output = payload.token_usage.total.output_tokens.max(0);
+                let new_cached = payload.token_usage.total.cached_input_tokens.max(0);
+                let new_reasoning = payload.token_usage.total.reasoning_output_tokens.max(0);
+
+                // 计算 delta（本次新增量）
+                let old_snap = agg.threads.get(&payload.thread_id).cloned().unwrap_or_default();
+                let delta_total = (new_total - old_snap.total_tokens).max(0);
+                let delta_input = (new_input - old_snap.input_tokens).max(0);
+                let delta_output = (new_output - old_snap.output_tokens).max(0);
+                let delta_cached = (new_cached - old_snap.cached_input_tokens).max(0);
+                let delta_reasoning = (new_reasoning - old_snap.reasoning_output_tokens).max(0);
+                let delta_requests = if old_snap.total_tokens == 0 && new_total > 0 { 1 } else { 0 };
+
+                // 更新 thread snapshot
                 agg.threads.insert(
                     payload.thread_id.clone(),
-                    ThreadTokenSnapshot { date: today, total_tokens: total },
+                    ThreadTokenSnapshot {
+                        date: today.clone(),
+                        total_tokens: new_total,
+                        input_tokens: new_input,
+                        output_tokens: new_output,
+                        cached_input_tokens: new_cached,
+                        reasoning_output_tokens: new_reasoning,
+                        request_count: old_snap.request_count + delta_requests,
+                    },
                 );
+
+                // 累加到 daily 聚合
+                let daily = agg.daily.entry(today.clone()).or_default();
+                daily.total_tokens += delta_total;
+                daily.input_tokens += delta_input;
+                daily.output_tokens += delta_output;
+                daily.cached_input_tokens += delta_cached;
+                daily.reasoning_output_tokens += delta_reasoning;
+                daily.request_count += delta_requests;
+
                 agg.updated_at = chrono::Utc::now().timestamp_millis();
                 let _ = persist_token_usage_aggregate(&codex_home, &agg);
             }
