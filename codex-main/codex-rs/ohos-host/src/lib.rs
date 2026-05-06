@@ -45,6 +45,8 @@ use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadArchiveParams;
 use codex_app_server_protocol::ThreadArchiveResponse;
+use codex_app_server_protocol::ThreadCompactStartParams;
+use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadReadParams;
@@ -420,6 +422,12 @@ struct NativeMcpConfigRemoveRequest {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeThreadArchiveRequest {
+    thread_id: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeThreadCompactRequest {
     thread_id: String,
 }
 
@@ -1915,6 +1923,54 @@ pub extern "C" fn codex_ohos_host_thread_archive(params_json: *const c_char) -> 
                 .turns
                 .retain(|_, turn| turn.thread_id != request.thread_id);
         });
+
+        Ok::<(), anyhow::Error>(())
+    });
+
+    let json = match response {
+        Ok(()) => serde_json::json!({
+            "ok": true,
+            "threadId": request.thread_id,
+        })
+        .to_string(),
+        Err(err) => serde_json::json!({
+            "ok": false,
+            "threadId": request.thread_id,
+            "error": { "message": err.to_string() },
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_THREAD_MUTATION_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_thread_compact_start(
+    params_json: *const c_char,
+) -> *const c_char {
+    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
+    let request =
+        serde_json::from_str::<NativeThreadCompactRequest>(&params_text).unwrap_or_default();
+
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let _: ThreadCompactStartResponse = handle
+            .request_typed(ClientRequest::ThreadCompactStart {
+                request_id,
+                params: ThreadCompactStartParams {
+                    thread_id: request.thread_id.clone(),
+                },
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
 
         Ok::<(), anyhow::Error>(())
     });

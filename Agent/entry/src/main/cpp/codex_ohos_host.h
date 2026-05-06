@@ -35,6 +35,7 @@ const char* codex_ohos_host_thread_read(const char* params_json);
 const char* codex_ohos_host_thread_resume(const char* params_json);
 const char* codex_ohos_host_thread_name_set(const char* params_json);
 const char* codex_ohos_host_thread_archive(const char* params_json);
+const char* codex_ohos_host_thread_compact_start(const char* params_json);
 const char* codex_ohos_host_turn_start(const char* params_json);
 const char* codex_ohos_host_turn_events(const char* thread_id, const char* turn_id);
 const char* codex_ohos_host_turn_poll(const char* thread_id, const char* turn_id);

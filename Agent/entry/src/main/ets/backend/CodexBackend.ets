@@ -15,6 +15,7 @@ import {
   mcpOauthStartNative,
   mcpReloadNative,
   mcpStatusListNative,
+  compactStartNative,
   threadArchiveNative,
   threadListNative,
   threadNameSetNative,
@@ -1492,6 +1493,33 @@ export class CodexBackend {
     const activeTurn: PendingTurnState = thread.activeTurn!;
     activeTurn.cancelled = true;
     turnInterruptNative(thread.remoteThreadId, activeTurn.turnId);
+  }
+
+  compactActiveThread(): boolean {
+    let target: CodexThreadRecord | null = null;
+    this.threads.forEach((t: CodexThreadRecord) => {
+      if (t.activeTurn !== null && target === null) {
+        target = t;
+      }
+    });
+    if (target === null) {
+      this.logInfo('compact: no active thread found');
+      return false;
+    }
+    const thread: CodexThreadRecord = target;
+    const resp = parseJsonText(
+      compactStartNative(JSON.stringify({ threadId: thread.remoteThreadId })),
+      new Object() as Object
+    ) as Record<string, Object>;
+    const ok = resp['ok'] === true;
+    if (!ok) {
+      const err = resp['error'] as Record<string, Object> | undefined;
+      const msg = typeof err?.['message'] === 'string' ? (err!['message'] as string) : 'compact 失败';
+      this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
+    } else {
+      this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
+    }
+    return ok;
   }
 
   async refreshMcpServers(): Promise<McpServerRecord[]> {

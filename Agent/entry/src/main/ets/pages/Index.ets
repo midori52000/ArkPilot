@@ -186,6 +186,7 @@ struct Index {
   @State private tokenCardDragStartH: number = 0;
   @State private tokenTab: number = 0;
   @State private tokenTrendRange: number = 0;
+  @State private compacting: boolean = false;
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -2757,6 +2758,22 @@ struct Index {
                   Text(this.contextText())
                     .fontSize(11)
                     .fontColor('#1E293B')
+                  if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
+                    Text(this.compacting ? '压缩中...' : '压缩')
+                      .fontSize(10)
+                      .fontColor(this.contextBarColor())
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .border({ width: 1, color: this.contextBarColor() })
+                      .borderRadius(4)
+                      .margin({ left: 6 })
+                      .onClick(() => {
+                        if (!this.compacting) {
+                          this.compacting = true;
+                          const ok = codexBackend.compactActiveThread();
+                          setTimeout(() => { this.compacting = false; }, 2000);
+                        }
+                      })
+                  }
                 }
                 .width('100%')
 

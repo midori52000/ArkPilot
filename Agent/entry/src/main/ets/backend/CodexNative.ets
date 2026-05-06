@@ -531,6 +531,17 @@ export function threadArchiveNative(paramsJson: string): string {
   }
 }
 
+export function compactStartNative(paramsJson: string): string {
+  if (nativeModuleUnavailable()) {
+    return '{"ok":false}';
+  }
+  try {
+    return nativeBridge!.threadCompactStart(paramsJson);
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
 export function turnStartNative(paramsJson: string): string {
   if (nativeModuleUnavailable()) {
     return '{}';
