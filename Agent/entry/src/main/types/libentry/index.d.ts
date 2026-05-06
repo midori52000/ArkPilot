@@ -79,6 +79,7 @@ export interface EntryBridgeModule {
   threadResume: (paramsJson?: string) => string;
   threadNameSet: (paramsJson?: string) => string;
   threadArchive: (paramsJson?: string) => string;
+  threadCompactStart: (paramsJson?: string) => string;
   turnStart: (paramsJson?: string) => string;
   turnEvents: (threadId?: string, turnId?: string) => string;
   turnPoll: (threadId?: string, turnId?: string) => string;

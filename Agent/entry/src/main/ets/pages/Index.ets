@@ -186,6 +186,7 @@ struct Index {
   @State private tokenCardDragStartH: number = 0;
   @State private tokenTab: number = 0;
   @State private tokenTrendRange: number = 0;
+  @State private compacting: boolean = false;
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -2505,51 +2506,71 @@ struct Index {
     .borderRadius(20)
   }
 
+  // ── 上下文助手（Rust 侧预计算 blendedTotal / contextRemainingPercent，前端仅展示）──
+
   private formatTokenCount(count: number): string {
-    if (!(count > 0)) return '0';
+    if (count !== count) return '0';
+    if (count <= 0) return '0';
     if (count < 1000) return count.toString();
     if (count < 1000000) return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   }
 
-  private get contextUsedTokens(): number {
-    const v = this.tokenUsage?.total?.totalTokens ?? 0;
-    return (v > 0) ? v : 0;
+  private blendedTotal(): number {
+    if (this.tokenUsage === null || this.tokenUsage === undefined) return 0;
+    const v = this.tokenUsage.total.blendedTotal;
+    if (typeof v !== 'number' || v !== v) return 0;
+    return v < 0 ? 0 : v;
   }
 
-  private get contextWindowTotal(): number {
-    const v = this.tokenUsage?.modelContextWindow ?? 0;
-    return (v > 0) ? v : 0;
+  private contextWindow(): number {
+    if (this.tokenUsage === null || this.tokenUsage === undefined) return 0;
+    const v = this.tokenUsage.modelContextWindow;
+    if (typeof v !== 'number' || v !== v) return 0;
+    return v < 0 ? 0 : v;
   }
 
-  private get contextUsedPercent(): number {
-    const total = this.contextWindowTotal;
-    if (!(total > 0)) return 0;
-    const pct = (this.contextUsedTokens / total) * 100;
-    return (pct > 0) ? pct : 0;
+  private contextRemainingPct(): number {
+    if (this.tokenUsage === null || this.tokenUsage === undefined) return -1;
+    const v = this.tokenUsage.contextRemainingPercent;
+    if (typeof v !== 'number' || v !== v) return -1;
+    return v;
   }
 
-  private contextPercentColor(): ResourceColor {
-    const pct = this.contextUsedPercent;
-    if (pct > 90) return '#EF4444';
-    if (pct > 70) return '#F59E0B';
+  private contextBarWidth(): string {
+    const pct = this.contextRemainingPct();
+    if (pct < 0) return '0%';
+    return pct.toString() + '%';
+  }
+
+  private contextBarColor(): ResourceColor {
+    const pct = this.contextRemainingPct();
+    if (pct < 0) return '#3B82F6';
+    if (pct <= 10) return '#EF4444';
+    if (pct <= 30) return '#F59E0B';
     return '#3B82F6';
   }
 
-  private makeContextText(): string {
-    const used = this.contextUsedTokens;
-    const win = this.contextWindowTotal;
-    if (!(win > 0)) return this.formatTokenCount(used);
+  private contextText(): string {
+    const used = this.blendedTotal();
+    const win = this.contextWindow();
+    if (win <= 0) return this.formatTokenCount(used);
     return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win);
   }
 
-  private makeContextBarWidth(): string {
-    const used = this.contextUsedTokens;
-    const win = this.contextWindowTotal;
-    if (!(win > 0) || !(used > 0)) return '0%';
-    const pct = (used / win) * 100;
-    if (!(pct > 0)) return '0%';
-    return (pct > 100 ? 100 : pct).toFixed(0) + '%';
+  private safePct(part: number, whole: number): string {
+    if (whole <= 0 || part <= 0 || whole !== whole || part !== part) return '0%';
+    const v = (part / whole) * 100;
+    if (v !== v || v < 0) return '0%';
+    return (v > 100 ? 100 : v).toFixed(0) + '%';
+  }
+
+  private tokenMiniText(): string {
+    const total = this.blendedTotal();
+    const win = this.contextWindow();
+    const pct = this.contextRemainingPct();
+    const pctStr = win > 0 && pct >= 0 ? ' · 剩余 ' + pct.toString() + '%' : '';
+    return '总 ' + this.formatTokenCount(total) + pctStr;
   }
 
   private tokenTrendLinePath(data: DailyTokenSnapshot[], maxVal: number, w: number, h: number): string {
@@ -2605,14 +2626,6 @@ struct Index {
   private getTrendLastDate(): string {
     const data = this.getTrendData();
     return data.length > 0 ? data[data.length - 1].date.substring(5) : '';
-  }
-
-  private tokenMiniText(): string {
-    const total = this.tokenUsage?.total?.totalTokens ?? 0;
-    const pct = this.contextWindowTotal > 0
-      ? ` · ${this.contextUsedPercent.toFixed(0)}%`
-      : '';
-    return `总 ${this.formatTokenCount(total)}${pct}`;
   }
 
   @Builder tokenUsageCard() {
@@ -2684,30 +2697,28 @@ struct Index {
               .width('100%')
 
           // 上下文占用
-          if (this.contextWindowTotal > 0) {
+          if (this.contextWindow() > 0) {
             Column() {
               Row() {
-                Text(`${this.contextUsedPercent.toFixed(1)}%`)
-                  .fontSize(12)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(this.contextPercentColor())
-                Blank()
-                Text(`${this.formatTokenCount(this.contextUsedTokens)} / ${this.formatTokenCount(this.contextWindowTotal)}`)
+                Text(this.contextText())
                   .fontSize(11)
-                  .fontColor('#94A3B8')
+                  .fontColor('#1E293B')
               }
               .width('100%')
-              Stack({ alignContent: Alignment.Start }) {
-                Row().width('100%').height(6).backgroundColor('#E2E8F0').borderRadius(3)
-                Row()
-                  .width(`${Math.min(this.contextUsedPercent, 100)}%`)
-                  .height(6)
-                  .backgroundColor(this.contextPercentColor())
-                  .borderRadius(3)
+
+              if (this.blendedTotal() > 0) {
+                Stack({ alignContent: Alignment.Start }) {
+                  Row().width('100%').height(6).backgroundColor('#E2E8F0').borderRadius(3)
+                  Row()
+                    .width(this.contextBarWidth())
+                    .height(6)
+                    .backgroundColor(this.contextBarColor())
+                    .borderRadius(3)
+                }
+                .width('100%')
+                .height(6)
+                .margin({ top: 4 })
               }
-              .width('100%')
-              .height(6)
-              .margin({ top: 4 })
             }
             .margin({ top: 8 })
           }
@@ -2744,13 +2755,29 @@ struct Index {
                     .fontSize(11)
                     .fontColor('#64748B')
                   Blank()
-                  Text(this.makeContextText())
+                  Text(this.contextText())
                     .fontSize(11)
                     .fontColor('#1E293B')
+                  if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
+                    Text(this.compacting ? '压缩中...' : '压缩')
+                      .fontSize(10)
+                      .fontColor(this.contextBarColor())
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .border({ width: 1, color: this.contextBarColor() })
+                      .borderRadius(4)
+                      .margin({ left: 6 })
+                      .onClick(() => {
+                        if (!this.compacting) {
+                          this.compacting = true;
+                          const ok = codexBackend.compactActiveThread();
+                          setTimeout(() => { this.compacting = false; }, 2000);
+                        }
+                      })
+                  }
                 }
                 .width('100%')
 
-                if (this.contextWindowTotal > 0 && this.contextUsedTokens > 0) {
+                if (this.contextRemainingPct() >= 0) {
                   Stack({ alignContent: Alignment.Start }) {
                     Row()
                       .width('100%')
@@ -2758,9 +2785,9 @@ struct Index {
                       .backgroundColor('#E2E8F0')
                       .borderRadius(2)
                     Row()
-                      .width(this.makeContextBarWidth())
+                      .width(this.contextBarWidth())
                       .height(4)
-                      .backgroundColor('#3B82F6')
+                      .backgroundColor(this.contextBarColor())
                       .borderRadius(2)
                   }
                   .width('100%')
@@ -2784,25 +2811,25 @@ struct Index {
                   Row() {
                     if (this.tokenUsage!.last.inputTokens > 0) {
                       Row()
-                        .width(`${(this.tokenUsage!.last.inputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .width(this.safePct(this.tokenUsage!.last.inputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
                         .backgroundColor('#3B82F6')
                     }
                     if (this.tokenUsage!.last.cachedInputTokens > 0) {
                       Row()
-                        .width(`${(this.tokenUsage!.last.cachedInputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .width(this.safePct(this.tokenUsage!.last.cachedInputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
                         .backgroundColor('#94A3B8')
                     }
                     if (this.tokenUsage!.last.outputTokens > 0) {
                       Row()
-                        .width(`${(this.tokenUsage!.last.outputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .width(this.safePct(this.tokenUsage!.last.outputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
                         .backgroundColor('#10B981')
                     }
                     if (this.tokenUsage!.last.reasoningOutputTokens > 0) {
                       Row()
-                        .width(`${(this.tokenUsage!.last.reasoningOutputTokens / this.tokenUsage!.last.totalTokens) * 100}%`)
+                        .width(this.safePct(this.tokenUsage!.last.reasoningOutputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
                         .backgroundColor('#8B5CF6')
                     }

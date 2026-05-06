@@ -404,16 +404,18 @@ export class TokenUsageBreakdown {
   cachedInputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
+  blendedTotal: number;
 
   constructor(
     inputTokens: number, outputTokens: number, cachedInputTokens: number,
-    reasoningOutputTokens: number, totalTokens: number
+    reasoningOutputTokens: number, totalTokens: number, blendedTotal?: number
   ) {
     this.inputTokens = inputTokens;
     this.outputTokens = outputTokens;
     this.cachedInputTokens = cachedInputTokens;
     this.reasoningOutputTokens = reasoningOutputTokens;
     this.totalTokens = totalTokens;
+    this.blendedTotal = blendedTotal ?? totalTokens;
   }
 }
 
@@ -421,11 +423,13 @@ export class TurnTokenUsage {
   total: TokenUsageBreakdown;
   last: TokenUsageBreakdown;
   modelContextWindow: number;
+  contextRemainingPercent: number;
 
-  constructor(total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number) {
+  constructor(total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number, contextRemainingPercent?: number) {
     this.total = total;
     this.last = last;
     this.modelContextWindow = modelContextWindow;
+    this.contextRemainingPercent = contextRemainingPercent ?? -1;
   }
 }
 

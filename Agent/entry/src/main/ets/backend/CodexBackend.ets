@@ -15,6 +15,7 @@ import {
   mcpOauthStartNative,
   mcpReloadNative,
   mcpStatusListNative,
+  compactStartNative,
   threadArchiveNative,
   threadListNative,
   threadNameSetNative,
@@ -1494,6 +1495,33 @@ export class CodexBackend {
     turnInterruptNative(thread.remoteThreadId, activeTurn.turnId);
   }
 
+  compactActiveThread(): boolean {
+    let target: CodexThreadRecord | null = null;
+    this.threads.forEach((t: CodexThreadRecord) => {
+      if (t.activeTurn !== null && target === null) {
+        target = t;
+      }
+    });
+    if (target === null) {
+      this.logInfo('compact: no active thread found');
+      return false;
+    }
+    const thread: CodexThreadRecord = target;
+    const resp = parseJsonText(
+      compactStartNative(JSON.stringify({ threadId: thread.remoteThreadId })),
+      new Object() as Object
+    ) as Record<string, Object>;
+    const ok = resp['ok'] === true;
+    if (!ok) {
+      const err = resp['error'] as Record<string, Object> | undefined;
+      const msg = typeof err?.['message'] === 'string' ? (err!['message'] as string) : 'compact 失败';
+      this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
+    } else {
+      this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
+    }
+    return ok;
+  }
+
   async refreshMcpServers(): Promise<McpServerRecord[]> {
     await this.ensureConnected();
     this.readMcpConfig();
@@ -2145,13 +2173,15 @@ export class CodexBackend {
           typeof b['outputTokens'] === 'number' ? (b['outputTokens'] as number) : 0,
           typeof b['cachedInputTokens'] === 'number' ? (b['cachedInputTokens'] as number) : 0,
           typeof b['reasoningOutputTokens'] === 'number' ? (b['reasoningOutputTokens'] as number) : 0,
-          typeof b['totalTokens'] === 'number' ? (b['totalTokens'] as number) : 0
+          typeof b['totalTokens'] === 'number' ? (b['totalTokens'] as number) : 0,
+          typeof b['blendedTotal'] === 'number' ? (b['blendedTotal'] as number) : undefined
         );
       };
       const total = tu['total'] !== undefined ? parseBreakdown(tu['total'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
       const last = tu['last'] !== undefined ? parseBreakdown(tu['last'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
       const ctxWindow = typeof tu['modelContextWindow'] === 'number' ? (tu['modelContextWindow'] as number) : 0;
-      thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow);
+      const ctxRemainingPct = typeof tu['contextRemainingPercent'] === 'number' ? (tu['contextRemainingPercent'] as number) : -1;
+      thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow, ctxRemainingPct);
     }
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();
