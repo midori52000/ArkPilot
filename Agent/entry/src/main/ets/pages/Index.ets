@@ -2033,7 +2033,7 @@ struct Index {
           .fontSize(14)
           .fontColor('#64748B')
 
-        Text('Settings')
+        Text('设置')
           .fontSize(12)
           .fontColor('#64748B')
           .margin({ left: 6 })

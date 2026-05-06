@@ -86,9 +86,9 @@ class ApiPresetMockItem {
 @Component
 struct SettingsPage {
   private readonly navItems: SettingsNavItem[] = [
-    new SettingsNavItem('api', 'API', 'Provider 与模型接入', '#8B5CF6'),
-    new SettingsNavItem('skills', 'Skills', '能力包与仓库源', '#14B8A6'),
-    new SettingsNavItem('prompts', 'Prompts', '预设指令与工作约束', '#F59E0B'),
+    new SettingsNavItem('api', 'API', '服务商与模型接入', '#8B5CF6'),
+    new SettingsNavItem('skills', 'Skills', 'Skills 与仓库源', '#14B8A6'),
+    new SettingsNavItem('prompts', 'Prompt', '预设指令与工作约束', '#F59E0B'),
     new SettingsNavItem('mcp', 'MCP', '桥接与工具通道', '#0A84FF')
   ];
 
@@ -117,7 +117,7 @@ struct SettingsPage {
   @State private installedSkills: InstalledSkill[] = [];
   @State private skillRepos: SkillRepo[] = [];
   @State private skillBackups: SkillBackupEntry[] = [];
-  @State private skillsActiveSubTab: SkillsSubTab = 'installed';
+  @State private skillsActiveSubTabIndex: number = 0;
   @State private newRepoOwner: string = 'anthropics';
   @State private newRepoName: string = 'skills';
   @State private newRepoBranch: string = 'main';
@@ -309,7 +309,7 @@ struct SettingsPage {
       this.promptDraftSummary = '';
       this.promptDraftContent = '';
       this.promptsStatusText = this.promptLiveContent.trim().length > 0
-        ? '当前 AGENTS.md 已有 live 内容。'
+        ? '当前 AGENTS.md 已有同步内容。'
         : '当前还没有 Prompt。';
       return;
     }
@@ -326,7 +326,7 @@ struct SettingsPage {
     const activeName = this.promptsViewModel.activePromptName;
     this.promptsStatusText = activeName !== 'None'
       ? `当前启用：${activeName}`
-      : (this.promptLiveContent.trim().length > 0 ? '当前仅存在 live 内容，未绑定启用 Prompt。' : '当前没有启用 Prompt。');
+      : (this.promptLiveContent.trim().length > 0 ? '当前仅存在同步内容，未绑定启用 Prompt。' : '当前没有启用 Prompt。');
   }
 
   private loadSettingsFacadeState(): void {
@@ -463,16 +463,19 @@ struct SettingsPage {
   private statusChipBackground(status: string): string {
     switch (status) {
       case 'Healthy':
+      case '正常':
       case 'ok':
       case 'authenticated':
         return '#DCFCE7';
       case 'Standby':
+      case '待命':
       case 'pending':
       case 'required':
       case 'degraded':
       case 'warning':
         return '#FEF3C7';
       case 'Draft':
+      case '草稿':
       case 'unknown':
         return '#E0F2FE';
       default:
@@ -483,16 +486,19 @@ struct SettingsPage {
   private statusChipColor(status: string): string {
     switch (status) {
       case 'Healthy':
+      case '正常':
       case 'ok':
       case 'authenticated':
         return '#166534';
       case 'Standby':
+      case '待命':
       case 'pending':
       case 'required':
       case 'degraded':
       case 'warning':
         return '#92400E';
       case 'Draft':
+      case '草稿':
       case 'unknown':
         return '#0C4A6E';
       default:
@@ -503,15 +509,15 @@ struct SettingsPage {
   private authLabel(status: string): string {
     switch (status) {
       case 'notRequired':
-        return 'No Auth';
+        return '无需认证';
       case 'required':
-        return 'OAuth Required';
+        return '需要 OAuth';
       case 'pending':
-        return 'OAuth Pending';
+        return 'OAuth 等待中';
       case 'authenticated':
-        return 'Authenticated';
+        return '已认证';
       case 'failed':
-        return 'Failed';
+        return '失败';
       default:
         return status;
     }
@@ -520,15 +526,15 @@ struct SettingsPage {
   private healthLabel(status: string): string {
     switch (status) {
       case 'ok':
-        return 'Healthy';
+        return '正常';
       case 'warning':
-        return 'No Tools';
+        return '无工具';
       case 'degraded':
-        return 'Attention';
+        return '需关注';
       case 'error':
-        return 'Error';
+        return '错误';
       default:
-        return 'Draft';
+        return '草稿';
     }
   }
 
@@ -551,7 +557,7 @@ struct SettingsPage {
       case 'skills':
         return 'Skills';
       case 'prompts':
-        return 'Prompts';
+        return 'Prompt';
       default:
         return 'API';
     }
@@ -560,7 +566,7 @@ struct SettingsPage {
   private saveMcpDraft(): void {
     const server = this.selectedMcpServer();
     if (server === null) {
-      this.triggerFeedback('当前没有可保存的 MCP server。', 'warning');
+      this.triggerFeedback('当前没有可保存的 MCP 服务。', 'warning');
       return;
     }
     codexBackend.saveMcpServerConfig(
@@ -586,7 +592,7 @@ struct SettingsPage {
   private revertMcpDraft(): void {
     const server = this.selectedMcpServer();
     if (server === null) {
-      this.triggerFeedback('当前没有可还原的 MCP server。', 'warning');
+      this.triggerFeedback('当前没有可还原的 MCP 服务。', 'warning');
       return;
     }
     this.loadMcpDraft(server.id);
@@ -609,7 +615,7 @@ struct SettingsPage {
   private startSelectedMcpOauth(): void {
     const server = this.selectedMcpServer();
     if (server === null) {
-      this.triggerFeedback('当前没有可登录的 MCP server。', 'warning');
+      this.triggerFeedback('当前没有可登录的 MCP 服务。', 'warning');
       return;
     }
     codexBackend.startMcpOAuthLogin(server.name)
@@ -685,10 +691,10 @@ struct SettingsPage {
       preview += `\nURL: ${url}`;
     }
     if (command.length > 0) {
-      preview += `\nCommand: ${command}`;
+      preview += `\n命令: ${command}`;
     }
     if (hasHeaders) {
-      preview += `\nHeaders: 已配置`;
+      preview += `\n请求头: 已配置`;
     }
     return preview;
   }
@@ -714,7 +720,7 @@ struct SettingsPage {
     }
     for (let i: number = 0; i < this.mcpServers.length; i += 1) {
       if (this.mcpServers[i].name === name) {
-        this.triggerFeedback('已存在同名 MCP server。', 'warning');
+        this.triggerFeedback('已存在同名 MCP 服务。', 'warning');
         return;
       }
     }
@@ -737,7 +743,7 @@ struct SettingsPage {
         this.mcpNewServerName = '';
         this.mcpJsonPasteInput = '';
         this.syncMcpStateFromBackend();
-        this.triggerFeedback(`已添加 MCP server: ${name}`, 'success');
+        this.triggerFeedback(`已添加 MCP 服务：${name}`, 'success');
       })
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
@@ -748,7 +754,7 @@ struct SettingsPage {
   private openMcpDeleteDialog(): void {
     const server = this.selectedMcpServer();
     if (server === null) {
-      this.triggerFeedback('当前没有可删除的 MCP server。', 'warning');
+      this.triggerFeedback('当前没有可删除的 MCP 服务。', 'warning');
       return;
     }
     this.pendingDeleteMcpName = server.name;
@@ -769,7 +775,7 @@ struct SettingsPage {
     codexBackend.removeMcpServer(name)
       .then(() => {
         this.syncMcpStateFromBackend();
-        this.triggerFeedback(`已删除 MCP server: ${name}`, 'success');
+        this.triggerFeedback(`已删除 MCP 服务：${name}`, 'success');
       })
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
@@ -856,7 +862,7 @@ struct SettingsPage {
     const name = this.newRepoName.trim();
     const branch = this.newRepoBranch.trim().length > 0 ? this.newRepoBranch.trim() : 'main';
     if (owner.length === 0 || name.length === 0) {
-      this.triggerFeedback('仓库 owner 与 name 不能为空。', 'error');
+      this.triggerFeedback('仓库所有者与名称不能为空。', 'error');
       return;
     }
     skillsVM.addRepo(new SkillRepo(owner, name, branch, true))
@@ -923,6 +929,61 @@ struct SettingsPage {
           ? skillsVM.state.errorText
           : skillsVM.state.statusText;
         this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private skillsSubTabIndex(tab: SkillsSubTab): number {
+    if (tab === 'repos') {
+      return 1;
+    }
+    if (tab === 'backups') {
+      return 2;
+    }
+    return 0;
+  }
+
+  private skillsSubTabByIndex(index: number): SkillsSubTab {
+    if (index === 1) {
+      return 'repos';
+    }
+    if (index === 2) {
+      return 'backups';
+    }
+    return 'installed';
+  }
+
+  private refreshActiveSkillsSubTab(): void {
+    this.loadSkillsSubTab(this.skillsSubTabByIndex(this.skillsActiveSubTabIndex));
+  }
+
+  private switchSkillsSubTab(tab: SkillsSubTab): void {
+    const nextIndex = this.skillsSubTabIndex(tab);
+    if (this.skillsActiveSubTabIndex !== nextIndex) {
+      this.skillsActiveSubTabIndex = nextIndex;
+    } else {
+      this.skillsActiveSubTabIndex = nextIndex;
+    }
+    this.loadSkillsSubTab(tab);
+  }
+
+  private loadSkillsSubTab(tab: SkillsSubTab): void {
+    this.syncSkillsStateFromViewModel();
+    this.skillsStatusText = tab === 'installed'
+      ? '正在刷新已安装 Skills...'
+      : (tab === 'repos' ? '正在刷新来源...' : '正在刷新备份...');
+    const action = tab === 'installed'
+      ? skillsVM.loadInstalled(true)
+      : (tab === 'repos' ? skillsVM.loadRepos() : skillsVM.loadBackups());
+    action
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
       })
       .catch((err: Object) => {
         this.skillsStatusText = this.describeRuntimeError(err);
@@ -1066,7 +1127,7 @@ struct SettingsPage {
       case 'responses':
         return 'Responses';
       case 'chat':
-        return 'Chat';
+        return '对话';
       case 'anthropic':
         return 'Anthropic';
       default:
@@ -1197,9 +1258,9 @@ struct SettingsPage {
         for (let endpointIndex = 0; endpointIndex < provider.endpoints.length; endpointIndex += 1) {
           const endpoint = provider.endpoints[endpointIndex];
           endpoints.push(new ApiEndpointMockItem(
-            endpointIndex === 0 ? 'Primary' : (endpoint.isActive ? 'Fallback' : 'Preview'),
+            endpointIndex === 0 ? '主端点' : (endpoint.isActive ? '备用端点' : '预览端点'),
             endpoint.url,
-            endpoint.isActive ? 'Healthy' : (endpoint.latencyMs > 0 ? 'Standby' : 'Draft')
+            endpoint.isActive ? '正常' : (endpoint.latencyMs > 0 ? '待命' : '草稿')
           ));
         }
         this.apiEndpoints = endpoints;
@@ -1267,7 +1328,7 @@ struct SettingsPage {
     if (editing === null) {
       return;
     }
-    editing.name = 'New Provider Draft';
+    editing.name = '新服务商草稿';
     editing.baseUrl = 'https://your-provider.example.com/v1';
     editing.apiKey = 'sk-draft-************************';
     editing.model = 'gpt-5.1';
@@ -1346,7 +1407,7 @@ struct SettingsPage {
   private validateApiDraft(): void {
     const provider = this.selectedApiProvider();
     if (provider === null) {
-      this.triggerFeedback('请先选择 Provider。', 'warning');
+      this.triggerFeedback('请先选择服务商。', 'warning');
       return;
     }
     apiManagementVM.validateProvider(provider)
@@ -1484,13 +1545,13 @@ struct SettingsPage {
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .layoutWeight(1)
-                    Text(r.success ? `${r.latencyMs}ms` : 'FAIL')
+                    Text(r.success ? `${r.latencyMs}ms` : '失败')
                       .copyOption(CopyOptions.LocalDevice)
                       .fontSize(11)
                       .fontWeight(FontWeight.Medium)
                       .fontColor(r.success ? '#166534' : '#B91C1C')
                       .margin({ left: 8, right: 8 })
-                    Text(r.success ? 'OK' : 'ERR')
+                    Text(r.success ? '正常' : '错误')
                       .copyOption(CopyOptions.LocalDevice)
                       .fontSize(10)
                       .fontWeight(FontWeight.Medium)
@@ -1592,7 +1653,7 @@ struct SettingsPage {
           Text('←')
             .fontSize(16)
             .fontColor('#0F172A')
-          Text('Back')
+          Text('返回')
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
@@ -1771,7 +1832,7 @@ struct SettingsPage {
     Column() {
       Row() {
         Column() {
-          Text(`${this.navLabel(this.activeTab)} / Settings`)
+          Text(`${this.navLabel(this.activeTab)} / 设置`)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
@@ -1804,7 +1865,7 @@ struct SettingsPage {
       case 'prompts':
         return 'Prompt 套件与会话前置约束';
       default:
-        return 'Provider、Model 与 Endpoint 布局';
+        return '服务商、模型与端点布局';
     }
   }
 
@@ -1813,16 +1874,22 @@ struct SettingsPage {
       case 'mcp':
         return '管理 MCP 服务器连接与工具源';
       case 'skills':
-        return '统一管理已安装能力、仓库源和备份快照，保持高密度但不混乱。';
+        return '统一管理已安装 Skills、仓库源和备份快照，保持高密度但不混乱。';
       case 'prompts':
-        return '在 UI 里显式展示当前指令集合、启用状态和草稿编辑区。';
+        return '在界面里显式展示当前指令集合、启用状态和草稿编辑区。';
       default:
-        return '管理 Provider 接入信息与 API 配置';
+        return '管理服务商接入信息与 API 配置';
     }
   }
 
   @Builder
-  private summaryCard(title: string, value: string, color: string, background: string) {
+  private skillsSummaryCard(
+    title: string,
+    value: string,
+    color: string,
+    background: string,
+    tab: SkillsSubTab
+  ) {
     Column() {
       Text(title)
         .copyOption(CopyOptions.LocalDevice)
@@ -1840,7 +1907,7 @@ struct SettingsPage {
           .height(8)
           .backgroundColor(color)
           .borderRadius(10)
-        Text('Ready')
+        Text(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '当前' : '就绪')
           .copyOption(CopyOptions.None)
           .fontSize(10)
           .fontColor(color)
@@ -1850,11 +1917,37 @@ struct SettingsPage {
     }
     .alignItems(HorizontalAlign.Start)
     .layoutWeight(1)
+    .height(112)
     .padding(16)
     .backgroundColor(background)
-    .border({ width: 1, color: '#DCE7F3' })
+    .border({
+      width: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? 1.6 : 1,
+      color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? color : '#DCE7F3'
+    })
     .borderRadius(20)
     .margin({ right: 12 })
+    .scale({ x: this.pressScale(`skill-summary-${tab}`), y: this.pressScale(`skill-summary-${tab}`) })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => { this.updatePressed(`skill-summary-${tab}`, event); })
+    .onClick(() => { this.switchSkillsSubTab(tab); })
+  }
+
+  @Builder
+  private skillsSubTabButton(label: string, tab: SkillsSubTab) {
+    Button(label)
+      .height(32)
+      .fontSize(11)
+      .fontWeight(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#0A84FF' : '#475569')
+      .backgroundColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#EAF3FF' : '#F8FAFC')
+      .border({ width: 1, color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#BFDBFE' : '#DCE5EF' })
+      .borderRadius(12)
+      .padding({ left: 12, right: 12 })
+      .margin({ right: 8 })
+      .scale({ x: this.pressScale(`skill-tab-${tab}`), y: this.pressScale(`skill-tab-${tab}`) })
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .onTouch((event: TouchEvent) => { this.updatePressed(`skill-tab-${tab}`, event); })
+      .onClick(() => { this.switchSkillsSubTab(tab); })
   }
 
   @Builder
@@ -1927,12 +2020,12 @@ struct SettingsPage {
   }
 
   @Builder
-  private formLabel(label: string) {
+  private formLabel(label: string, color: string = '#000000') {
     Text(label)
       .copyOption(CopyOptions.None)
-      .fontSize(10)
+      .fontSize(13)
       .fontWeight(FontWeight.Medium)
-      .fontColor('#64748B')
+      .fontColor(color)
       .margin({ top: 12 })
   }
 
@@ -1941,14 +2034,14 @@ struct SettingsPage {
     Column() {
       Row() {
         Column() {
-          this.sectionCard('Servers', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
+          this.sectionCard('服务器', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
           if (this.mcpServers.length === 0) {
             Column() {
-              Text('暂无 MCP Server')
+              Text('暂无 MCP 服务')
                 .fontSize(14)
                 .fontColor('#94A3B8')
                 .margin({ top: 24 })
-              Text('点击下方按钮添加第一个 MCP server')
+              Text('点击下方按钮添加第一个 MCP 服务')
                 .fontSize(12)
                 .fontColor('#CBD5E1')
                 .margin({ top: 8 })
@@ -1964,7 +2057,7 @@ struct SettingsPage {
           .width('100%')
           .margin({ top: 12 })
 
-          Button('+ Add Server')
+          Button('+ 添加服务')
             .width('100%')
             .height(40)
             .margin({ top: 10 })
@@ -2021,13 +2114,13 @@ struct SettingsPage {
         .width('100%')
 
         Row() {
-          this.pill(server.enabled ? 'Enabled' : 'Disabled', server.enabled ? '#DCFCE7' : '#F1F5F9', server.enabled ? '#166534' : '#64748B')
+          this.pill(server.enabled ? '已启用' : '已停用', server.enabled ? '#DCFCE7' : '#F1F5F9', server.enabled ? '#166534' : '#64748B')
           this.pill(this.authLabel(server.authStatus), this.statusChipBackground(server.authStatus), this.statusChipColor(server.authStatus))
         }
         .width('100%')
         .margin({ top: 10 })
 
-        Text(`${server.toolCount} tools · ${server.resourceCount} resources · ${server.transportType}`)
+        Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
           .fontColor('#64748B')
@@ -2053,7 +2146,7 @@ struct SettingsPage {
   @Builder
   private mcpEditorCard() {
     Column() {
-      this.sectionCard('Editor', '配置 MCP 服务器连接参数')
+      this.sectionCard('编辑器', '配置 MCP 服务器连接参数')
 
       Column() {
         Row() {
@@ -2068,21 +2161,21 @@ struct SettingsPage {
           .fontColor('#334155')
           .margin({ top: 14 })
 
-        this.formLabel('Transport')
+        this.formLabel('传输方式')
         Row() {
           this.optionChip('stdio', this.mcpTransportTypeDraft === 'stdio', 'transport-stdio', () => { this.mcpTransportTypeDraft = 'stdio'; })
           this.optionChip('http', this.mcpTransportTypeDraft === 'http', 'transport-http', () => { this.mcpTransportTypeDraft = 'http'; })
         }
 
-        this.formLabel('Enabled')
+        this.formLabel('启用状态')
         Row() {
-          this.optionChip('true', this.mcpEnabledDraft, 'mcp-enabled-true', () => { this.mcpEnabledDraft = true; })
-          this.optionChip('false', !this.mcpEnabledDraft, 'mcp-enabled-false', () => { this.mcpEnabledDraft = false; })
+          this.optionChip('是', this.mcpEnabledDraft, 'mcp-enabled-true', () => { this.mcpEnabledDraft = true; })
+          this.optionChip('否', !this.mcpEnabledDraft, 'mcp-enabled-false', () => { this.mcpEnabledDraft = false; })
         }
 
         if (this.mcpTransportTypeDraft === 'stdio') {
-          this.formLabel('Command')
-          TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / binary path' })
+          this.formLabel('命令')
+          TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / 可执行文件路径' })
             .width('100%')
             .height(40)
             .backgroundColor('#F8FAFC')
@@ -2091,7 +2184,7 @@ struct SettingsPage {
             .margin({ top: 6 })
             .onChange((value: string) => { this.mcpCommandDraft = value; })
 
-          this.formLabel('Args JSON')
+          this.formLabel('参数 JSON')
           TextInput({ text: this.mcpArgsDraft, placeholder: '["--flag"]' })
             .width('100%')
             .height(40)
@@ -2113,7 +2206,7 @@ struct SettingsPage {
             .margin({ top: 6 })
             .onChange((value: string) => { this.mcpUrlDraft = value; })
 
-          this.formLabel('HTTP Headers')
+          this.formLabel('HTTP 请求头')
           TextArea({ text: this.mcpHttpHeadersDraft, placeholder: '{"Authorization":"Bearer your-token"}' })
             .width('100%')
             .height(94)
@@ -2124,7 +2217,7 @@ struct SettingsPage {
             .onChange((value: string) => { this.mcpHttpHeadersDraft = value; })
         }
 
-        this.formLabel('Environment')
+        this.formLabel('环境变量')
         TextArea({ text: this.mcpEnvDraft, placeholder: '{"KEY":"VALUE"}' })
           .width('100%')
           .height(94)
@@ -2135,11 +2228,11 @@ struct SettingsPage {
           .onChange((value: string) => { this.mcpEnvDraft = value; })
 
         Row() {
-          this.actionButton('Delete Server', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
-          this.actionButton('Revert', 'mcp-revert', false, () => { this.revertMcpDraft(); })
-          this.actionButton('OAuth Login', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
-          this.actionButton('Reload MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
-          this.actionButton('Save Config', 'mcp-save', true, () => { this.saveMcpDraft(); })
+          this.actionButton('删除服务', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
+          this.actionButton('还原', 'mcp-revert', false, () => { this.revertMcpDraft(); })
+          this.actionButton('OAuth 登录', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
+          this.actionButton('重载 MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
+          this.actionButton('保存配置', 'mcp-save', true, () => { this.saveMcpDraft(); })
         }
         .width('100%')
         .justifyContent(FlexAlign.End)
@@ -2159,58 +2252,53 @@ struct SettingsPage {
   private skillsPanel() {
     Column() {
       Row() {
-        this.summaryCard('Installed', `${this.installedSkills.length} skills`, '#14B8A6', '#ECFDF5')
-        this.summaryCard('Repos', `${this.skillRepos.length} sources`, '#0A84FF', '#EAF3FF')
-        this.summaryCard('Backups', `${this.skillBackups.length} archives`, '#F59E0B', '#FFFBEB')
+        this.skillsSummaryCard('已安装', `${this.installedSkills.length} 个 Skills`, '#14B8A6', '#ECFDF5', 'installed')
+        this.skillsSummaryCard('来源', `${this.skillRepos.length} 个来源`, '#0A84FF', '#EAF3FF', 'repos')
+        this.skillsSummaryCard('备份', `${this.skillBackups.length} 个归档`, '#F59E0B', '#FFFBEB', 'backups')
       }
       .width('100%')
 
       Row() {
-        this.optionChip('Installed', this.skillsActiveSubTab === 'installed', 'skill-tab-installed', () => { this.skillsActiveSubTab = 'installed'; })
-        this.optionChip('Repos', this.skillsActiveSubTab === 'repos', 'skill-tab-repos', () => { this.skillsActiveSubTab = 'repos'; })
-        this.optionChip('Backups', this.skillsActiveSubTab === 'backups', 'skill-tab-backups', () => { this.skillsActiveSubTab = 'backups'; })
+        this.skillsSubTabButton('已安装', 'installed')
+        this.skillsSubTabButton('来源', 'repos')
+        this.skillsSubTabButton('备份', 'backups')
 
-        Blank().layoutWeight(1)
+        Blank()
+          .layoutWeight(1)
 
-        Button('刷新')
-          .height(30)
-          .fontSize(11)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#6366F1')
-          .backgroundColor('#EEF2FF')
-          .borderRadius(10)
-          .border({ width: 1, color: '#C7D2FE' })
-          .padding({ left: 12, right: 12 })
-          .scale({ x: this.pressScale('skill-refresh'), y: this.pressScale('skill-refresh') })
-          .animation({ duration: 120, curve: Curve.EaseOut })
-          .onTouch((event: TouchEvent) => { this.updatePressed('skill-refresh', event); })
-          .onClick(() => {
-            skillsVM.loadInstalled(true)
-              .then(() => {
-                this.syncSkillsStateFromViewModel();
-                this.triggerFeedback(`扫描完成，发现 ${this.installedSkills.length} 个 skill`, 'success');
-              })
-              .catch((err: Object) => {
-                this.triggerFeedback(this.describeRuntimeError(err), 'error');
-              });
-          })
+        this.actionButton('刷新当前', 'skill-refresh-current', false, () => { this.refreshActiveSkillsSubTab(); })
       }
       .width('100%')
-      .margin({ top: 16 })
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 4 })
 
       Text(this.skillsStatusText)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#334155')
-        .margin({ top: 10 })
+        .margin({ top: 8 })
 
-      if (this.skillsActiveSubTab === 'installed') {
-        this.installedSkillsPanel()
-      } else if (this.skillsActiveSubTab === 'repos') {
-        this.skillReposPanel()
-      } else {
-        this.skillBackupsPanel()
+      Column() {
+        Column() {
+          this.installedSkillsPanel()
+        }
+        .width('100%')
+        .visibility(this.skillsActiveSubTabIndex === 0 ? Visibility.Visible : Visibility.None)
+
+        Column() {
+          this.skillReposPanel()
+        }
+        .width('100%')
+        .visibility(this.skillsActiveSubTabIndex === 1 ? Visibility.Visible : Visibility.None)
+
+        Column() {
+          this.skillBackupsPanel()
+        }
+        .width('100%')
+        .visibility(this.skillsActiveSubTabIndex === 2 ? Visibility.Visible : Visibility.None)
       }
+      .width('100%')
+      .margin({ top: 4 })
     }
     .width('100%')
     .margin({ top: 18 })
@@ -2228,7 +2316,7 @@ struct SettingsPage {
   }
 
   private skillUpdatedText(skill: InstalledSkill): string {
-    return skill.updatedAt > 0 ? `updated ${this.formatTimestamp(skill.updatedAt)}` : '刚刚安装';
+    return skill.updatedAt > 0 ? `更新于 ${this.formatTimestamp(skill.updatedAt)}` : '刚刚安装';
   }
 
   @Builder
@@ -2260,97 +2348,124 @@ struct SettingsPage {
   }
 
   @Builder
+  private skillsEmptyState(title: string, subtitle: string) {
+    Column() {
+      Text(title)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#0F172A')
+      Text(subtitle)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor('#64748B')
+        .lineHeight(17)
+        .margin({ top: 6 })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(18)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E2EAF3' })
+    .borderRadius(18)
+  }
+
+  @Builder
   private installedSkillsPanel() {
     Column() {
-      ForEach(this.installedSkills, (skill: InstalledSkill) => {
-        Row() {
-          Column() {
-            Row() {
-              Text(skill.name)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(14)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#111827')
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-              if (skill.enabled) {
-                Text('启用')
-                  .copyOption(CopyOptions.None)
-                  .fontSize(9)
-                  .fontColor('#16A34A')
-                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                  .backgroundColor('#DCFCE7')
-                  .borderRadius(8)
-                  .margin({ left: 8 })
-              }
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Center)
-
-            Text(skill.description)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(11)
-              .fontColor('#667085')
-              .lineHeight(17)
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ top: 6 })
-
-            Row() {
-              Text(this.skillSourceText(skill))
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(10)
-                .fontColor('#94A3B8')
-              Text(this.skillMetaText(skill))
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(10)
-                .fontColor('#94A3B8')
-                .margin({ left: 10 })
-            }
-            .width('100%')
-            .margin({ top: 8 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          .padding({ right: 12 })
-
+      if (this.installedSkills.length === 0) {
+        this.skillsEmptyState('暂无已安装 Skills', '点击刷新当前重新扫描本机 Skills 目录。')
+      } else {
+        ForEach(this.installedSkills, (skill: InstalledSkill) => {
           Row() {
-            this.skillActionButton(
-              skill.enabled ? '启用中' : '禁用中',
-              `skill-toggle-${skill.id}`,
-              skill.enabled ? '#16A34A' : '#94A3B8',
-              skill.enabled ? '#DCFCE7' : '#F5F7FA',
-              skill.enabled ? '#BBF7D0' : '#E5EAF1',
-              () => { this.toggleSkillEnabled(skill.id); }
-            )
-            this.skillActionButton(
-              '打开',
-              `skill-open-${skill.id}`,
-              '#6366F1',
-              '#EEF2FF',
-              '#C7D2FE',
-              () => { this.showSkillDetail(skill); }
-            )
-            this.skillActionButton(
-              '删除',
-              `skill-delete-${skill.id}`,
-              '#EF4444',
-              '#FEF2F2',
-              '#FECACA',
-              () => { this.requestUninstallSkill(skill.id); }
-            )
+            Column() {
+              Row() {
+                Text(skill.name)
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#111827')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                if (skill.enabled) {
+                  Text('启用')
+                    .copyOption(CopyOptions.None)
+                    .fontSize(9)
+                    .fontColor('#16A34A')
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                    .backgroundColor('#DCFCE7')
+                    .borderRadius(8)
+                    .margin({ left: 8 })
+                }
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+
+              Text(skill.description)
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(11)
+                .fontColor('#667085')
+                .lineHeight(17)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 6 })
+
+              Row() {
+                Text(this.skillSourceText(skill))
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#94A3B8')
+                Text(this.skillMetaText(skill))
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#94A3B8')
+                  .margin({ left: 10 })
+              }
+              .width('100%')
+              .margin({ top: 8 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            .padding({ right: 12 })
+
+            Row() {
+              this.skillActionButton(
+                skill.enabled ? '启用中' : '禁用中',
+                `skill-toggle-${skill.id}`,
+                skill.enabled ? '#16A34A' : '#94A3B8',
+                skill.enabled ? '#DCFCE7' : '#F5F7FA',
+                skill.enabled ? '#BBF7D0' : '#E5EAF1',
+                () => { this.toggleSkillEnabled(skill.id); }
+              )
+              this.skillActionButton(
+                '打开',
+                `skill-open-${skill.id}`,
+                '#6366F1',
+                '#EEF2FF',
+                '#C7D2FE',
+                () => { this.showSkillDetail(skill); }
+              )
+              this.skillActionButton(
+                '删除',
+                `skill-delete-${skill.id}`,
+                '#EF4444',
+                '#FEF2F2',
+                '#FECACA',
+                () => { this.requestUninstallSkill(skill.id); }
+              )
+            }
+            .justifyContent(FlexAlign.End)
+            .alignItems(VerticalAlign.Center)
           }
-          .justifyContent(FlexAlign.End)
-          .alignItems(VerticalAlign.Center)
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-        .backgroundColor('#FFFFFF')
-        .borderRadius(14)
-        .border({ width: 1, color: skill.enabled ? '#D1FAE5' : '#E7ECF3' })
-        .margin({ top: 0 })
-      }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+          .backgroundColor('#FFFFFF')
+          .borderRadius(14)
+          .border({ width: 1, color: skill.enabled ? '#D1FAE5' : '#E7ECF3' })
+          .margin({ top: 0 })
+        }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
+      }
     }
     .width('100%')
     .backgroundColor('#FFFFFF')
@@ -2363,10 +2478,10 @@ struct SettingsPage {
   private skillReposPanel() {
     Column() {
       Column() {
-        this.sectionCard('Repository source', '添加新的 skill 仓库源')
+        this.sectionCard('仓库源', '添加新的 Skill 仓库源')
 
         Row() {
-          TextInput({ text: this.newRepoOwner, placeholder: 'owner' })
+          TextInput({ text: this.newRepoOwner, placeholder: '所有者' })
             .layoutWeight(1)
             .height(40)
             .backgroundColor('#F8FAFC')
@@ -2374,7 +2489,7 @@ struct SettingsPage {
             .padding({ left: 12, right: 12 })
             .onChange((value: string) => { this.newRepoOwner = value; })
 
-          TextInput({ text: this.newRepoName, placeholder: 'repo' })
+          TextInput({ text: this.newRepoName, placeholder: '仓库' })
             .layoutWeight(1)
             .height(40)
             .backgroundColor('#F8FAFC')
@@ -2383,7 +2498,7 @@ struct SettingsPage {
             .margin({ left: 10 })
             .onChange((value: string) => { this.newRepoName = value; })
 
-          TextInput({ text: this.newRepoBranch, placeholder: 'branch' })
+          TextInput({ text: this.newRepoBranch, placeholder: '分支' })
             .width(120)
             .height(40)
             .backgroundColor('#F8FAFC')
@@ -2393,7 +2508,7 @@ struct SettingsPage {
             .onChange((value: string) => { this.newRepoBranch = value; })
 
           Column() {
-            this.actionButton('Add Repo', 'repo-add', true, () => { this.addSkillRepo(); })
+            this.actionButton('添加仓库', 'repo-add', true, () => { this.addSkillRepo(); })
           }
           .margin({ left: 10 })
         }
@@ -2403,46 +2518,50 @@ struct SettingsPage {
       .width('100%')
 
       Column() {
-        ForEach(this.skillRepos, (repo: SkillRepo) => {
-          Row() {
-            Column() {
-              Text(`${repo.owner}/${repo.name}`)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(13)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#0F172A')
-              Text(`branch: ${repo.branch}`)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(10)
-                .fontColor('#64748B')
-                .margin({ top: 5 })
-            }
-            .alignItems(HorizontalAlign.Start)
+        if (this.skillRepos.length === 0) {
+          this.skillsEmptyState('暂无来源', '添加仓库源后会显示在这里。')
+        } else {
+          ForEach(this.skillRepos, (repo: SkillRepo) => {
+            Row() {
+              Column() {
+                Text(`${repo.owner}/${repo.name}`)
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#0F172A')
+                Text(`分支: ${repo.branch}`)
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#64748B')
+                  .margin({ top: 5 })
+              }
+              .alignItems(HorizontalAlign.Start)
 
-            Blank()
-              .layoutWeight(1)
+              Blank()
+                .layoutWeight(1)
 
-            this.pill(repo.enabled ? 'Enabled' : 'Disabled', repo.enabled ? '#DCFCE7' : '#F1F5F9', repo.enabled ? '#166534' : '#64748B')
+              this.pill(repo.enabled ? '已启用' : '已停用', repo.enabled ? '#DCFCE7' : '#F1F5F9', repo.enabled ? '#166534' : '#64748B')
 
-            Column() {
-              this.actionButton(repo.enabled ? 'Disable' : 'Enable', `repo-toggle-${repo.owner}-${repo.name}`, false, () => { this.toggleRepoEnabled(repo.owner, repo.name); })
+              Column() {
+                this.actionButton(repo.enabled ? '停用' : '启用', `repo-toggle-${repo.owner}-${repo.name}`, false, () => { this.toggleRepoEnabled(repo.owner, repo.name); })
+              }
+              .margin({ left: 12 })
+              Column() {
+                this.actionButton('移除', `repo-remove-${repo.owner}-${repo.name}`, true, () => { this.removeSkillRepo(repo.owner, repo.name); })
+              }
+              .margin({ left: 10 })
             }
-            .margin({ left: 12 })
-            Column() {
-              this.actionButton('Remove', `repo-remove-${repo.owner}-${repo.name}`, true, () => { this.removeSkillRepo(repo.owner, repo.name); })
-            }
-            .margin({ left: 10 })
-          }
-          .width('100%')
-          .padding(18)
-          .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E2EAF3' })
-          .borderRadius(22)
-          .margin({ top: 12 })
-        }, (repo: SkillRepo) => `${repo.owner}/${repo.name}`)
+            .width('100%')
+            .padding(18)
+            .backgroundColor('#FFFFFF')
+            .border({ width: 1, color: '#E2EAF3' })
+            .borderRadius(22)
+            .margin({ top: 12 })
+          }, (repo: SkillRepo) => `${repo.owner}/${repo.name}`)
+        }
       }
       .width('100%')
-      .margin({ top: 14 })
+      .margin({ top: 10 })
     }
     .width('100%')
   }
@@ -2457,7 +2576,7 @@ struct SettingsPage {
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
-          Text('这里将用于展示 native 卸载动作留下的历史快照。')
+          Text('这里将用于展示原生卸载动作留下的历史快照。')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
             .fontColor('#64748B')
@@ -2488,18 +2607,18 @@ struct SettingsPage {
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
 
-              this.pill('Archive', '#FFFBEB', '#B45309')
+              this.pill('归档', '#FFFBEB', '#B45309')
             }
             .width('100%')
 
-            Text(`created at ${this.formatTimestamp(backup.createdAt)}`)
+            Text(`创建时间 ${this.formatTimestamp(backup.createdAt)}`)
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
               .fontColor('#64748B')
               .margin({ top: 12 })
 
             Row() {
-              this.actionButton('Delete Backup', `backup-remove-${backup.backupId}`, true, () => { this.removeSkillBackup(backup.backupId); })
+              this.actionButton('删除备份', `backup-remove-${backup.backupId}`, true, () => { this.removeSkillBackup(backup.backupId); })
             }
             .width('100%')
             .justifyContent(FlexAlign.End)
@@ -2555,7 +2674,7 @@ struct SettingsPage {
           .width('100%')
           .margin({ bottom: 12 })
 
-          this.sectionCard('Prompt list', '通过卡片显式展示启用状态、更新时间与说明。')
+          this.sectionCard('Prompt 列表', '通过卡片显式展示启用状态、更新时间与说明。')
 
           Column() {
             ForEach(this.prompts, (prompt: PromptRecord) => {
@@ -2601,12 +2720,12 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
-          this.pill(prompt.enabled ? 'Enabled' : 'Draft', prompt.enabled ? '#DCFCE7' : '#F1F5F9', prompt.enabled ? '#166534' : '#64748B')
+          this.pill(prompt.enabled ? '已启用' : '草稿', prompt.enabled ? '#DCFCE7' : '#F1F5F9', prompt.enabled ? '#166534' : '#64748B')
         }
         .width('100%')
 
         Row() {
-          Text(`updated ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
+          Text(`更新于 ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#64748B')
@@ -2664,14 +2783,14 @@ struct SettingsPage {
   @Builder
   private promptEditor() {
     Column() {
-      this.sectionCard('Prompt editor', '草稿区直接绑定 Prompt registry，启用后会同步更新 AGENTS.md。')
+      this.sectionCard('Prompt 编辑器', '草稿区直接绑定 Prompt 注册表，启用后会同步更新 AGENTS.md。')
 
       Column() {
         Row() {
           if (this.selectedPrompt() !== null) {
-            this.pill(this.selectedPrompt()!.enabled ? 'Session Ready' : 'Draft Only', this.selectedPrompt()!.enabled ? '#DCFCE7' : '#F1F5F9', this.selectedPrompt()!.enabled ? '#166534' : '#64748B')
+            this.pill(this.selectedPrompt()!.enabled ? '会话就绪' : '仅草稿', this.selectedPrompt()!.enabled ? '#DCFCE7' : '#F1F5F9', this.selectedPrompt()!.enabled ? '#166534' : '#64748B')
           }
-          this.pill(this.promptLiveContent.trim().length > 0 ? 'AGENTS.md Live' : 'AGENTS.md Empty', this.promptLiveContent.trim().length > 0 ? '#E0F2FE' : '#FEF3C7', this.promptLiveContent.trim().length > 0 ? '#0C4A6E' : '#92400E')
+          this.pill(this.promptLiveContent.trim().length > 0 ? 'AGENTS.md 已同步' : 'AGENTS.md 为空', this.promptLiveContent.trim().length > 0 ? '#E0F2FE' : '#FEF3C7', this.promptLiveContent.trim().length > 0 ? '#0C4A6E' : '#92400E')
         }
         .width('100%')
 
@@ -2682,7 +2801,7 @@ struct SettingsPage {
           .margin({ top: 10 })
           .width('100%')
 
-        this.formLabel('Name')
+        this.formLabel('名称', '#000000')
         TextInput({ text: this.promptDraftName, placeholder: 'Prompt 名称' })
           .width('100%')
           .height(40)
@@ -2692,8 +2811,8 @@ struct SettingsPage {
           .margin({ top: 6 })
           .onChange((value: string) => { this.promptDraftName = value; })
 
-        this.formLabel('Summary')
-        TextInput({ text: this.promptDraftSummary, placeholder: '一句话说明这个 prompt 的作用' })
+        this.formLabel('摘要', '#000000')
+        TextInput({ text: this.promptDraftSummary, placeholder: '一句话说明这个 Prompt 的作用' })
           .width('100%')
           .height(40)
           .backgroundColor('#F8FAFC')
@@ -2702,8 +2821,8 @@ struct SettingsPage {
           .margin({ top: 6 })
           .onChange((value: string) => { this.promptDraftSummary = value; })
 
-        this.formLabel('Prompt content')
-        TextArea({ text: this.promptDraftContent, placeholder: 'Prompt content' })
+        this.formLabel('Prompt 内容', '#000000')
+        TextArea({ text: this.promptDraftContent, placeholder: 'Prompt 内容' })
           .width('100%')
           .height(220)
           .backgroundColor('#F8FAFC')
@@ -2713,7 +2832,7 @@ struct SettingsPage {
           .onChange((value: string) => { this.promptDraftContent = value; })
 
         if (this.promptLiveContent.trim().length > 0) {
-          this.formLabel('Live AGENTS.md')
+          this.formLabel('当前 AGENTS.md')
           Text(this.promptLiveContent)
             .copyOption(CopyOptions.LocalDevice)
             .width('100%')
@@ -2730,10 +2849,10 @@ struct SettingsPage {
 
         Row() {
           if (this.selectedPrompt() !== null) {
-            this.actionButton(this.selectedPrompt()!.enabled ? 'Disable' : 'Enable', `prompt-toggle-${this.selectedPrompt()!.id}`, false, () => { this.togglePromptEnabled(this.selectedPrompt()!.id); })
+            this.actionButton(this.selectedPrompt()!.enabled ? '停用' : '启用', `prompt-toggle-${this.selectedPrompt()!.id}`, false, () => { this.togglePromptEnabled(this.selectedPrompt()!.id); })
           }
           Column() {
-            this.actionButton('Save Draft', 'prompt-save', true, () => { this.savePromptDraft(); })
+            this.actionButton('保存草稿', 'prompt-save', true, () => { this.savePromptDraft(); })
           }
           .margin({ left: 10 })
         }
@@ -2947,7 +3066,7 @@ struct SettingsPage {
               if (!provider.isActive) {
                 this.activateApiProvider(provider.id);
               } else {
-                this.triggerFeedback('当前 Provider 已启用。', 'info');
+                this.triggerFeedback('当前服务商已启用。', 'info');
               }
             })
 
@@ -3055,7 +3174,7 @@ struct SettingsPage {
     Column() {
       Row() {
         Column() {
-          Text('Provider 列表')
+          Text('服务商列表')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
@@ -3071,7 +3190,7 @@ struct SettingsPage {
         Blank()
           .layoutWeight(1)
 
-        this.pill(`${this.apiProviders.length} Providers`, '#EEF4FF', '#1D4ED8')
+        this.pill(`${this.apiProviders.length} 个服务商`, '#EEF4FF', '#1D4ED8')
       }
       .width('100%')
 
@@ -3125,8 +3244,8 @@ struct SettingsPage {
 
 
         Column() {
-          this.formLabel('Provider name')
-          TextInput({ text: this.apiProviderName, placeholder: 'Provider name' })
+          this.formLabel('服务商名称')
+          TextInput({ text: this.apiProviderName, placeholder: '服务商名称' })
             .width('100%')
             .height(40)
             .backgroundColor('#F8FAFC')
@@ -3135,7 +3254,7 @@ struct SettingsPage {
             .margin({ top: 6 })
             .onChange((value: string) => { this.apiProviderName = value; })
 
-          this.formLabel('Base URL')
+          this.formLabel('基础 URL')
           TextInput({ text: this.apiBaseUrl, placeholder: 'https://api.openai.com/v1' })
             .width('100%')
             .height(40)
@@ -3145,7 +3264,7 @@ struct SettingsPage {
             .margin({ top: 6 })
             .onChange((value: string) => { this.apiBaseUrl = value; })
 
-          this.formLabel('Model')
+          this.formLabel('模型')
           TextInput({ text: this.apiModel, placeholder: 'gpt-5.1' })
             .width('100%')
             .height(40)
@@ -3155,14 +3274,14 @@ struct SettingsPage {
             .margin({ top: 6 })
             .onChange((value: string) => { this.apiModel = value; })
 
-          this.formLabel('Wire format')
+          this.formLabel('接口格式')
           Row() {
-            this.optionChip('responses', this.apiWireApi === 'responses', 'wire-responses', () => { this.apiWireApi = 'responses'; })
-            this.optionChip('chat', this.apiWireApi === 'chat', 'wire-chat', () => { this.apiWireApi = 'chat'; })
-            this.optionChip('anthropic', this.apiWireApi === 'anthropic', 'wire-anthropic', () => { this.apiWireApi = 'anthropic'; })
+            this.optionChip('Responses', this.apiWireApi === 'responses', 'wire-responses', () => { this.apiWireApi = 'responses'; })
+            this.optionChip('对话', this.apiWireApi === 'chat', 'wire-chat', () => { this.apiWireApi = 'chat'; })
+            this.optionChip('Anthropic', this.apiWireApi === 'anthropic', 'wire-anthropic', () => { this.apiWireApi = 'anthropic'; })
           }
 
-          this.formLabel('API key preview')
+          this.formLabel('API Key 预览')
           TextInput({ text: this.apiAuthState, placeholder: 'sk-...' })
             .width('100%')
             .height(40)
@@ -3204,7 +3323,7 @@ struct SettingsPage {
   @Builder
   private apiEndpointDetailPanel() {
     Column() {
-      this.sectionCard('Endpoint matrix', '当前 Provider 的端点配置')
+      this.sectionCard('端点矩阵', '当前服务商的端点配置')
       Column() {
         ForEach(this.apiEndpoints, (endpoint: ApiEndpointMockItem) => {
           Row() {
@@ -3242,7 +3361,7 @@ struct SettingsPage {
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
           .fontColor('#0F172A')
-        Text('当前页只演示 provider cards、编辑草稿区和 CTA 反馈；真实验证、测速与导入导出逻辑留待后端接入。')
+        Text('当前页只演示服务商卡片、编辑草稿区和操作反馈；真实验证、测速与导入导出逻辑留待后端接入。')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontColor('#64748B')
@@ -3343,7 +3462,7 @@ struct SettingsPage {
   @Builder
   private apiPresetsPanel() {
     Column() {
-      this.sectionCard('Provider 预设库', '选一个预设作为起点，再回到 Providers 视图补齐前端草稿。')
+      this.sectionCard('服务商预设库', '选一个预设作为起点，再回到服务商视图补齐前端草稿。')
       Row() {
         this.apiFilterChip('全部', 'all')
         this.apiFilterChip('官方', 'official')
@@ -3371,14 +3490,14 @@ struct SettingsPage {
       Column() {
         Row() {
           Column() {
-            Text('Provider Workspace')
+            Text('服务商工作区')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
             Text(apiManagementVM.state.errorText.trim().length > 0
               ? apiManagementVM.state.errorText
-              : '统一卡片列表、顶部切换和添加入口，让 Settings 与独立页保持同一视觉语言。')
+              : '统一卡片列表、顶部切换和添加入口，让设置页与独立页保持同一视觉语言。')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(11)
               .fontColor(apiManagementVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
@@ -3390,8 +3509,8 @@ struct SettingsPage {
             .layoutWeight(1)
 
           Row() {
-            this.apiSubTabChip('Providers', 'providers')
-            this.apiSubTabChip('Presets', 'presets')
+            this.apiSubTabChip('服务商', 'providers')
+            this.apiSubTabChip('预设', 'presets')
           }
 
           Button('+')
@@ -3545,7 +3664,7 @@ struct SettingsPage {
           .onClick(() => { this.cancelMcpAdd(); })
 
         Column() {
-          Text('新增 MCP Server')
+          Text('新增 MCP 服务')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
@@ -3558,7 +3677,7 @@ struct SettingsPage {
             .lineHeight(20)
             .margin({ top: 10 })
 
-          TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 时自动识别）' })
+          TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 字段时自动识别）' })
             .width('100%')
             .height(40)
             .backgroundColor('#F8FAFC')
@@ -3644,7 +3763,7 @@ struct SettingsPage {
           .onClick(() => { this.cancelMcpDelete(); })
 
         Column() {
-          Text('确认删除 MCP Server')
+          Text('确认删除 MCP 服务')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
