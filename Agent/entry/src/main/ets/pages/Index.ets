@@ -166,10 +166,12 @@ struct Index {
   @State private showRightDrawer: boolean = true;
   @State private leftPanelWidth: number = 280;
   @State private rightPanelWidth: number = 360;
-  private readonly leftDrawerMinWidth: number = 200;
-  private readonly rightDrawerMinWidth: number = 240;
+  private readonly leftDrawerMinWidth: number = 100;
+  private readonly rightDrawerMinWidth: number = 120;
   private dragStartLeftW: number = 0;
   private dragStartRightW: number = 0;
+  private leftHiding: boolean = false;
+  private rightHiding: boolean = false;
   @State private recentWorkspaces: WorkspaceItem[] = [];
   @State private directoryFilter: string = '';
   @State private directoryFilterText: string = '使用默认工作区';
@@ -3403,74 +3405,98 @@ struct Index {
 
       Row() {
         if (this.showLeftDrawer) {
-          Column() {
-            this.leftPanel()
-          }
-          .height('100%')
-          .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+          Row() {
+            Column() {
+              this.leftPanel()
+            }
+            .height('100%')
 
-          Column() {
-            Column()
-              .width(2)
-              .height('60%')
-              .backgroundColor('#CBD5E1')
-              .borderRadius(1)
+            Column() {
+              Column()
+                .width(2)
+                .height('60%')
+                .backgroundColor('#CBD5E1')
+                .borderRadius(1)
+            }
+            .width(8)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor('#F1F5F9')
+            .borderRadius(4)
+            .hitTestBehavior(HitTestMode.Block)
+            .gesture(
+              PanGesture({ direction: PanDirection.Horizontal })
+                .onActionStart(() => {
+                  this.dragStartLeftW = this.leftPanelWidth;
+                  this.dragStartRightW = this.rightPanelWidth;
+                  this.leftHiding = false;
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  if (this.leftHiding) return;
+                  const newLeft = this.dragStartLeftW + event.offsetX;
+                  if (newLeft <= this.leftDrawerMinWidth - 20) {
+                    this.leftHiding = true;
+                    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                      this.showLeftDrawer = false;
+                    });
+                    setTimeout(() => {
+                      this.leftPanelWidth = 280;
+                    }, 350);
+                  } else if (newLeft >= this.leftDrawerMinWidth) {
+                    this.leftPanelWidth = newLeft;
+                  }
+                })
+            )
           }
-          .width(8)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor('#F1F5F9')
-          .borderRadius(4)
-          .hitTestBehavior(HitTestMode.Block)
-          .gesture(
-            PanGesture({ direction: PanDirection.Horizontal })
-              .onActionStart(() => {
-                this.dragStartLeftW = this.leftPanelWidth;
-                this.dragStartRightW = this.rightPanelWidth;
-              })
-              .onActionUpdate((event: GestureEvent) => {
-                const newLeft = this.dragStartLeftW + event.offsetX;
-                if (newLeft >= this.leftDrawerMinWidth) {
-                  this.leftPanelWidth = newLeft;
-                }
-              })
-          )
+          .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
         }
 
         this.centerPanel()
 
         if (this.showRightDrawer) {
-          Column() {
-            Column()
-              .width(2)
-              .height('60%')
-              .backgroundColor('#CBD5E1')
-              .borderRadius(1)
-          }
-          .width(8)
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor('#F1F5F9')
-          .borderRadius(4)
-          .hitTestBehavior(HitTestMode.Block)
-          .gesture(
-            PanGesture({ direction: PanDirection.Horizontal })
-              .onActionStart(() => {
-                this.dragStartLeftW = this.leftPanelWidth;
-                this.dragStartRightW = this.rightPanelWidth;
-              })
-              .onActionUpdate((event: GestureEvent) => {
-                const newRight = this.dragStartRightW - event.offsetX;
-                if (newRight >= this.rightDrawerMinWidth) {
-                  this.rightPanelWidth = newRight;
-                }
-              })
-          )
+          Row() {
+            Column() {
+              Column()
+                .width(2)
+                .height('60%')
+                .backgroundColor('#CBD5E1')
+                .borderRadius(1)
+            }
+            .width(8)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor('#F1F5F9')
+            .borderRadius(4)
+            .hitTestBehavior(HitTestMode.Block)
+            .gesture(
+              PanGesture({ direction: PanDirection.Horizontal })
+                .onActionStart(() => {
+                  this.dragStartLeftW = this.leftPanelWidth;
+                  this.dragStartRightW = this.rightPanelWidth;
+                  this.rightHiding = false;
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  if (this.rightHiding) return;
+                  const newRight = this.dragStartRightW - event.offsetX;
+                  if (newRight <= this.rightDrawerMinWidth - 20) {
+                    this.rightHiding = true;
+                    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                      this.showRightDrawer = false;
+                    });
+                    setTimeout(() => {
+                      this.rightPanelWidth = 360;
+                    }, 350);
+                  } else if (newRight >= this.rightDrawerMinWidth) {
+                    this.rightPanelWidth = newRight;
+                  }
+                })
+            )
 
-          Column() {
-            this.rightPanel()
+            Column() {
+              this.rightPanel()
+            }
+            .height('100%')
           }
-          .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: 300, curve: Curve.EaseOut }))
         }
       }
