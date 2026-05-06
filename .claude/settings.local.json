@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "mcp__web-search-fast__web_search",
+      "Bash(dir *)",
+      "Bash(findstr /i \"AbilityKit\")",
+      "Bash(findstr /i \".d.ts\")",
+      "Bash(findstr \"AbilityKit\")",
+      "Read(//d/develop/deveco/DevEco Studio/**)",
+      "Read(//d/DevEco Studio/**)",
+      "Read(//c/Program Files/Huawei/DevEco Studio/sdk/**)",
+      "Bash(xargs grep -l \"getUIContext\\\\|getHostContext\")",
+      "mcp__web-search-fast__get_page_content",
+      "Bash(xargs grep -l \"featureAbility\")",
+      "Bash(xargs grep -l \"fileManager\\\\|FileManager\")"
     ]
   }
 }

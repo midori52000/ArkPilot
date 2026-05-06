@@ -17,9 +17,11 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown } from '../backend/ConsoleModels';
+import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, SidebarItem } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import router from '@ohos.router';
+import pasteboard from '@ohos.pasteboard';
+import { promptAction } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
@@ -30,60 +32,6 @@ const WAITING_FOR_DIFF_TEXT: string = '\u7b49\u5f85 turn/diff/updated \u901a\u77
 const NO_DIFF_TEXT: string = '\u672c\u8f6e\u5c1a\u672a\u4ea7\u751f diff\u3002';
 const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
 const UNKNOWN_DIFF_FILE_TEXT: string = '\u672a\u8bc6\u522b\u6587\u4ef6';
-
-class WorkspaceItem {
-  id: number;
-  title: string;
-  description: string;
-  workspaceId: string;
-
-  constructor(id: number, title: string, description: string, workspaceId?: string) {
-    this.id = id;
-    this.title = title;
-    this.description = description;
-    this.workspaceId = workspaceId ?? `session:${id.toString()}`;
-  }
-}
-
-class WorkspaceBindingDraft {
-  id: number;
-  title: string;
-  description: string;
-  workspaceId: string;
-  workspaceRoot: string;
-  workspaceUri: string;
-
-  constructor(id: number, title: string, description: string, workspaceId: string, workspaceRoot: string, workspaceUri?: string) {
-    this.id = id;
-    this.title = title;
-    this.description = description;
-    this.workspaceId = workspaceId;
-    this.workspaceRoot = workspaceRoot;
-    this.workspaceUri = workspaceUri ?? '';
-  }
-}
-
-class SelectorOption {
-  label: string;
-  value: string;
-
-  constructor(label: string, value: string) {
-    this.label = label;
-    this.value = value;
-  }
-}
-
-class SidebarItem {
-  view: SidebarView;
-  label: string;
-  description: string;
-
-  constructor(view: SidebarView, label: string, description: string) {
-    this.view = view;
-    this.label = label;
-    this.description = description;
-  }
-}
 
 class ChatMessage {
   id: string;
@@ -139,16 +87,6 @@ class CodeDiffFile {
   }
 }
 
-class WorkspaceDirectorySelection {
-  rootPath: string;
-  sourceUri: string;
-
-  constructor(rootPath: string, sourceUri: string) {
-    this.rootPath = rootPath;
-    this.sourceUri = sourceUri;
-  }
-}
-
 @Entry
 @Component
 struct Index {
@@ -192,20 +130,6 @@ struct Index {
   @State private workspaceRoot: string = '';
   @State private workspaceDraftText: string = '';
   @State private workspaceSelectionText: string = '使用默认工作区';
-  @State private showCreateWorkspaceDialog: boolean = false;
-  @State private createWorkspaceNameDraft: string = '';
-  @State private createWorkspaceRootDraft: string = '';
-  @State private createWorkspaceUriDraft: string = '';
-  @State private createWorkspaceSelectionText: string = '使用默认工作区';
-  @State private createWorkspaceStatusText: string = '未选择目录，将由 app-server 使用默认 cwd。';
-  @State private isCreatingWorkspace: boolean = false;
-  @State private showRenameSessionDialog: boolean = false;
-  @State private renameSessionIdDraft: string = '';
-  @State private renameSessionNameDraft: string = '';
-  @State private renameSessionStatusText: string = '修改名称后会立即同步到会话列表。';
-  @State private isRenamingSession: boolean = false;
-  @State private sessionSummaries: SessionSummary[] = [];
-  @State private deletingSessionId: string = '';
   @State private providerBaseUrl: string = '';
   @State private providerApiKey: string = '';
   @State private manualModel: string = '';
@@ -267,6 +191,16 @@ struct Index {
     this.applyEmbeddedHostStatus();
     this.loadProviderConfig();
     this.restoreWorkspaceBindings();
+
+    // Check if SessionsPage passed a selected session ID
+    const selectedSessionId: string = (AppStorage.get('sessionsPageSelectedSessionId') as string) ?? '';
+    if (selectedSessionId.trim().length > 0) {
+      AppStorage.setOrCreate('sessionsPageSelectedSessionId', '');
+      void this.loadSessionFromSessionsPage(selectedSessionId);
+    } else {
+      void this.restoreSessionsFromBackend();
+    }
+
     this.scheduleEmbeddedHostReconnect(0);
     this.scheduleMessageScrollToBottom();
   }
@@ -486,14 +420,12 @@ struct Index {
 
   private async restoreSessionsFromBackend(preferredThreadId?: string): Promise<void> {
     const sessions: SessionSummary[] = await codexBackend.loadPersistedSessions();
-    this.sessionSummaries = [...sessions];
     this.applySessionSummariesToWorkspaces(sessions, preferredThreadId);
     await this.loadSelectedWorkspaceHistory();
   }
 
   private syncSessionSummariesFromCache(preferredThreadId?: string): void {
     const sessions: SessionSummary[] = codexBackend.sessionSummaries();
-    this.sessionSummaries = [...sessions];
     this.applySessionSummariesToWorkspaces(sessions, preferredThreadId);
   }
 
@@ -595,6 +527,27 @@ struct Index {
     this.persistWorkspaceBindings();
   }
 
+  private async loadSessionFromSessionsPage(sessionId: string): Promise<void> {
+    await this.restoreSessionsFromBackend(sessionId);
+    const workspace: WorkspaceItem | undefined = this.findWorkspaceBySessionId(sessionId);
+    if (workspace !== undefined) {
+      this.directoryFilter = this.workspaceRoot;
+      this.directoryFilterText = this.workspaceRoot.length > 0 ? this.workspaceRoot : '使用默认工作区';
+      this.syncRecentWorkspaces();
+      this.draft = `继续处理"${workspace.title}"，重点关注当前工作目录。`;
+    }
+  }
+
+  private findWorkspaceBySessionId(sessionId: string): WorkspaceItem | undefined {
+    for (let index: number = 0; index < this.workspaces.length; index += 1) {
+      const workspace: WorkspaceItem = this.workspaces[index];
+      if (this.ensureWorkspaceBinding(workspace) === sessionId) {
+        return workspace;
+      }
+    }
+    return undefined;
+  }
+
   private async loadSelectedWorkspaceHistory(): Promise<void> {
     if (this.workspaces.length === 0) {
       this.resetConversationSurface('当前目录下暂无会话', ['请先创建一个新会话。']);
@@ -632,7 +585,6 @@ struct Index {
   private restoreWorkspaceBindings(): void {
     const snapshot = workspaceBindingStore.load();
     const restoredItems: WorkspaceBindingDraft[] = [];
-    this.sessionSummaries = [];
     this.workspaceIds.clear();
     this.workspaceRoots.clear();
     this.workspaceUris.clear();
@@ -730,56 +682,6 @@ struct Index {
     this.workspaceSelectionText = '使用默认工作区';
   }
 
-  private syncCreateWorkspaceSelectionText(): void {
-    if (this.createWorkspaceUriDraft.trim().length > 0) {
-      this.createWorkspaceSelectionText = `已选择目录: ${this.createWorkspaceUriDraft}`;
-      return;
-    }
-    if (this.createWorkspaceRootDraft.trim().length > 0) {
-      this.createWorkspaceSelectionText = `当前工作目录: ${this.createWorkspaceRootDraft}`;
-      return;
-    }
-    this.createWorkspaceSelectionText = '使用默认工作区';
-  }
-
-  private refreshCreateWorkspaceDraftState(): void {
-    const trimmedWorkspaceRoot: string = this.createWorkspaceRootDraft.trim();
-    if (trimmedWorkspaceRoot.length === 0) {
-      this.createWorkspaceStatusText = '未选择目录，将由 app-server 使用默认 cwd。';
-      return;
-    }
-    const status: WorkspaceAccessStatus = checkWorkspaceAccess(trimmedWorkspaceRoot);
-    this.createWorkspaceStatusText = status.message.trim().length > 0 ? status.message : '工作区已配置';
-  }
-
-  private openCreateWorkspaceDialog(): void {
-    const nextId: number = this.nextWorkspaceId();
-    const currentWorkspaceRoot: string = this.workspaceDraftText.trim().length > 0 ? this.workspaceDraftText.trim() : this.workspaceRoot.trim();
-    this.createWorkspaceNameDraft = `新会话 ${nextId}`;
-    this.createWorkspaceRootDraft = currentWorkspaceRoot;
-    this.createWorkspaceUriDraft = this.workspaceUris.get(this.activeWorkspaceId) ?? '';
-    this.syncCreateWorkspaceSelectionText();
-    this.refreshCreateWorkspaceDraftState();
-    this.showCreateWorkspaceDialog = true;
-  }
-
-  private closeCreateWorkspaceDialog(): void {
-    if (this.isCreatingWorkspace) {
-      return;
-    }
-    this.showCreateWorkspaceDialog = false;
-  }
-
-  private clearCreateWorkspaceDirectorySelection(): void {
-    if (this.isCreatingWorkspace) {
-      return;
-    }
-    this.createWorkspaceRootDraft = '';
-    this.createWorkspaceUriDraft = '';
-    this.syncCreateWorkspaceSelectionText();
-    this.refreshCreateWorkspaceDraftState();
-  }
-
   private async pickDirectorySelection(): Promise<WorkspaceDirectorySelection | null> {
     const hostContext = this.getUIContext().getHostContext();
     if (hostContext === undefined) {
@@ -811,22 +713,6 @@ struct Index {
       this.applyWorkspaceDirectorySelection(selection.rootPath, selection.sourceUri);
     } catch (err) {
       this.workspaceStatusText = `选择目录失败: ${this.describeError(err)}`;
-    }
-  }
-
-  private async pickCreateWorkspaceDirectory(): Promise<void> {
-    try {
-      const selection: WorkspaceDirectorySelection | null = await this.pickDirectorySelection();
-      if (selection === null) {
-        this.createWorkspaceStatusText = '未选择目录，继续使用默认工作区。';
-        return;
-      }
-      this.createWorkspaceRootDraft = selection.rootPath;
-      this.createWorkspaceUriDraft = selection.sourceUri;
-      this.syncCreateWorkspaceSelectionText();
-      this.refreshCreateWorkspaceDraftState();
-    } catch (err) {
-      this.createWorkspaceStatusText = `选择目录失败: ${this.describeError(err)}`;
     }
   }
 
@@ -1194,148 +1080,6 @@ struct Index {
     await this.loadSelectedWorkspaceHistory();
   }
 
-  private createWorkspace(): void {
-    this.openCreateWorkspaceDialog();
-  }
-
-  private findWorkspaceBySessionId(sessionId: string): WorkspaceItem | undefined {
-    for (let index: number = 0; index < this.workspaces.length; index += 1) {
-      const workspace: WorkspaceItem = this.workspaces[index];
-      if (this.ensureWorkspaceBinding(workspace) === sessionId) {
-        return workspace;
-      }
-    }
-    return undefined;
-  }
-
-  private async openSessionSummary(summary: SessionSummary): Promise<void> {
-    const existing: WorkspaceItem | undefined = this.findWorkspaceBySessionId(summary.sessionId);
-    if (existing !== undefined) {
-      const summaryRoot: string = summary.workspaceRoot.trim();
-      if (summaryRoot.length > 0) {
-        this.workspaceRoots.set(existing.id, summaryRoot);
-      }
-      await this.selectWorkspace(existing);
-      return;
-    }
-    await this.restoreSessionsFromBackend(summary.sessionId);
-    this.activeSidebarView = 'chat';
-    this.draft = `继续处理”${summary.title}”，重点关注当前工作目录。`;
-  }
-
-  private openRenameSessionDialog(summary: SessionSummary): void {
-    this.renameSessionIdDraft = summary.sessionId;
-    this.renameSessionNameDraft = summary.title;
-    this.renameSessionStatusText = '修改名称后会立即同步到会话列表。';
-    this.showRenameSessionDialog = true;
-  }
-
-  private closeRenameSessionDialog(): void {
-    if (this.isRenamingSession) {
-      return;
-    }
-    this.showRenameSessionDialog = false;
-  }
-
-  private async confirmRenameSession(): Promise<void> {
-    if (this.isRenamingSession) {
-      return;
-    }
-    const threadId: string = this.renameSessionIdDraft.trim();
-    const title: string = this.renameSessionNameDraft.trim();
-    if (threadId.length === 0) {
-      return;
-    }
-    if (title.length === 0) {
-      this.renameSessionStatusText = '请输入新的会话名称。';
-      return;
-    }
-    this.isRenamingSession = true;
-    this.renameSessionStatusText = '正在保存新的会话名称。';
-    try {
-      await codexBackend.renameSession(threadId, title);
-      this.summaryTitle = '会话已重命名';
-      this.summaryPoints = [`已更新会话名称：${title}`];
-      this.syncSessionSummariesFromCache(threadId);
-      this.activeSidebarView = 'sessions';
-      this.showRenameSessionDialog = false;
-    } catch (err) {
-      this.renameSessionStatusText = `重命名失败: ${this.describeError(err)}`;
-      this.summaryTitle = '重命名会话失败';
-      this.summaryPoints = [this.describeError(err)];
-    } finally {
-      this.isRenamingSession = false;
-    }
-  }
-
-  private async deleteSessionSummary(summary: SessionSummary): Promise<void> {
-    if (this.deletingSessionId === summary.sessionId) {
-      return;
-    }
-    this.deletingSessionId = summary.sessionId;
-    try {
-      await codexBackend.archiveSession(summary.sessionId);
-      this.summaryTitle = '会话已删除';
-      this.summaryPoints = [`已删除会话：${summary.title}`];
-      if (this.activeWorkspaceBindingId === summary.sessionId) {
-        this.activeWorkspaceBindingId = '';
-      }
-      await this.restoreSessionsFromBackend();
-      this.activeSidebarView = 'sessions';
-    } catch (err) {
-      this.summaryTitle = '删除会话失败';
-      this.summaryPoints = [this.describeError(err)];
-    } finally {
-      this.deletingSessionId = '';
-    }
-  }
-
-  private async confirmCreateWorkspace(): Promise<void> {
-    if (this.isCreatingWorkspace) {
-      return;
-    }
-    const nextId: number = this.nextWorkspaceId();
-    const title: string = this.createWorkspaceNameDraft.trim().length > 0 ? this.createWorkspaceNameDraft.trim() : `新会话 ${nextId}`;
-    const trimmedWorkspaceRoot: string = this.createWorkspaceRootDraft.trim();
-    let workspacePermissionState: WorkspacePermissionState = 'unavailable';
-    let workspaceAccessKind: WorkspaceAccessKind = 'unknown';
-    if (trimmedWorkspaceRoot.length > 0) {
-      const status: WorkspaceAccessStatus = checkWorkspaceAccess(trimmedWorkspaceRoot);
-      workspacePermissionState = this.mapWorkspacePermissionState(status.permissionState);
-      workspaceAccessKind = this.mapWorkspaceAccessKind(status.accessKind);
-      this.createWorkspaceStatusText = status.message.trim().length > 0 ? status.message : '工作区已配置';
-    } else {
-      this.createWorkspaceStatusText = '未选择目录，将由 app-server 使用默认 cwd。';
-    }
-    this.isCreatingWorkspace = true;
-    this.summaryTitle = '正在创建会话';
-    this.summaryPoints = ['正在通过 app-server 创建新的线程。'];
-    try {
-      const session: SessionSummary = await codexBackend.createThreadSession(
-        title,
-        '',
-        trimmedWorkspaceRoot,
-        workspacePermissionState,
-        workspaceAccessKind,
-        trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
-        this.currentModelValue()
-      );
-      this.directoryFilter = trimmedWorkspaceRoot;
-      this.directoryFilterText = trimmedWorkspaceRoot.length > 0 ? trimmedWorkspaceRoot : '使用默认工作区';
-      this.syncSessionSummariesFromCache(session.sessionId);
-      await this.loadSelectedWorkspaceHistory();
-      this.activeSidebarView = 'chat';
-      this.draft = `继续处理”${title}”，重点关注当前工作目录。`;
-      this.showCreateWorkspaceDialog = false;
-    } catch (err) {
-      this.createWorkspaceStatusText = `创建失败: ${this.describeError(err)}`;
-      this.summaryTitle = '创建会话失败';
-      this.summaryPoints = [this.describeError(err)];
-    } finally {
-      this.isCreatingWorkspace = false;
-    }
-  }
-
   private connectionButtonLabel(): string {
     if (this.connectionState === 'connected') {
       return '断开';
@@ -1388,22 +1132,6 @@ struct Index {
       return '#B91C1C';
     }
     return '#475569';
-  }
-
-  private isSessionSummaryActive(summary: SessionSummary): boolean {
-    return summary.sessionId === this.activeWorkspaceBindingId;
-  }
-
-  private sessionSummaryHint(summary: SessionSummary): string {
-    const changedFiles: string = summary.changedFiles.trim();
-    if (changedFiles.length > 0 && changedFiles !== '尚未产生文件改动') {
-      return changedFiles;
-    }
-    const summaryTitle: string = summary.summaryTitle.trim();
-    if (summaryTitle.length > 0) {
-      return summaryTitle;
-    }
-    return '等待更多会话摘要。';
   }
 
   private messageBackground(role: string): string {
@@ -1796,7 +1524,11 @@ struct Index {
     .borderRadius(14)
     .margin({ bottom: 6 })
     .onClick(() => {
-      this.activeSidebarView = item.view;
+      if (item.view === 'sessions') {
+        router.pushUrl({ url: 'pages/SessionsPage' });
+      } else {
+        this.activeSidebarView = item.view;
+      }
     })
   }
 
@@ -2113,152 +1845,6 @@ struct Index {
   }
 
   @Builder
-  private sessionSummaryCard(summary: SessionSummary) {
-    Column() {
-      Row() {
-        Column() {
-          Text(summary.title)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text(summary.sessionId)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#94A3B8')
-            .margin({ top: 2 })
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-      }
-      .width('100%')
-
-      this.infoRow('工作目录', summary.workspaceRoot.trim().length > 0 ? summary.workspaceRoot : '默认 cwd')
-      this.infoRow('最近更新', summary.lastUpdatedAt)
-
-      Row() {
-        if (this.isSessionSummaryActive(summary)) {
-          this.chip('当前会话', '#DBEAFE', '#1D4ED8')
-        }
-
-        Blank()
-          .layoutWeight(1)
-
-        Button('打开')
-          .height(30)
-          .fontSize(11)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(14)
-          .onClick(() => {
-            void this.openSessionSummary(summary);
-          })
-
-        Button('重命名')
-          .height(30)
-          .margin({ left: 8 })
-          .fontSize(11)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#1D4ED8')
-          .borderRadius(14)
-          .border({ width: 1, color: '#BFDBFE' })
-          .enabled(this.deletingSessionId !== summary.sessionId)
-          .onClick(() => {
-            this.openRenameSessionDialog(summary);
-          })
-
-        Button(this.deletingSessionId === summary.sessionId ? '删除中...' : '删除')
-          .height(30)
-          .margin({ left: 8 })
-          .fontSize(11)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#B91C1C')
-          .borderRadius(14)
-          .border({ width: 1, color: '#FECACA' })
-          .enabled(this.deletingSessionId !== summary.sessionId)
-          .onClick(() => {
-            void this.deleteSessionSummary(summary);
-          })
-      }
-      .width('100%')
-      .margin({ top: 8 })
-      .alignItems(VerticalAlign.Center)
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .padding(10)
-    .backgroundColor(this.isSessionSummaryActive(summary) ? '#F8FBFF' : '#FFFFFF')
-    .border({
-      width: 1,
-      color: this.isSessionSummaryActive(summary) ? '#BFDBFE' : '#E2E8F0'
-    })
-    .borderRadius(18)
-  }
-
-  @Builder
-  private sessionsCenterView() {
-    Column() {
-      Row() {
-        this.leftDrawerToggle()
-
-        Blank()
-          .width(6)
-
-        this.panelTitle('Sessions', '集中查看、切换并删除当前项目的会话')
-
-        Blank()
-          .layoutWeight(1)
-
-        Button('新建会话')
-          .height(34)
-          .fontSize(12)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(16)
-          .onClick(() => {
-            this.createWorkspace();
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      if (this.sessionSummaries.length === 0) {
-        Column() {
-          this.panelTitle('暂无会话', '连接后会从 app-server 恢复历史线程')
-          this.summaryBullet('点击右上角“新建会话”可以立即创建一个新的线程。')
-          this.summaryBullet('如果你刚删除了最后一个会话，这里会保持为空。')
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(14)
-        .margin({ top: 12 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2E8F0' })
-        .borderRadius(18)
-      } else {
-        List({ space: 10 }) {
-          ForEach(this.sessionSummaries, (summary: SessionSummary) => {
-            ListItem() {
-              this.sessionSummaryCard(summary)
-            }
-          }, (summary: SessionSummary) => `${summary.sessionId}:${summary.title}`)
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .margin({ top: 12 })
-        .scrollBar(BarState.Off)
-      }
-    }
-    .height('100%')
-    .width('100%')
-  }
-
-  @Builder
   private leftPanel() {
     Column() {
     Scroll() {
@@ -2304,147 +1890,130 @@ struct Index {
       .border({ width: 1, color: '#E2E8F0' })
       .borderRadius(18)
 
-      if (this.activeSidebarView === 'chat') {
+      Column() {
+        this.panelTitle('会话概况', '')
+
         Column() {
-          this.panelTitle('会话概况', '')
+          this.panelTitle('筛选目录', '选择目录以筛选下方会话列表')
 
-          Column() {
-            this.panelTitle('筛选目录', '选择目录以筛选下方会话列表')
-
-            Text(this.directoryFilterText)
-              .width('100%')
-              .margin({ top: 10 })
-              .fontSize(12)
-              .fontColor('#111827')
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .padding({ left: 12, right: 12, top: 11, bottom: 11 })
-              .copyOption(CopyOptions.LocalDevice)
-
-            Row() {
-              Button('选择目录')
-                .layoutWeight(1)
-                .height(34)
-                .fontSize(12)
-                .backgroundColor('#FFFFFF')
-                .fontColor('#111827')
-                .borderRadius(16)
-                .border({ width: 1, color: '#CBD5E1' })
-                .onClick(() => {
-                  void this.pickWorkspaceDirectory();
-                })
-
-              Button('重置')
-                .layoutWeight(1)
-                .height(34)
-                .margin({ left: 8 })
-                .fontSize(12)
-                .backgroundColor('#FFFFFF')
-                .fontColor('#64748B')
-                .borderRadius(16)
-                .border({ width: 1, color: '#CBD5E1' })
-                .onClick(() => {
-                  this.directoryFilter = '';
-                  this.directoryFilterText = '使用默认工作区';
-                  this.syncRecentWorkspaces();
-                })
-            }
+          Text(this.directoryFilterText)
             .width('100%')
             .margin({ top: 10 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(12)
-          .margin({ top: 10 })
-          .backgroundColor('#F8FAFC')
-          .border({ width: 1, color: '#E2E8F0' })
-          .borderRadius(16)
+            .fontSize(12)
+            .fontColor('#111827')
+            .backgroundColor('#FFFFFF')
+            .borderRadius(14)
+            .padding({ left: 12, right: 12, top: 11, bottom: 11 })
+            .copyOption(CopyOptions.LocalDevice)
 
           Row() {
-            Button('新建会话')
+            Button('选择目录')
               .layoutWeight(1)
               .height(34)
               .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
+              .backgroundColor('#FFFFFF')
+              .fontColor('#111827')
               .borderRadius(16)
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => {
-                void this.createWorkspace();
+                void this.pickWorkspaceDirectory();
               })
 
-            Button('会话管理')
+            Button('复制路径')
               .layoutWeight(1)
               .height(34)
               .margin({ left: 8 })
               .fontSize(12)
               .backgroundColor('#FFFFFF')
-              .fontColor('#334155')
+              .fontColor('#111827')
               .borderRadius(16)
               .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => {
-                this.activeSidebarView = 'sessions';
+                const targetPath: string = this.directoryFilter.length > 0 ? this.directoryFilter : this.workspaceRoot;
+                if (targetPath.length === 0) {
+                  return;
+                }
+                const clipData: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, targetPath);
+                const clip: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+                clip.setData(clipData).then(() => {
+                  promptAction.showToast({ message: '路径已复制到剪贴板', duration: 2000 });
+                }).catch((err: Error) => {
+                  hilog.error(INDEX_DOMAIN, INDEX_TAG, 'Failed to copy path: %{public}s', JSON.stringify(err));
+                });
               })
           }
           .width('100%')
-          .margin({ top: 12 })
-
-          if (this.recentWorkspaces.length === 0) {
-            Text('当前目录下暂无会话')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(10)
-              .fontColor('#94A3B8')
-              .margin({ top: 12 })
-          } else {
-            Text('当前目录下的所有会话')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(10)
-              .fontColor('#94A3B8')
-              .margin({ top: 12, bottom: 8 })
-
-            List({ space: 6 }) {
-              ForEach(this.recentWorkspaces, (item: WorkspaceItem) => {
-                ListItem() {
-                  this.workspaceRow(item)
-                }
-              }, (item: WorkspaceItem) => `${item.id.toString()}:${item.title}`)
-            }
-            .layoutWeight(1)
-            .width('100%')
-            .scrollBar(BarState.Off)
-          }
+          .margin({ top: 10 })
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
         .margin({ top: 10 })
-        .backgroundColor('#FFFFFF')
+        .backgroundColor('#F8FAFC')
         .border({ width: 1, color: '#E2E8F0' })
-        .borderRadius(18)
-      } else if (this.activeSidebarView === 'sessions') {
-        Column() {
-          this.panelTitle('会话概览', '查看当前项目线程并进入会话管理页')
-          this.infoRow('会话数', this.sessionSummaries.length.toString())
-          this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
+        .borderRadius(16)
 
+        Row() {
           Button('新建会话')
+            .layoutWeight(1)
             .height(34)
-            .margin({ top: 12 })
             .fontSize(12)
             .backgroundColor('#111827')
             .fontColor('#FFFFFF')
             .borderRadius(16)
             .onClick(() => {
-              this.createWorkspace();
+              AppStorage.setOrCreate('sessionsPageOpenCreateDialog', true);
+              router.pushUrl({ url: 'pages/SessionsPage' });
+            })
+
+          Button('会话管理')
+            .layoutWeight(1)
+            .height(34)
+            .margin({ left: 8 })
+            .fontSize(12)
+            .backgroundColor('#FFFFFF')
+            .fontColor('#334155')
+            .borderRadius(16)
+            .border({ width: 1, color: '#CBD5E1' })
+            .onClick(() => {
+              router.pushUrl({ url: 'pages/SessionsPage' });
             })
         }
-        .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding(12)
-        .margin({ top: 10 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2E8F0' })
-        .borderRadius(18)
+        .margin({ top: 12 })
+
+        if (this.recentWorkspaces.length === 0) {
+          Text('当前目录下暂无会话')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#94A3B8')
+            .margin({ top: 12 })
+        } else {
+          Text('当前目录下的所有会话')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#94A3B8')
+            .margin({ top: 12, bottom: 8 })
+
+          List({ space: 6 }) {
+            ForEach(this.recentWorkspaces, (item: WorkspaceItem) => {
+              ListItem() {
+                this.workspaceRow(item)
+              }
+            }, (item: WorkspaceItem) => `${item.id.toString()}:${item.title}`)
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .scrollBar(BarState.Off)
+        }
       }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(12)
+      .margin({ top: 10 })
+      .backgroundColor('#FFFFFF')
+      .border({ width: 1, color: '#E2E8F0' })
+      .borderRadius(18)
 
     }
     }
@@ -2690,7 +2259,7 @@ struct Index {
   @Builder
   private centerPanel() {
     Column() {
-      if (this.activeSidebarView === 'chat' && this.recentWorkspaces.length === 0) {
+      if (this.recentWorkspaces.length === 0) {
         Row() {
           this.leftDrawerToggle()
           Blank()
@@ -2713,10 +2282,8 @@ struct Index {
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
-      } else if (this.activeSidebarView === 'chat') {
-        this.chatCenterView()
       } else {
-        this.sessionsCenterView()
+        this.chatCenterView()
       }
     }
     .height('100%')
@@ -2725,261 +2292,6 @@ struct Index {
     .backgroundColor('#F8FAFC')
     .border({ width: 1, color: '#E2E8F0' })
     .borderRadius(20)
-  }
-
-  @Builder
-  private createWorkspaceDialog() {
-    if (this.showCreateWorkspaceDialog) {
-      Column() {
-        Column() {
-          Row() {
-            Text('新建会话')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
-
-            Blank()
-              .layoutWeight(1)
-
-            Button('关闭')
-              .height(28)
-              .fontSize(10)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#64748B')
-              .borderRadius(10)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                this.closeCreateWorkspaceDialog();
-              })
-          }
-          .width('100%')
-
-          Text('会话名称')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ top: 14 })
-
-          TextInput({ text: this.createWorkspaceNameDraft, placeholder: '输入新会话名称' })
-            .width('100%')
-            .height(40)
-            .margin({ top: 8 })
-            .fontSize(12)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .onChange((value: string) => {
-              this.createWorkspaceNameDraft = value;
-            })
-
-          Text('工作区')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ top: 14 })
-
-          Text(this.createWorkspaceRootDraft.trim().length > 0 ? this.createWorkspaceRootDraft : '未选择目录，当前将使用默认工作区')
-            .width('100%')
-            .margin({ top: 8 })
-            .fontSize(12)
-            .fontColor('#111827')
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12, top: 11, bottom: 11 })
-            .copyOption(CopyOptions.LocalDevice)
-
-          Row() {
-            Button('选择目录')
-              .layoutWeight(1)
-              .height(34)
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(16)
-              .onClick(() => {
-                void this.pickCreateWorkspaceDirectory();
-              })
-
-            Button('使用默认工作区')
-              .layoutWeight(1)
-              .height(34)
-              .margin({ left: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#64748B')
-              .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                this.clearCreateWorkspaceDirectorySelection();
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-
-          Text(this.createWorkspaceSelectionText)
-            .fontSize(10)
-            .fontColor('#64748B')
-            .margin({ top: 8 })
-
-          Text(this.createWorkspaceStatusText)
-            .fontSize(10)
-            .fontColor('#64748B')
-            .margin({ top: 6 })
-
-          Row() {
-            Button(this.isCreatingWorkspace ? '创建中...' : '创建会话')
-              .layoutWeight(1)
-              .height(36)
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(16)
-              .enabled(!this.isCreatingWorkspace)
-              .onClick(() => {
-                void this.confirmCreateWorkspace();
-              })
-
-            Button('取消')
-              .layoutWeight(1)
-              .height(36)
-              .margin({ left: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#64748B')
-              .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                this.closeCreateWorkspaceDialog();
-              })
-          }
-          .width('100%')
-          .margin({ top: 18 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('36%')
-        .padding(18)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2E8F0' })
-        .borderRadius(20)
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .backgroundColor('#660F172A')
-    }
-  }
-
-  @Builder
-  private renameSessionDialog() {
-    if (this.showRenameSessionDialog) {
-      Column() {
-        Column() {
-          Row() {
-            Text('重命名会话')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
-
-            Blank()
-              .layoutWeight(1)
-
-            Button('关闭')
-              .height(28)
-              .fontSize(10)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#64748B')
-              .borderRadius(10)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                this.closeRenameSessionDialog();
-              })
-          }
-          .width('100%')
-
-          Text('会话名称')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ top: 14 })
-
-          TextInput({ text: this.renameSessionNameDraft, placeholder: '输入新的会话名称' })
-            .width('100%')
-            .height(40)
-            .margin({ top: 8 })
-            .fontSize(12)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .onChange((value: string) => {
-              this.renameSessionNameDraft = value;
-            })
-
-          Text('会话 ID')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ top: 14 })
-
-          Text(this.renameSessionIdDraft)
-            .width('100%')
-            .margin({ top: 8 })
-            .fontSize(11)
-            .fontColor('#111827')
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12, top: 11, bottom: 11 })
-            .copyOption(CopyOptions.LocalDevice)
-
-          Text(this.renameSessionStatusText)
-            .fontSize(10)
-            .fontColor('#64748B')
-            .margin({ top: 12 })
-
-          Row() {
-            Button(this.isRenamingSession ? '保存中...' : '保存名称')
-              .layoutWeight(1)
-              .height(36)
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(16)
-              .enabled(!this.isRenamingSession)
-              .onClick(() => {
-                void this.confirmRenameSession();
-              })
-
-            Button('取消')
-              .layoutWeight(1)
-              .height(36)
-              .margin({ left: 10 })
-              .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#64748B')
-              .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
-              .onClick(() => {
-                this.closeRenameSessionDialog();
-              })
-          }
-          .width('100%')
-          .margin({ top: 18 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('36%')
-        .padding(18)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2E8F0' })
-        .borderRadius(20)
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .backgroundColor('#660F172A')
-    }
   }
 
   @Builder
@@ -3073,33 +2385,7 @@ struct Index {
     Column() {
       // 主内容区
       Column() {
-        if (this.activeSidebarView === 'chat') {
-          this.chatContextPanel()
-        } else if (this.activeSidebarView === 'sessions') {
-          Column() {
-            this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-            this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
-            this.infoRow('会话总数', this.sessionSummaries.length.toString())
-            this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
-            this.summaryBullet('在中间列表里点击”打开”会切回 Chat 并加载该会话。')
-            this.summaryBullet('点击”删除”会归档该线程，并从左侧/中间列表里移除。')
-          }
-          .alignItems(HorizontalAlign.Start)
-          .height('100%')
-          .width('100%')
-        } else {
-          Column() {
-            this.panelTitle('Usage 上下文', '当前统计口径与最近状态')
-            this.infoRow('会话数', this.workspaces.length.toString())
-            this.infoRow('消息总数', this.messages.length.toString())
-            this.infoRow('Diff 行数', this.codeLines.length.toString())
-            this.infoRow('连接状态', this.connectionText)
-            this.infoRow('当前 Provider', this.providerStatusText)
-          }
-          .alignItems(HorizontalAlign.Start)
-          .height('100%')
-          .width('100%')
-        }
+        this.chatContextPanel()
       }
       .layoutWeight(1)
       .width('100%')
@@ -3529,9 +2815,6 @@ struct Index {
       .width('100%')
       .height('100%')
       .padding(10)
-
-      this.createWorkspaceDialog()
-      this.renameSessionDialog()
     }
     .width('100%')
     .height('100%')

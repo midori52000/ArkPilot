@@ -440,3 +440,67 @@ export class TokenUsageAggregate {
     this.thisMonth = thisMonth;
   }
 }
+
+export class WorkspaceItem {
+  id: number;
+  title: string;
+  description: string;
+  workspaceId: string;
+
+  constructor(id: number, title: string, description: string, workspaceId?: string) {
+    this.id = id;
+    this.title = title;
+    this.description = description;
+    this.workspaceId = workspaceId ?? `session:${id.toString()}`;
+  }
+}
+
+export class WorkspaceBindingDraft {
+  id: number;
+  title: string;
+  description: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  workspaceUri: string;
+
+  constructor(id: number, title: string, description: string, workspaceId: string, workspaceRoot: string, workspaceUri?: string) {
+    this.id = id;
+    this.title = title;
+    this.description = description;
+    this.workspaceId = workspaceId;
+    this.workspaceRoot = workspaceRoot;
+    this.workspaceUri = workspaceUri ?? '';
+  }
+}
+
+export class WorkspaceDirectorySelection {
+  rootPath: string;
+  sourceUri: string;
+
+  constructor(rootPath: string, sourceUri: string) {
+    this.rootPath = rootPath;
+    this.sourceUri = sourceUri;
+  }
+}
+
+export class SelectorOption {
+  label: string;
+  value: string;
+
+  constructor(label: string, value: string) {
+    this.label = label;
+    this.value = value;
+  }
+}
+
+export class SidebarItem {
+  view: SidebarView;
+  label: string;
+  description: string;
+
+  constructor(view: SidebarView, label: string, description: string) {
+    this.view = view;
+    this.label = label;
+    this.description = description;
+  }
+}
