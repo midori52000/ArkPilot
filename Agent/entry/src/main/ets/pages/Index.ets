@@ -17,7 +17,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown } from '../backend/ConsoleModels';
+import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, TodayTokenDetail, DailyTokenSnapshot } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import router from '@ohos.router';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -257,7 +257,11 @@ struct Index {
   @State private tokenUsage: TurnTokenUsage | null = null;
   @State private tokenAggregate: TokenUsageAggregate | null = null;
   @State private tokenCardExpanded: boolean = true;
+  @State private tokenCardHeight: number = 280;
+  @State private tokenCardDragStartY: number = 0;
+  @State private tokenCardDragStartH: number = 0;
   @State private tokenTab: number = 0;
+  @State private tokenTrendRange: number = 0;
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -2204,7 +2208,32 @@ struct Index {
   private sessionsCenterView() {
     Column() {
       Row() {
-        this.leftDrawerToggle()
+        Button() {
+          Stack() {
+            Column()
+              .width(16)
+              .height(12)
+              .borderRadius(3)
+              .border({ width: 1.5, color: '#64748B' })
+              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+            Column()
+              .width(1.5)
+              .height(8)
+              .backgroundColor('#64748B')
+              .position({ x: 4, y: 2 })
+          }
+          .width(16)
+          .height(12)
+        }
+        .type(ButtonType.Normal)
+        .width(32)
+        .height(28)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#E2E8F0' })
+        .onClick(() => {
+          this.toggleLeftDrawer();
+        })
 
         Blank()
           .width(6)
@@ -2487,7 +2516,32 @@ struct Index {
   private chatCenterView() {
     Column() {
       Row() {
-        this.leftDrawerToggle()
+        Button() {
+          Stack() {
+            Column()
+              .width(16)
+              .height(12)
+              .borderRadius(3)
+              .border({ width: 1.5, color: '#64748B' })
+              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+            Column()
+              .width(1.5)
+              .height(8)
+              .backgroundColor('#64748B')
+              .position({ x: 4, y: 2 })
+          }
+          .width(16)
+          .height(12)
+        }
+        .type(ButtonType.Normal)
+        .width(32)
+        .height(28)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#E2E8F0' })
+        .onClick(() => {
+          this.toggleLeftDrawer();
+        })
 
         Blank()
           .width(6)
@@ -2517,7 +2571,32 @@ struct Index {
           this.chip(this.currentEffortLabel(), '#F8FAFC', '#64748B')
           Blank()
             .width(6)
-          this.rightDrawerToggle()
+          Button() {
+            Stack() {
+              Column()
+                .width(16)
+                .height(12)
+                .borderRadius(3)
+                .border({ width: 1.5, color: '#64748B' })
+                .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+              Column()
+                .width(1.5)
+                .height(8)
+                .backgroundColor('#64748B')
+                .position({ x: 10.5, y: 2 })
+            }
+            .width(16)
+            .height(12)
+          }
+          .type(ButtonType.Normal)
+          .width(32)
+          .height(28)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(8)
+          .border({ width: 1, color: '#E2E8F0' })
+          .onClick(() => {
+            this.toggleRightDrawer();
+          })
         }
         .alignItems(VerticalAlign.Center)
       }
@@ -2692,10 +2771,60 @@ struct Index {
     Column() {
       if (this.activeSidebarView === 'chat' && this.recentWorkspaces.length === 0) {
         Row() {
-          this.leftDrawerToggle()
+          Button() {
+          Stack() {
+            Column()
+              .width(16)
+              .height(12)
+              .borderRadius(3)
+              .border({ width: 1.5, color: '#64748B' })
+              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+            Column()
+              .width(1.5)
+              .height(8)
+              .backgroundColor('#64748B')
+              .position({ x: 4, y: 2 })
+          }
+          .width(16)
+          .height(12)
+        }
+        .type(ButtonType.Normal)
+        .width(32)
+        .height(28)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#E2E8F0' })
+        .onClick(() => {
+          this.toggleLeftDrawer();
+        })
           Blank()
             .layoutWeight(1)
-          this.rightDrawerToggle()
+          Button() {
+            Stack() {
+              Column()
+                .width(16)
+                .height(12)
+                .borderRadius(3)
+                .border({ width: 1.5, color: '#64748B' })
+                .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+              Column()
+                .width(1.5)
+                .height(8)
+                .backgroundColor('#64748B')
+                .position({ x: 10.5, y: 2 })
+            }
+            .width(16)
+            .height(12)
+          }
+          .type(ButtonType.Normal)
+          .width(32)
+          .height(28)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(8)
+          .border({ width: 1, color: '#E2E8F0' })
+          .onClick(() => {
+            this.toggleRightDrawer();
+          })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
@@ -3078,7 +3207,7 @@ struct Index {
         } else if (this.activeSidebarView === 'sessions') {
           Column() {
             this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-            this.infoRow('当前会话', this.activeWorkspace().title)
+            this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
             this.infoRow('会话总数', this.sessionSummaries.length.toString())
             this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
             this.summaryBullet('在中间列表里点击”打开”会切回 Chat 并加载该会话。')
@@ -3106,22 +3235,6 @@ struct Index {
 
       // Token 用量卡片（底部）
       this.tokenUsageCard()
-    Column() {
-      if (this.activeSidebarView === 'chat') {
-        this.chatContextPanel()
-      } else if (this.activeSidebarView === 'sessions') {
-        Column() {
-          this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-          this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
-          this.infoRow('会话总数', this.sessionSummaries.length.toString())
-          this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
-          this.summaryBullet('在中间列表里点击“打开”会切回 Chat 并加载该会话。')
-          this.summaryBullet('点击“删除”会归档该线程，并从左侧/中间列表里移除。')
-        }
-        .alignItems(HorizontalAlign.Start)
-        .height('100%')
-        .width('100%')
-      }
     }
     .height('100%')
     .width(this.rightPanelWidth)
@@ -3131,123 +3244,28 @@ struct Index {
     .borderRadius(20)
   }
 
-  @Builder
-  private splitterBar(isLeft: boolean) {
-    Column() {
-      Column()
-        .width(2)
-        .height('60%')
-        .backgroundColor('#CBD5E1')
-        .borderRadius(1)
-    }
-    .width(8)
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor('#F1F5F9')
-    .borderRadius(4)
-    .hitTestBehavior(HitTestMode.Block)
-    .gesture(
-      PanGesture({ direction: PanDirection.Horizontal })
-        .onActionStart(() => {
-          this.dragStartLeftW = this.leftPanelWidth;
-          this.dragStartRightW = this.rightPanelWidth;
-        })
-        .onActionUpdate((event: GestureEvent) => {
-          if (isLeft) {
-            const newLeft = this.dragStartLeftW + event.offsetX;
-            if (newLeft >= this.leftDrawerMinWidth) {
-              this.leftPanelWidth = newLeft;
-            }
-          } else {
-            const newRight = this.dragStartRightW - event.offsetX;
-            if (newRight >= this.rightDrawerMinWidth) {
-              this.rightPanelWidth = newRight;
-            }
-          }
-        })
-    )
-  }
-
-  @Builder
-  private leftDrawerToggle() {
-    Button() {
-      Stack() {
-        Column()
-          .width(16)
-          .height(12)
-          .borderRadius(3)
-          .border({ width: 1.5, color: '#64748B' })
-          .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
-
-        Column()
-          .width(1.5)
-          .height(8)
-          .backgroundColor('#64748B')
-          .position({ x: 4, y: 2 })
-      }
-      .width(16)
-      .height(12)
-    }
-    .type(ButtonType.Normal)
-    .width(32)
-    .height(28)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E2E8F0' })
-    .onClick(() => {
-      this.toggleLeftDrawer();
-    })
-  }
-
-  @Builder
-  private rightDrawerToggle() {
-    Button() {
-      Stack() {
-        Column()
-          .width(16)
-          .height(12)
-          .borderRadius(3)
-          .border({ width: 1.5, color: '#64748B' })
-          .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
-
-        Column()
-          .width(1.5)
-          .height(8)
-          .backgroundColor('#64748B')
-          .position({ x: 10.5, y: 2 })
-      }
-      .width(16)
-      .height(12)
-    }
-    .type(ButtonType.Normal)
-    .width(32)
-    .height(28)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E2E8F0' })
-    .onClick(() => {
-      this.toggleRightDrawer();
-    })
-  }
-
   private formatTokenCount(count: number): string {
-    if (count <= 0) return '0';
+    if (!(count > 0)) return '0';
     if (count < 1000) return count.toString();
     if (count < 1000000) return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   }
 
   private get contextUsedTokens(): number {
-    return this.tokenUsage?.total?.totalTokens ?? 0;
+    const v = this.tokenUsage?.total?.totalTokens ?? 0;
+    return (v > 0) ? v : 0;
   }
 
   private get contextWindowTotal(): number {
-    return this.tokenUsage?.modelContextWindow ?? 0;
+    const v = this.tokenUsage?.modelContextWindow ?? 0;
+    return (v > 0) ? v : 0;
   }
 
   private get contextUsedPercent(): number {
-    if (this.contextWindowTotal <= 0) return 0;
-    return (this.contextUsedTokens / this.contextWindowTotal) * 100;
+    const total = this.contextWindowTotal;
+    if (!(total > 0)) return 0;
+    const pct = (this.contextUsedTokens / total) * 100;
+    return (pct > 0) ? pct : 0;
   }
 
   private contextPercentColor(): ResourceColor {
@@ -3255,6 +3273,77 @@ struct Index {
     if (pct > 90) return '#EF4444';
     if (pct > 70) return '#F59E0B';
     return '#3B82F6';
+  }
+
+  private makeContextText(): string {
+    const used = this.contextUsedTokens;
+    const win = this.contextWindowTotal;
+    if (!(win > 0)) return this.formatTokenCount(used);
+    return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win);
+  }
+
+  private makeContextBarWidth(): string {
+    const used = this.contextUsedTokens;
+    const win = this.contextWindowTotal;
+    if (!(win > 0) || !(used > 0)) return '0%';
+    const pct = (used / win) * 100;
+    if (!(pct > 0)) return '0%';
+    return (pct > 100 ? 100 : pct).toFixed(0) + '%';
+  }
+
+  private tokenTrendLinePath(data: DailyTokenSnapshot[], maxVal: number, w: number, h: number): string {
+    if (data.length === 0 || maxVal <= 0) return '';
+    const points: string[] = [];
+    const stepX = w / Math.max(data.length - 1, 1);
+    for (let i = 0; i < data.length; i++) {
+      const x = i * stepX;
+      const y = h - (data[i].totalTokens / maxVal) * (h - 4) - 2;
+      if (i === 0) {
+        points.push(`M ${x} ${y}`);
+      } else {
+        points.push(`L ${x} ${y}`);
+      }
+    }
+    return points.join(' ');
+  }
+
+  private getTrendData(): DailyTokenSnapshot[] {
+    if (this.tokenAggregate === null) return [];
+    const days = this.tokenTrendRange === 1 ? 7 : 30;
+    const len = this.tokenAggregate.daily.length;
+    const start = Math.max(len - days, 0);
+    return this.tokenAggregate.daily.slice(start, len);
+  }
+
+  private getTrendTokenPath(): string {
+    const data = this.getTrendData();
+    const maxVal = data.reduce((max: number, d: DailyTokenSnapshot) => Math.max(max, d.totalTokens), 0);
+    return this.tokenTrendLinePath(data, maxVal, 220, 60);
+  }
+
+  private getTrendRequestPath(): string {
+    const data = this.getTrendData();
+    const maxReqs = data.reduce((max: number, d: DailyTokenSnapshot) => Math.max(max, d.requestCount), 0);
+    const reqData = data.map((d: DailyTokenSnapshot) => new DailyTokenSnapshot(d.date, d.requestCount, d.requestCount));
+    return this.tokenTrendLinePath(reqData, maxReqs, 220, 60);
+  }
+
+  private getTrendSumTokens(): number {
+    return this.getTrendData().reduce((s: number, d: DailyTokenSnapshot) => s + d.totalTokens, 0);
+  }
+
+  private getTrendSumRequests(): number {
+    return this.getTrendData().reduce((s: number, d: DailyTokenSnapshot) => s + d.requestCount, 0);
+  }
+
+  private getTrendFirstDate(): string {
+    const data = this.getTrendData();
+    return data.length > 0 ? data[0].date.substring(5) : '';
+  }
+
+  private getTrendLastDate(): string {
+    const data = this.getTrendData();
+    return data.length > 0 ? data[data.length - 1].date.substring(5) : '';
   }
 
   private tokenMiniText(): string {
@@ -3267,13 +3356,13 @@ struct Index {
 
   @Builder tokenUsageCard() {
     Column() {
-      // 箭头指示器
+      // 箭头指示器（可拖拽调整高度）
       Row() {
         Text(this.tokenCardExpanded ? '▼' : '▲')
           .fontSize(10)
           .fontColor('#94A3B8')
       }
-      .width(40)
+      .width('100%')
       .height(16)
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
@@ -3281,11 +3370,28 @@ struct Index {
       .borderRadius({ topLeft: 8, topRight: 8 })
       .border({ width: 1, color: '#E2E8F0' })
       .margin({ bottom: -1 })
-      .onClick(() => {
-        animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-          this.tokenCardExpanded = !this.tokenCardExpanded;
-        });
-      })
+      .hitTestBehavior(HitTestMode.Block)
+      .gesture(
+        TapGesture()
+          .onAction(() => {
+            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+              this.tokenCardExpanded = !this.tokenCardExpanded;
+            });
+          })
+      )
+      .gesture(
+        PanGesture({ direction: PanDirection.Vertical })
+          .onActionStart(() => {
+            this.tokenCardDragStartY = 0;
+            this.tokenCardDragStartH = this.tokenCardHeight;
+          })
+          .onActionUpdate((event: GestureEvent) => {
+            const newH = this.tokenCardDragStartH - event.offsetY;
+            if (newH >= 120 && newH <= 600) {
+              this.tokenCardHeight = newH;
+            }
+          })
+      )
 
       // 卡片内容
       Column() {
@@ -3298,22 +3404,23 @@ struct Index {
               .maxLines(1)
           }
           .width('100%')
-          .justifyContent(FlexAlign.Center)
-          .padding({ top: 8, bottom: 8 })
+          .padding({ top: 8, bottom: 8, left: 12 })
         } else {
-          // 展开状态：完整内容
-          // 标题行
-          Row() {
-            Text('Token 用量')
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#1E293B')
-            Blank()
-            Text(this.providerName)
-              .fontSize(11)
-              .fontColor('#94A3B8')
-          }
-          .width('100%')
+          // 展开状态：固定高度 + 滚动
+          Scroll() {
+            Column() {
+              // 标题行
+              Row() {
+                Text('Token 用量')
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#1E293B')
+                Blank()
+                Text(this.providerName)
+                  .fontSize(11)
+                  .fontColor('#94A3B8')
+              }
+              .width('100%')
 
           // 上下文占用
           if (this.contextWindowTotal > 0) {
@@ -3369,6 +3476,40 @@ struct Index {
           // 当前轮 tab
           if (this.tokenTab === 0) {
             Column() {
+              // 上下文窗口占用
+              Column() {
+                Row() {
+                  Text('上下文窗口')
+                    .fontSize(11)
+                    .fontColor('#64748B')
+                  Blank()
+                  Text(this.makeContextText())
+                    .fontSize(11)
+                    .fontColor('#1E293B')
+                }
+                .width('100%')
+
+                if (this.contextWindowTotal > 0 && this.contextUsedTokens > 0) {
+                  Stack({ alignContent: Alignment.Start }) {
+                    Row()
+                      .width('100%')
+                      .height(4)
+                      .backgroundColor('#E2E8F0')
+                      .borderRadius(2)
+                    Row()
+                      .width(this.makeContextBarWidth())
+                      .height(4)
+                      .backgroundColor('#3B82F6')
+                      .borderRadius(2)
+                  }
+                  .width('100%')
+                  .height(4)
+                  .margin({ top: 2 })
+                }
+              }
+              .width('100%')
+              .margin({ top: 2, bottom: 2 })
+
               if (this.tokenUsage === null) {
                 Text('等待数据...')
                   .fontSize(11)
@@ -3453,51 +3594,163 @@ struct Index {
                   .fontColor('#94A3B8')
                   .margin({ top: 8 })
               } else {
+                // 范围切换按钮
                 Row() {
-                  // 今日
-                  Column() {
-                    Text(this.formatTokenCount(this.tokenAggregate!.today))
-                      .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1E293B')
-                    Text('今日').fontSize(10).fontColor('#94A3B8').margin({ top: 2 })
-                    Column() {
-                      Column()
-                        .width(20)
-                        .height(this.tokenAggregate!.thisMonth > 0 ? `${Math.max((this.tokenAggregate!.today / this.tokenAggregate!.thisMonth) * 48, 2)}px` : '2px')
-                        .backgroundColor('#3B82F6').borderRadius(3)
-                    }.height(48).width(20).alignItems(HorizontalAlign.End).justifyContent(FlexAlign.End).margin({ top: 4 })
-                  }.alignItems(HorizontalAlign.Center).layoutWeight(1)
-                  // 本周
-                  Column() {
-                    Text(this.formatTokenCount(this.tokenAggregate!.thisWeek))
-                      .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1E293B')
-                    Text('本周').fontSize(10).fontColor('#94A3B8').margin({ top: 2 })
-                    Column() {
-                      Column()
-                        .width(20)
-                        .height(this.tokenAggregate!.thisMonth > 0 ? `${Math.max((this.tokenAggregate!.thisWeek / this.tokenAggregate!.thisMonth) * 48, 2)}px` : '2px')
-                        .backgroundColor('#3B82F6').borderRadius(3)
-                    }.height(48).width(20).alignItems(HorizontalAlign.End).justifyContent(FlexAlign.End).margin({ top: 4 })
-                  }.alignItems(HorizontalAlign.Center).layoutWeight(1)
-                  // 本月
-                  Column() {
-                    Text(this.formatTokenCount(this.tokenAggregate!.thisMonth))
-                      .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1E293B')
-                    Text('本月').fontSize(10).fontColor('#94A3B8').margin({ top: 2 })
-                    Column() {
-                      Column()
-                        .width(20)
-                        .height('48px')
-                        .backgroundColor('#3B82F6').borderRadius(3)
-                    }.height(48).width(20).alignItems(HorizontalAlign.End).justifyContent(FlexAlign.End).margin({ top: 4 })
-                  }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+                  Text('今日')
+                    .fontSize(11)
+                    .fontColor(this.tokenTrendRange === 0 ? '#3B82F6' : '#94A3B8')
+                    .fontWeight(this.tokenTrendRange === 0 ? FontWeight.Medium : FontWeight.Normal)
+                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+                    .borderRadius(4)
+                    .backgroundColor(this.tokenTrendRange === 0 ? '#EFF6FF' : 'transparent')
+                    .onClick(() => { this.tokenTrendRange = 0; })
+                  Text('近7天')
+                    .fontSize(11)
+                    .fontColor(this.tokenTrendRange === 1 ? '#3B82F6' : '#94A3B8')
+                    .fontWeight(this.tokenTrendRange === 1 ? FontWeight.Medium : FontWeight.Normal)
+                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+                    .borderRadius(4)
+                    .backgroundColor(this.tokenTrendRange === 1 ? '#EFF6FF' : 'transparent')
+                    .onClick(() => { this.tokenTrendRange = 1; })
+                  Text('近30天')
+                    .fontSize(11)
+                    .fontColor(this.tokenTrendRange === 2 ? '#3B82F6' : '#94A3B8')
+                    .fontWeight(this.tokenTrendRange === 2 ? FontWeight.Medium : FontWeight.Normal)
+                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+                    .borderRadius(4)
+                    .backgroundColor(this.tokenTrendRange === 2 ? '#EFF6FF' : 'transparent')
+                    .onClick(() => { this.tokenTrendRange = 2; })
                 }
+                .margin({ top: 8 })
                 .width('100%')
-                .justifyContent(FlexAlign.SpaceBetween)
+
+                // 今日视图：柱状图
+                if (this.tokenTrendRange === 0) {
+                  Column() {
+                    Row() {
+                      Text(`共 ${this.formatTokenCount(this.tokenAggregate!.today.totalTokens)} tokens · ${this.tokenAggregate!.today.requestCount} 次请求`)
+                        .fontSize(10).fontColor('#64748B')
+                    }.width('100%').margin({ top: 8 })
+
+                    // 柱状图
+                    Row({ space: 8 }) {
+                      Column() {
+                        Column()
+                          .width(28)
+                          .height(this.tokenAggregate!.today.inputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.inputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
+                          .backgroundColor('#3B82F6').borderRadius({ topLeft: 4, topRight: 4 })
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens))
+                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
+                        Text('输入').fontSize(9).fontColor('#94A3B8')
+                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+
+                      Column() {
+                        Column()
+                          .width(28)
+                          .height(this.tokenAggregate!.today.outputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.outputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
+                          .backgroundColor('#10B981').borderRadius({ topLeft: 4, topRight: 4 })
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens))
+                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
+                        Text('输出').fontSize(9).fontColor('#94A3B8')
+                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+
+                      Column() {
+                        Column()
+                          .width(28)
+                          .height(this.tokenAggregate!.today.cachedInputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.cachedInputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
+                          .backgroundColor('#94A3B8').borderRadius({ topLeft: 4, topRight: 4 })
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens))
+                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
+                        Text('缓存').fontSize(9).fontColor('#94A3B8')
+                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+
+                      Column() {
+                        Column()
+                          .width(28)
+                          .height(this.tokenAggregate!.today.reasoningOutputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.reasoningOutputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
+                          .backgroundColor('#8B5CF6').borderRadius({ topLeft: 4, topRight: 4 })
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens))
+                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
+                        Text('推理').fontSize(9).fontColor('#94A3B8')
+                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+                    }
+                    .width('100%')
+                    .alignItems(VerticalAlign.Bottom)
+                    .margin({ top: 8 })
+                  }
+                }
+
+                // 近7天/近30天视图：曲线图
+                if (this.tokenTrendRange === 1 || this.tokenTrendRange === 2) {
+                  Column() {
+                    // 总计
+                    Row() {
+                      Text(`共 ${this.formatTokenCount(this.getTrendSumTokens())} tokens · ${this.getTrendSumRequests()} 次请求`)
+                        .fontSize(10).fontColor('#64748B')
+                    }.width('100%').margin({ top: 8 })
+
+                    // 曲线图区域
+                    Stack({ alignContent: Alignment.BottomStart }) {
+                      // 网格线
+                      Column() {
+                        Row().width('100%').height(1).backgroundColor('#F1F5F9')
+                        Row().width('100%').height(1).backgroundColor('#F1F5F9').margin({ top: 19 })
+                        Row().width('100%').height(1).backgroundColor('#F1F5F9').margin({ top: 19 })
+                      }.width(220).height(60)
+
+                      // Token 曲线
+                      Shape() {
+                        Path()
+                          .commands(this.getTrendTokenPath())
+                          .stroke('#3B82F6')
+                          .strokeWidth(1.5)
+                          .fill('none')
+                      }.width(220).height(60)
+
+                      // 请求曲线
+                      Shape() {
+                        Path()
+                          .commands(this.getTrendRequestPath())
+                          .stroke('#10B981')
+                          .strokeWidth(1.5)
+                          .fill('none')
+                          .strokeDashArray([4, 2])
+                      }.width(220).height(60)
+                    }
+                    .width(220)
+                    .height(60)
+                    .margin({ top: 8 })
+
+                    // 图例
+                    Row({ space: 16 }) {
+                      Row({ space: 4 }) {
+                        Row().width(12).height(2).backgroundColor('#3B82F6')
+                        Text('Tokens').fontSize(9).fontColor('#64748B')
+                      }
+                      Row({ space: 4 }) {
+                        Row().width(12).height(2).backgroundColor('#10B981')
+                        Text('请求').fontSize(9).fontColor('#64748B')
+                      }
+                    }.margin({ top: 6 })
+
+                    // X轴日期
+                    Row() {
+                      Text(this.getTrendFirstDate()).fontSize(8).fontColor('#94A3B8')
+                      Blank()
+                      Text(this.getTrendLastDate()).fontSize(8).fontColor('#94A3B8')
+                    }.width(220).margin({ top: 2 })
+                  }
+                }
               }
             }
             .margin({ top: 8 })
             .width('100%')
           }
+            }
+          }
+          .scrollable(ScrollDirection.Vertical)
+          .height(this.tokenCardHeight)
+          .align(Alignment.TopStart)
         }
       }
       .padding(this.tokenCardExpanded ? 12 : 0)
@@ -3527,13 +3780,63 @@ struct Index {
           .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
 
-          this.splitterBar(true)
+          Column() {
+            Column()
+              .width(2)
+              .height('60%')
+              .backgroundColor('#CBD5E1')
+              .borderRadius(1)
+          }
+          .width(8)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#F1F5F9')
+          .borderRadius(4)
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.dragStartLeftW = this.leftPanelWidth;
+                this.dragStartRightW = this.rightPanelWidth;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                const newLeft = this.dragStartLeftW + event.offsetX;
+                if (newLeft >= this.leftDrawerMinWidth) {
+                  this.leftPanelWidth = newLeft;
+                }
+              })
+          )
         }
 
         this.centerPanel()
 
         if (this.showRightDrawer) {
-          this.splitterBar(false)
+          Column() {
+            Column()
+              .width(2)
+              .height('60%')
+              .backgroundColor('#CBD5E1')
+              .borderRadius(1)
+          }
+          .width(8)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#F1F5F9')
+          .borderRadius(4)
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.dragStartLeftW = this.leftPanelWidth;
+                this.dragStartRightW = this.rightPanelWidth;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                const newRight = this.dragStartRightW - event.offsetX;
+                if (newRight >= this.rightDrawerMinWidth) {
+                  this.rightPanelWidth = newRight;
+                }
+              })
+          )
 
           Column() {
             this.rightPanel()

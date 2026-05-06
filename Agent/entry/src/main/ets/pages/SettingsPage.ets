@@ -107,7 +107,7 @@ struct SettingsPage {
   @State private mcpEnvDraft: string = '{}';
   @State private mcpHttpHeadersDraft: string = '{}';
   @State private mcpEnabledDraft: boolean = true;
-  @State private mcpStatusText: string = '等待 MCP backend 加载状态。';
+  @State private mcpStatusText: string = '';
   @State private mcpNewServerName: string = '';
   @State private showMcpAddDialog: boolean = false;
   @State private showMcpDeleteDialog: boolean = false;
@@ -121,7 +121,7 @@ struct SettingsPage {
   @State private newRepoOwner: string = 'anthropics';
   @State private newRepoName: string = 'skills';
   @State private newRepoBranch: string = 'main';
-  @State private skillsStatusText: string = '等待 Skills façade 加载状态。';
+  @State private skillsStatusText: string = '';
   @State private pendingDeleteSkillId: string = '';
   @State private pendingDeleteSkillName: string = '';
   @State private showSkillDeleteDialog: boolean = false;
@@ -137,13 +137,13 @@ struct SettingsPage {
   @State private promptDraftSummary: string = '';
   @State private promptDraftContent: string = '';
   @State private promptLiveContent: string = '';
-  @State private promptsStatusText: string = '等待 Prompts façade 加载状态。';
+  @State private promptsStatusText: string = '';
 
-  @State private apiProviderName: string = 'OpenAI Gateway';
-  @State private apiBaseUrl: string = 'https://api.openai.com/v1';
-  @State private apiModel: string = 'gpt-5.1';
+  @State private apiProviderName: string = '';
+  @State private apiBaseUrl: string = '';
+  @State private apiModel: string = '';
   @State private apiWireApi: ApiWireFormat = 'responses';
-  @State private apiAuthState: string = 'sk-live-************************';
+  @State private apiAuthState: string = '';
   @State private apiEndpoints: ApiEndpointMockItem[] = [];
   @State private apiProviders: ProviderRecord[] = [];
   @State private apiPresets: ApiPresetMockItem[] = [];
@@ -1610,16 +1610,11 @@ struct SettingsPage {
       .onClick(() => { router.back(); })
 
       Column() {
-        Text('Settings Console')
+        Text('设置')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .fontColor('#0F172A')
-        Text('前端先行 · 独立控制台视图 · 保留后端接入接口')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .fontColor('#64748B')
-          .margin({ top: 4 })
       }
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 18 })
@@ -1628,17 +1623,6 @@ struct SettingsPage {
         .layoutWeight(1)
 
       this.particleCluster()
-
-      Text('Frontend Mock Mode')
-        .copyOption(CopyOptions.None)
-        .fontSize(11)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0A84FF')
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .backgroundColor('#EAF3FF')
-        .border({ width: 1, color: '#BFDBFE' })
-        .borderRadius(14)
-        .margin({ left: 12 })
     }
     .width('100%')
     .padding({ left: 28, right: 28, top: 24, bottom: 16 })
@@ -1690,74 +1674,17 @@ struct SettingsPage {
   @Builder
   private sidebarHero() {
     Column() {
-      Row() {
-        Text('CONTROL')
-          .copyOption(CopyOptions.None)
-          .fontSize(10)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#0A84FF')
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('#EAF3FF')
-          .borderRadius(10)
-
-        Text('MOCK')
-          .copyOption(CopyOptions.None)
-          .fontSize(10)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#166534')
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('#DCFCE7')
-          .borderRadius(10)
-          .margin({ left: 6 })
-      }
-
-      Text('Settings Shell')
+      Text('设置')
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
-        .margin({ top: 14 })
-
-      Text('与主会话页分离的管理控制台，先完成视觉、交互与状态语义，再衔接 native façade。')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .fontColor('#475569')
-        .lineHeight(20)
-        .margin({ top: 8 })
-
-      Row() {
-        this.metricPill('4', '核心分区')
-        this.metricPill('0', '真实写入')
-        this.metricPill('∞', '可扩展槽位')
-      }
-      .width('100%')
-      .margin({ top: 16 })
     }
     .width('100%')
     .padding(18)
     .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#DFE9F5' })
     .borderRadius(24)
-  }
-
-  @Builder
-  private metricPill(value: string, label: string) {
-    Column() {
-      Text(value)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(16)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#0F172A')
-      Text(label)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#64748B')
-        .margin({ top: 2 })
-    }
-    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor('#F8FAFC')
-    .borderRadius(14)
-    .margin({ right: 8 })
   }
 
   @Builder
@@ -1806,24 +1733,8 @@ struct SettingsPage {
   @Builder
   private sideFootnote() {
     Column() {
-      Text('接口预留')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-      Text('所有 CTA 已预留为 façade 入口；接后端时只替换 action 实现，不改页面结构。')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#64748B')
-        .lineHeight(18)
-        .margin({ top: 6 })
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(16)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#DFE9F5' })
-    .borderRadius(20)
   }
 
   @Builder
@@ -1900,36 +1811,14 @@ struct SettingsPage {
   private heroSubtitle(): string {
     switch (this.activeTab) {
       case 'mcp':
-        return '把工具桥接、授权状态与连接参数收敛到独立控制台，先完成交互语义。';
+        return '管理 MCP 服务器连接与工具源';
       case 'skills':
         return '统一管理已安装能力、仓库源和备份快照，保持高密度但不混乱。';
       case 'prompts':
         return '在 UI 里显式展示当前指令集合、启用状态和草稿编辑区。';
       default:
-        return '以卡片化布局管理 Provider 接入信息，并为真实校验留出接口。';
+        return '管理 Provider 接入信息与 API 配置';
     }
-  }
-
-  @Builder
-  private heroSummaryCard() {
-    Column() {
-      Text('Interaction hint')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#64748B')
-      Text('点击任意主操作都会触发缩放与轻粒子反馈，并给出自动消散提示。')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#334155')
-        .lineHeight(18)
-        .margin({ top: 6 })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width(240)
-    .padding(14)
-    .backgroundColor('#F8FBFF')
-    .border({ width: 1, color: '#DCE8F4' })
-    .borderRadius(20)
   }
 
   @Builder
@@ -2164,12 +2053,12 @@ struct SettingsPage {
   @Builder
   private mcpEditorCard() {
     Column() {
-      this.sectionCard('Editor', '字段直接绑定 codexBackend MCP façade，保存后会写入真实配置。')
+      this.sectionCard('Editor', '配置 MCP 服务器连接参数')
 
       Column() {
         Row() {
-          this.pill(this.selectedMcpServer() !== null && this.selectedMcpServer()!.enabled ? 'Live Layout' : 'Draft Layout', '#EAF3FF', '#0A84FF')
-          this.pill('Backend Connected', '#DCFCE7', '#166534')
+          this.pill(this.selectedMcpServer() !== null && this.selectedMcpServer()!.enabled ? '已启用' : '草稿', '#EAF3FF', '#0A84FF')
+          this.pill('已连接', '#DCFCE7', '#166534')
         }
         .width('100%')
 
@@ -2474,7 +2363,7 @@ struct SettingsPage {
   private skillReposPanel() {
     Column() {
       Column() {
-        this.sectionCard('Repository source', '添加新的 skill 仓库源，但当前只保存在 settings mock 状态中。')
+        this.sectionCard('Repository source', '添加新的 skill 仓库源')
 
         Row() {
           TextInput({ text: this.newRepoOwner, placeholder: 'owner' })
@@ -3315,7 +3204,7 @@ struct SettingsPage {
   @Builder
   private apiEndpointDetailPanel() {
     Column() {
-      this.sectionCard('Endpoint matrix', '展示当前选中 Provider 的 endpoint 角色分层与 mock 状态。')
+      this.sectionCard('Endpoint matrix', '当前 Provider 的端点配置')
       Column() {
         ForEach(this.apiEndpoints, (endpoint: ApiEndpointMockItem) => {
           Row() {

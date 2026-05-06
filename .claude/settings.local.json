@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(cargo check *)",
+      "mcp____mcp-websearch__web_search"
     ]
   }
 }
