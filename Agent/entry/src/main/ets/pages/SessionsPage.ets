@@ -40,13 +40,9 @@ struct SessionsPage {
   @State private recentWorkspaces: WorkspaceItem[] = [];
   @State private directoryFilter: string = '';
   @State private directoryFilterText: string = '使用默认工作区';
-  @State private showLeftDrawer: boolean = true;
   @State private showRightDrawer: boolean = true;
-  @State private leftPanelWidth: number = 280;
   @State private rightPanelWidth: number = 360;
-  private readonly leftDrawerMinWidth: number = 200;
   private readonly rightDrawerMinWidth: number = 240;
-  private dragStartLeftW: number = 0;
   private dragStartRightW: number = 0;
 
   @State private showCreateWorkspaceDialog: boolean = false;
@@ -621,12 +617,6 @@ struct SessionsPage {
     return JSON.stringify(err);
   }
 
-  private toggleLeftDrawer(): void {
-    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-      this.showLeftDrawer = !this.showLeftDrawer;
-    });
-  }
-
   private toggleRightDrawer(): void {
     this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
       this.showRightDrawer = !this.showRightDrawer;
@@ -709,37 +699,6 @@ struct SessionsPage {
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
-  }
-
-  @Builder
-  private leftDrawerToggle() {
-    Button() {
-      Stack() {
-        Column()
-          .width(16)
-          .height(12)
-          .borderRadius(3)
-          .border({ width: 1.5, color: '#64748B' })
-          .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
-
-        Column()
-          .width(1.5)
-          .height(8)
-          .backgroundColor('#64748B')
-          .position({ x: 4, y: 2 })
-      }
-      .width(16)
-      .height(12)
-    }
-    .type(ButtonType.Normal)
-    .width(32)
-    .height(28)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E2E8F0' })
-    .onClick(() => {
-      this.toggleLeftDrawer();
-    })
   }
 
   @Builder
@@ -865,25 +824,29 @@ struct SessionsPage {
   private sessionsCenterView() {
     Column() {
       Row() {
-        this.leftDrawerToggle()
+        Button() {
+          Row() {
+            Text('←')
+              .fontSize(16)
+              .fontColor('#0F172A')
+            Text('Back')
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#0F172A')
+              .margin({ left: 8 })
+          }
+        }
+        .height(34)
+        .padding({ left: 14, right: 14 })
+        .backgroundColor('#FFFFFF')
+        .borderRadius(16)
+        .border({ width: 1, color: '#D8E1EE' })
+        .onClick(() => { router.back(); })
 
         Blank()
           .width(6)
 
         this.panelTitle('Sessions', '集中查看、切换并删除当前项目的会话')
-
-        Blank()
-          .layoutWeight(1)
-
-        Button('新建会话')
-          .height(34)
-          .fontSize(12)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(16)
-          .onClick(() => {
-            this.createWorkspace();
-          })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -891,7 +854,7 @@ struct SessionsPage {
       if (this.sessionSummaries.length === 0) {
         Column() {
           this.panelTitle('暂无会话', '连接后会从 app-server 恢复历史线程')
-          this.summaryBullet('点击右上角"新建会话"可以立即创建一个新的线程。')
+          this.summaryBullet('点击右下角"+"按钮可以立即创建一个新的线程。')
           this.summaryBullet('如果你刚删除了最后一个会话，这里会保持为空。')
         }
         .alignItems(HorizontalAlign.Start)
@@ -920,77 +883,31 @@ struct SessionsPage {
   }
 
   @Builder
-  private leftPanel() {
-    Column() {
-      // Back button at top left
-      Button() {
-        Row() {
-          Text('←')
-            .fontSize(16)
-            .fontColor('#0F172A')
-          Text('Back')
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
-            .margin({ left: 8 })
-        }
-      }
-      .height(42)
-      .padding({ left: 14, right: 14 })
-      .backgroundColor('#FFFFFF')
-      .borderRadius(18)
-      .border({ width: 1, color: '#D8E1EE' })
-      .onClick(() => { router.back(); })
-
-    Scroll() {
-    Column() {
+  private centerPanel() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
-        this.panelTitle('会话概览', '查看当前项目线程并进入会话管理页')
-        this.infoRow('会话数', this.sessionSummaries.length.toString())
-        this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
-
-        Button('新建会话')
-          .height(34)
-          .margin({ top: 12 })
-          .fontSize(12)
-          .backgroundColor('#111827')
-          .fontColor('#FFFFFF')
-          .borderRadius(16)
-          .onClick(() => {
-            this.createWorkspace();
-          })
+        this.sessionsCenterView()
       }
-      .alignItems(HorizontalAlign.Start)
+      .height('100%')
       .width('100%')
       .padding(12)
-      .margin({ top: 12 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
 
-    }
-    }
-    .scrollable(ScrollDirection.Vertical)
-    .scrollBar(BarState.Auto)
-    .layoutWeight(1)
-    .width('100%')
-    }
-    .height('100%')
-    .width(this.leftPanelWidth)
-    .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
-    .borderRadius(20)
-  }
-
-  @Builder
-  private centerPanel() {
-    Column() {
-      this.sessionsCenterView()
+      Button('+')
+        .width(56)
+        .height(56)
+        .fontSize(28)
+        .fontColor('#FFFFFF')
+        .fontWeight(FontWeight.Medium)
+        .backgroundColor('#111827')
+        .borderRadius(28)
+        .margin({ right: 30, bottom: 50 })
+        .shadow({ radius: 8, color: '#1A000000', offsetY: 4 })
+        .onClick(() => {
+          this.createWorkspace();
+        })
     }
     .height('100%')
     .layoutWeight(1)
-    .padding(12)
     .backgroundColor('#F8FAFC')
     .border({ width: 1, color: '#E2E8F0' })
     .borderRadius(20)
@@ -1008,8 +925,11 @@ struct SessionsPage {
         this.summaryBullet('点击"删除"会归档该线程，并从左侧/中间列表里移除。')
       }
       .alignItems(HorizontalAlign.Start)
-      .height('100%')
       .width('100%')
+      .padding(12)
+      .backgroundColor('#FFFFFF')
+      .border({ width: 1, color: '#E2E8F0' })
+      .borderRadius(18)
     }
     .height('100%')
     .width(this.rightPanelWidth)
@@ -1020,7 +940,7 @@ struct SessionsPage {
   }
 
   @Builder
-  private splitterBar(isLeft: boolean) {
+  private splitterBar() {
     Column() {
       Column()
         .width(2)
@@ -1037,20 +957,12 @@ struct SessionsPage {
     .gesture(
       PanGesture({ direction: PanDirection.Horizontal })
         .onActionStart(() => {
-          this.dragStartLeftW = this.leftPanelWidth;
           this.dragStartRightW = this.rightPanelWidth;
         })
         .onActionUpdate((event: GestureEvent) => {
-          if (isLeft) {
-            const newLeft = this.dragStartLeftW + event.offsetX;
-            if (newLeft >= this.leftDrawerMinWidth) {
-              this.leftPanelWidth = newLeft;
-            }
-          } else {
-            const newRight = this.dragStartRightW - event.offsetX;
-            if (newRight >= this.rightDrawerMinWidth) {
-              this.rightPanelWidth = newRight;
-            }
+          const newRight = this.dragStartRightW - event.offsetX;
+          if (newRight >= this.rightDrawerMinWidth) {
+            this.rightPanelWidth = newRight;
           }
         })
     )
@@ -1319,20 +1231,10 @@ struct SessionsPage {
         .backgroundColor('#EEF2F7')
 
       Row() {
-        if (this.showLeftDrawer) {
-          Column() {
-            this.leftPanel()
-          }
-          .height('100%')
-          .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
-
-          this.splitterBar(true)
-        }
-
         this.centerPanel()
 
         if (this.showRightDrawer) {
-          this.splitterBar(false)
+          this.splitterBar()
 
           Column() {
             this.rightPanel()
