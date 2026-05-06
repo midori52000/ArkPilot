@@ -17,7 +17,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, SidebarItem } from '../backend/ConsoleModels';
+import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, SidebarItem, DailyTokenSnapshot } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import router from '@ohos.router';
 import pasteboard from '@ohos.pasteboard';
@@ -2585,16 +2585,16 @@ struct Index {
   private getTrendRequestPath(): string {
     const data = this.getTrendData();
     const maxReqs = data.reduce((max: number, d: DailyTokenSnapshot) => Math.max(max, d.requestCount), 0);
-    const reqData = data.map((d: DailyTokenSnapshot) => new DailyTokenSnapshot(d.date, d.requestCount, d.requestCount));
+    const reqData = data.map((d: DailyTokenSnapshot): DailyTokenSnapshot => new DailyTokenSnapshot(d.date, d.requestCount, d.requestCount));
     return this.tokenTrendLinePath(reqData, maxReqs, 220, 60);
   }
 
   private getTrendSumTokens(): number {
-    return this.getTrendData().reduce((s: number, d: DailyTokenSnapshot) => s + d.totalTokens, 0);
+    return this.getTrendData().reduce((s: number, d: DailyTokenSnapshot): number => s + d.totalTokens, 0);
   }
 
   private getTrendSumRequests(): number {
-    return this.getTrendData().reduce((s: number, d: DailyTokenSnapshot) => s + d.requestCount, 0);
+    return this.getTrendData().reduce((s: number, d: DailyTokenSnapshot): number => s + d.requestCount, 0);
   }
 
   private getTrendFirstDate(): string {
