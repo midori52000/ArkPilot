@@ -23,7 +23,8 @@ import {
   threadStartNative,
   turnInterruptNative,
   turnPollNative,
-  turnStartNative
+  turnStartNative,
+  fetchNativeTokenUsageAggregate
 } from './CodexNative';
 import {
   CustomHeadersEntry,
@@ -37,7 +38,10 @@ import {
   UsageSummary,
   WorkspaceAccessKind,
   WorkspaceDescriptor,
-  WorkspacePermissionState
+  WorkspacePermissionState,
+  TokenUsageBreakdown,
+  TurnTokenUsage,
+  TokenUsageAggregate
 } from './ConsoleModels';
 import {
   ApiError,
@@ -921,8 +925,9 @@ export class CodexTurnResult {
   summaryPoints: string[];
   changedFiles: string;
   diffStat: string;
+  tokenUsage: TurnTokenUsage | null;
 
-  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string) {
+  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string, tokenUsage?: TurnTokenUsage | null) {
     this.threadId = threadId;
     this.turnId = turnId;
     this.status = status;
@@ -932,6 +937,7 @@ export class CodexTurnResult {
     this.summaryPoints = summaryPoints;
     this.changedFiles = changedFiles;
     this.diffStat = diffStat;
+    this.tokenUsage = tokenUsage ?? null;
   }
 }
 
@@ -968,8 +974,9 @@ export class CodexBackendSnapshot {
   mcpStatusText: string;
   mcpServerCount: number;
   mcpErrorText: string;
+  tokenUsage: TurnTokenUsage | null;
 
-  constructor(serverUrl: string, connectionState: CodexConnectionState, connectionText: string, pendingApproval: CodexApprovalRequest | null, authMode: CodexAuthMode, requiresOpenAIAuth: boolean, authStatusText: string, planTypeText: string, mcpStatusText: string, mcpServerCount: number, mcpErrorText: string) {
+  constructor(serverUrl: string, connectionState: CodexConnectionState, connectionText: string, pendingApproval: CodexApprovalRequest | null, authMode: CodexAuthMode, requiresOpenAIAuth: boolean, authStatusText: string, planTypeText: string, mcpStatusText: string, mcpServerCount: number, mcpErrorText: string, tokenUsage?: TurnTokenUsage | null) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
     this.connectionText = connectionText;
@@ -981,6 +988,7 @@ export class CodexBackendSnapshot {
     this.mcpStatusText = mcpStatusText;
     this.mcpServerCount = mcpServerCount;
     this.mcpErrorText = mcpErrorText;
+    this.tokenUsage = tokenUsage ?? null;
   }
 }
 
@@ -1023,6 +1031,7 @@ class CodexThreadRecord {
   turnCount: number = 0;
   diffUpdateCount: number = 0;
   lastTurnStatus: CodexTurnStatus = 'inProgress';
+  tokenUsage: TurnTokenUsage | null = null;
   updatedAt: string = '';
 
   constructor(localKey: string, title: string) {
@@ -1103,6 +1112,12 @@ export class CodexBackend {
   }
 
   snapshot(): CodexBackendSnapshot {
+    let activeTokenUsage: TurnTokenUsage | null = null;
+    this.threads.forEach((thread: CodexThreadRecord) => {
+      if (activeTokenUsage === null && thread.tokenUsage !== null) {
+        activeTokenUsage = thread.tokenUsage;
+      }
+    });
     return new CodexBackendSnapshot(
       this.serverUrl,
       this.connectionState,
@@ -1114,7 +1129,8 @@ export class CodexBackend {
       this.planTypeText,
       this.mcpStatusText,
       this.mcpServersCache.length,
-      this.mcpErrorText
+      this.mcpErrorText,
+      activeTokenUsage
     );
   }
 
@@ -1163,6 +1179,12 @@ export class CodexBackend {
       lastTurnStatus = thread.lastTurnStatus;
     });
     return new UsageSummary(this.threads.size, activeTurnCount, turnCount, messageCount, diffLineCount, diffUpdateCount, lastTurnStatus);
+  }
+
+  fetchTokenUsageAggregate(): TokenUsageAggregate | null {
+    const codexHome = AppStorage.get<string>('codexHome');
+    if (codexHome === undefined) return null;
+    return fetchNativeTokenUsageAggregate(codexHome);
   }
 
   resultForThreadKey(threadKey: string): CodexTurnResult | null {
@@ -2113,6 +2135,24 @@ export class CodexBackend {
     const summaryPoints: string[] = summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item));
     thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : (status === 'completed' ? '本轮已完成' : '执行中');
     thread.summaryPoints = summaryPoints.length > 0 ? summaryPoints : [status === 'completed' ? '本轮执行已结束。' : '等待更多轮询结果。'];
+    const tokenUsageRaw = payload['tokenUsage'];
+    if (tokenUsageRaw !== undefined && tokenUsageRaw !== null) {
+      const tu = tokenUsageRaw as Record<string, Object>;
+      const parseBreakdown = (raw: Object): TokenUsageBreakdown => {
+        const b = raw as Record<string, Object>;
+        return new TokenUsageBreakdown(
+          typeof b['inputTokens'] === 'number' ? (b['inputTokens'] as number) : 0,
+          typeof b['outputTokens'] === 'number' ? (b['outputTokens'] as number) : 0,
+          typeof b['cachedInputTokens'] === 'number' ? (b['cachedInputTokens'] as number) : 0,
+          typeof b['reasoningOutputTokens'] === 'number' ? (b['reasoningOutputTokens'] as number) : 0,
+          typeof b['totalTokens'] === 'number' ? (b['totalTokens'] as number) : 0
+        );
+      };
+      const total = tu['total'] !== undefined ? parseBreakdown(tu['total'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
+      const last = tu['last'] !== undefined ? parseBreakdown(tu['last'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
+      const ctxWindow = typeof tu['modelContextWindow'] === 'number' ? (tu['modelContextWindow'] as number) : 0;
+      thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow);
+    }
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();
     return this.snapshotForThread(thread, status, turnId);
@@ -2248,7 +2288,7 @@ export class CodexBackend {
   }
 
   private snapshotForThread(thread: CodexThreadRecord, status: CodexTurnStatus, turnId: string = ''): CodexTurnResult {
-    return new CodexTurnResult(thread.remoteThreadId, turnId, status, thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)), thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)), thread.summaryTitle, [...thread.summaryPoints], thread.changedFiles, thread.diffStat);
+    return new CodexTurnResult(thread.remoteThreadId, turnId, status, thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)), thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)), thread.summaryTitle, [...thread.summaryPoints], thread.changedFiles, thread.diffStat, thread.tokenUsage);
   }
 
   private emitTurnUpdate(thread: CodexThreadRecord, pendingTurn: PendingTurnState | null, result: CodexTurnResult): void {

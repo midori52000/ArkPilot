@@ -97,6 +97,7 @@ export interface EntryBridgeModule {
   accountLogin: (paramsJson?: string) => string;
   accountRead: () => string;
   checkWorkspaceAccess: (paramsJson?: string) => string;
+  tokenUsageAggregate: (codexHome?: string) => string;
 }
 
 declare const entry: EntryBridgeModule;

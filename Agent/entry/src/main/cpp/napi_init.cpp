@@ -76,6 +76,7 @@ struct BridgeApi {
     const char* (*account_login)(const char*) = nullptr;
     const char* (*account_read)(void) = nullptr;
     const char* (*check_workspace_access)(const char*) = nullptr;
+    const char* (*token_usage_aggregate)(const char*) = nullptr;
 };
 
 template <typename T>
@@ -149,6 +150,7 @@ bool LoadBridgeApi(BridgeApi* api) {
     }
 
     LoadSymbol(api->handle, "codex_ohos_host_check_workspace_access", &api->check_workspace_access);
+    LoadSymbol(api->handle, "codex_ohos_host_token_usage_aggregate", &api->token_usage_aggregate);
     return true;
 }
 
@@ -562,6 +564,20 @@ napi_value CheckWorkspaceAccess(napi_env env, napi_callback_info info) {
     UnloadBridgeApi(&api);
     return result;
 }
+
+napi_value TokenUsageAggregate(napi_env env, napi_callback_info info) {
+    BridgeApi api;
+    if (!LoadBridgeApi(&api)) {
+        return ThrowLoadError(env);
+    }
+    if (api.token_usage_aggregate == nullptr) {
+        UnloadBridgeApi(&api);
+        return CreateUtf8String(env, "{\"today\":0,\"thisWeek\":0,\"thisMonth\":0}");
+    }
+    napi_value result = CallString1(env, info, api.token_usage_aggregate);
+    UnloadBridgeApi(&api);
+    return result;
+}
 }  // namespace
 
 EXTERN_C_START
@@ -619,6 +635,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"accountLogin", nullptr, AccountLogin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"accountRead", nullptr, AccountRead, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"checkWorkspaceAccess", nullptr, CheckWorkspaceAccess, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"tokenUsageAggregate", nullptr, TokenUsageAggregate, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
