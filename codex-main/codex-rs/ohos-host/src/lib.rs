@@ -4114,23 +4114,39 @@ fn build_turn_poll_payload(
         "summaryTitle": summary_title,
         "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
         "diff": turn.diff,
-        "tokenUsage": turn.token_usage.as_ref().map(|tu| serde_json::json!({
-            "total": {
-                "inputTokens": tu.total.input_tokens,
-                "outputTokens": tu.total.output_tokens,
-                "cachedInputTokens": tu.total.cached_input_tokens,
-                "reasoningOutputTokens": tu.total.reasoning_output_tokens,
-                "totalTokens": tu.total.total_tokens,
-            },
-            "last": {
-                "inputTokens": tu.last.input_tokens,
-                "outputTokens": tu.last.output_tokens,
-                "cachedInputTokens": tu.last.cached_input_tokens,
-                "reasoningOutputTokens": tu.last.reasoning_output_tokens,
-                "totalTokens": tu.last.total_tokens,
-            },
-            "modelContextWindow": tu.model_context_window,
-        })).unwrap_or(serde_json::Value::Null),
+        "tokenUsage": turn.token_usage.as_ref().map(|tu| {
+            let total_blended = ((tu.total.input_tokens - tu.total.cached_input_tokens.max(0)).max(0)
+                + tu.total.output_tokens.max(0)).max(0);
+            let last_blended = ((tu.last.input_tokens - tu.last.cached_input_tokens.max(0)).max(0)
+                + tu.last.output_tokens.max(0)).max(0);
+            let ctx_remaining_pct = tu.model_context_window.and_then(|w| {
+                if w <= 12000 { return None; }
+                let eff = w - 12000;
+                let used = (tu.total.total_tokens - 12000).max(0);
+                let rem = (eff - used).max(0);
+                Some(((rem as f64 / eff as f64) * 100.0).round().clamp(0.0, 100.0) as i64)
+            });
+            serde_json::json!({
+                "total": {
+                    "inputTokens": tu.total.input_tokens,
+                    "outputTokens": tu.total.output_tokens,
+                    "cachedInputTokens": tu.total.cached_input_tokens,
+                    "reasoningOutputTokens": tu.total.reasoning_output_tokens,
+                    "totalTokens": tu.total.total_tokens,
+                    "blendedTotal": total_blended,
+                },
+                "last": {
+                    "inputTokens": tu.last.input_tokens,
+                    "outputTokens": tu.last.output_tokens,
+                    "cachedInputTokens": tu.last.cached_input_tokens,
+                    "reasoningOutputTokens": tu.last.reasoning_output_tokens,
+                    "totalTokens": tu.last.total_tokens,
+                    "blendedTotal": last_blended,
+                },
+                "modelContextWindow": tu.model_context_window,
+                "contextRemainingPercent": ctx_remaining_pct,
+            })
+        }).unwrap_or(serde_json::Value::Null),
     })
 }
 
