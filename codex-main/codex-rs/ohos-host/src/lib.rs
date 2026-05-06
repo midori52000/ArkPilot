@@ -25,6 +25,8 @@ use codex_app_server_protocol::ApplyPatchApprovalResponse;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::CollaborationModeListParams;
+use codex_app_server_protocol::CollaborationModeListResponse;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
 use codex_app_server_protocol::FileChangeApprovalDecision;
@@ -62,6 +64,8 @@ use codex_app_server_protocol::TurnInterruptResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::ToolRequestUserInputAnswer;
+use codex_app_server_protocol::ToolRequestUserInputResponse;
 use codex_app_server_protocol::UserInput;
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::edit::ConfigEdit;
@@ -71,6 +75,9 @@ use codex_core::config::types::McpServerConfig;
 use codex_core::config_loader::LoaderOverrides;
 use codex_core::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::Settings;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
@@ -124,7 +131,7 @@ enum PendingApprovalResolutionKind {
     Permissions,
     LegacyPatch,
     LegacyExec,
-    McpToolApproval,
+    RequestUserInput,
     McpElicitationApproval,
 }
 
@@ -328,6 +335,17 @@ struct NativeTurnStartRequest {
     effort: Option<String>,
     approval_policy: Option<String>,
     sandbox_mode: Option<String>,
+    collaboration_mode: Option<NativeCollaborationModeMask>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeCollaborationModeMask {
+    name: Option<String>,
+    mode: Option<String>,
+    model: Option<String>,
+    #[serde(default)]
+    reasoning_effort: Option<Option<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -447,6 +465,15 @@ struct WorkspaceAccessStatus {
 struct NativeApprovalActionRequest {
     request_id: serde_json::Value,
     kind: Option<String>,
+    #[serde(default)]
+    answers: HashMap<String, NativeRequestUserInputAnswer>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeRequestUserInputAnswer {
+    #[serde(default)]
+    answers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,6 +570,9 @@ static LAST_ENABLE_PROMPT_RESULT_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
 static LAST_INIT_RESULT_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
+static LAST_COLLABORATION_MODE_LIST_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
+    Mutex::new(CString::new("{\"data\":[]}").expect("empty cstring"))
+});
 static LAST_THREAD_RESULT_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
 static LAST_THREAD_LIST_JSON: Lazy<Mutex<CString>> = Lazy::new(|| {
@@ -1605,6 +1635,44 @@ pub extern "C" fn codex_ohos_host_initialize(config_json: *const c_char) -> *con
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn codex_ohos_host_collaboration_mode_list(
+    _params_json: *const c_char,
+) -> *const c_char {
+    let response = with_runtime_result(async {
+        let (handle, request_id) = with_native_handle(|state| {
+            let handle = state
+                .client
+                .as_ref()
+                .map(RemoteAppServerClient::request_handle)
+                .context("remote app-server client is not initialized")?;
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>((handle, request_id))
+        })?;
+
+        let response: CollaborationModeListResponse = handle
+            .request_typed(ClientRequest::CollaborationModeList {
+                request_id,
+                params: CollaborationModeListParams {},
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        Ok::<CollaborationModeListResponse, anyhow::Error>(response)
+    });
+
+    let json = match response {
+        Ok(response) => serde_json::to_string(&response)
+            .unwrap_or_else(|_| "{\"data\":[]}".to_string()),
+        Err(err) => serde_json::json!({
+            "data": [],
+            "error": { "message": err.to_string() }
+        })
+        .to_string(),
+    };
+    write_cstring(&LAST_COLLABORATION_MODE_LIST_JSON, &json)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *const c_char {
     let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
     let request =
@@ -2014,8 +2082,10 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from);
         params.cwd = cwd.clone();
-        params.model = request.model.filter(|value| !value.trim().is_empty());
-        params.effort = parse_reasoning_effort(request.effort.as_deref())?;
+        let requested_model = request.model.filter(|value| !value.trim().is_empty());
+        let requested_effort = parse_reasoning_effort(request.effort.as_deref())?;
+        params.model = requested_model.clone();
+        params.effort = requested_effort;
         params.approval_policy = parse_approval_policy(
             request
                 .approval_policy
@@ -2029,6 +2099,11 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
                 .as_deref()
                 .or(Some(DEFAULT_SANDBOX_MODE)),
             cwd.as_deref(),
+        )?;
+        params.collaboration_mode = collaboration_mode_from_native_mask(
+            request.collaboration_mode.unwrap_or_default(),
+            requested_model,
+            requested_effort,
         )?;
         params.input = request
             .input
@@ -2701,6 +2776,52 @@ fn parse_reasoning_effort(raw: Option<&str>) -> Result<Option<ReasoningEffort>> 
     }
 }
 
+fn parse_mode_kind(raw: Option<&str>) -> Result<ModeKind> {
+    match raw.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(ModeKind::Default),
+        Some("plan") => Ok(ModeKind::Plan),
+        Some("default") | Some("code") | Some("pair_programming") | Some("execute")
+        | Some("custom") => Ok(ModeKind::Default),
+        Some(value) => anyhow::bail!("unsupported collaboration mode: {value}"),
+    }
+}
+
+fn collaboration_mode_from_native_mask(
+    mask: NativeCollaborationModeMask,
+    fallback_model: Option<String>,
+    fallback_effort: Option<ReasoningEffort>,
+) -> Result<Option<CollaborationMode>> {
+    if mask.name.as_deref().unwrap_or_default().trim().is_empty()
+        && mask.mode.as_deref().unwrap_or_default().trim().is_empty()
+        && mask.model.as_deref().unwrap_or_default().trim().is_empty()
+        && mask.reasoning_effort.is_none()
+    {
+        return Ok(None);
+    }
+
+    let mode = parse_mode_kind(mask.mode.as_deref())?;
+    let model = mask
+        .model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(fallback_model.filter(|value| !value.trim().is_empty()))
+        .unwrap_or_else(|| DEFAULT_PROVIDER_MODEL.to_string());
+    let reasoning_effort = match mask.reasoning_effort {
+        Some(Some(value)) => parse_reasoning_effort(Some(value.as_str()))?,
+        Some(None) => None,
+        None => fallback_effort,
+    };
+
+    Ok(Some(CollaborationMode {
+        mode,
+        settings: Settings {
+            model,
+            reasoning_effort,
+            developer_instructions: None,
+        },
+    }))
+}
+
 fn mcp_servers_to_config_json(codex_home: &Path) -> Result<String> {
     let servers = with_runtime_result(async {
         load_global_mcp_servers(codex_home)
@@ -2891,6 +3012,7 @@ async fn handle_server_request(
                 "availableDecisions": params.available_decisions,
             })
             .to_string();
+            let questions_json = serde_json::Value::Array(vec![]);
             with_native_state(|state| {
                 set_pending_approval(
                     state,
@@ -2905,6 +3027,7 @@ async fn handle_server_request(
                             "threadId": params.thread_id,
                             "turnId": params.turn_id,
                             "itemId": params.item_id,
+                            "questions": questions_json,
                         })
                         .to_string(),
                     },
@@ -3031,28 +3154,29 @@ async fn handle_server_request(
             let first_question = params.questions.first();
             let title = first_question
                 .map(|q| q.header.clone())
-                .unwrap_or_else(|| "MCP 工具调用需要审批".to_string());
+                .unwrap_or_else(|| "需要补充计划信息".to_string());
             let question_text = first_question
                 .map(|q| q.question.clone())
                 .unwrap_or_default();
+            let detail = if question_text.trim().is_empty() {
+                "Codex needs your input to continue this plan.".to_string()
+            } else {
+                question_text
+            };
             let questions_json = serde_json::to_value(&params.questions)
                 .unwrap_or(serde_json::Value::Array(vec![]));
-            let detail = serde_json::json!({
-                "question": question_text,
-                "questions": questions_json,
-            })
-            .to_string();
             with_native_state(|state| {
                 set_pending_approval(
                     state,
                     PendingApprovalState {
                         request_id,
-                        resolution_kind: PendingApprovalResolutionKind::McpToolApproval,
+                        resolution_kind: PendingApprovalResolutionKind::RequestUserInput,
                         payload_json: serde_json::json!({
                             "requestId": request_id_json,
-                            "kind": "mcpToolApproval",
+                            "kind": "requestUserInput",
                             "title": title,
                             "detail": detail,
+                            "questions": questions_json,
                             "threadId": params.thread_id,
                             "turnId": params.turn_id,
                             "itemId": params.item_id,
@@ -3550,41 +3674,29 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
                     decision,
                 })?
             }
-            PendingApprovalResolutionKind::McpToolApproval => {
+            PendingApprovalResolutionKind::RequestUserInput => {
                 if approved {
-                    // Resolve with "Allow" answer for the first question
-                    let detail_value: serde_json::Value =
-                        serde_json::from_str(&pending.payload_json).unwrap_or(serde_json::Value::Null);
-                    let detail_str = detail_value
-                        .get("detail")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("");
-                    let detail_parsed: serde_json::Value =
-                        serde_json::from_str(detail_str).unwrap_or(serde_json::Value::Null);
-                    let question_id = detail_parsed
-                        .get("questions")
-                        .and_then(|q| q.as_array())
-                        .and_then(|arr| arr.first())
-                        .and_then(|first| first.get("id"))
-                        .and_then(|id| id.as_str())
-                        .unwrap_or("mcp_tool_call_approval")
-                        .to_string();
-                    serde_json::json!({
-                        "answers": {
-                            question_id: {
-                                "answers": ["Allow"]
-                            }
-                        }
-                    })
+                    let answers = request
+                        .answers
+                        .into_iter()
+                        .map(|(question_id, answer)| {
+                            (
+                                question_id,
+                                ToolRequestUserInputAnswer {
+                                    answers: answer.answers,
+                                },
+                            )
+                        })
+                        .collect::<HashMap<_, _>>();
+                    serde_json::to_value(ToolRequestUserInputResponse { answers })?
                 } else {
-                    // Decline: reject the server request to produce Cancel decision
                     client
                         .reject_server_request(
                             pending.request_id.clone(),
                             codex_app_server_protocol::JSONRPCErrorError {
                                 code: -32600,
                                 data: None,
-                                message: "user rejected MCP tool call".to_string(),
+                                message: "user rejected request_user_input".to_string(),
                             },
                         )
                         .await

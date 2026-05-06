@@ -29,6 +29,7 @@ const char* codex_ohos_host_read_agents_md(const char* codex_home);
 int32_t codex_ohos_host_write_agents_md(const char* codex_home, const char* content);
 
 const char* codex_ohos_host_initialize(const char* config_json);
+const char* codex_ohos_host_collaboration_mode_list(const char* params_json);
 const char* codex_ohos_host_thread_start(const char* params_json);
 const char* codex_ohos_host_thread_list(const char* params_json);
 const char* codex_ohos_host_thread_read(const char* params_json);
