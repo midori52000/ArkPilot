@@ -52,6 +52,7 @@ struct BridgeApi {
     const char* (*enable_prompt)(const char*, const char*) = nullptr;
     int32_t (*disable_all_prompts)(const char*) = nullptr;
     const char* (*initialize)(const char*) = nullptr;
+    const char* (*collaboration_mode_list)(const char*) = nullptr;
     const char* (*thread_start)(const char*) = nullptr;
     const char* (*thread_list)(const char*) = nullptr;
     const char* (*thread_read)(const char*) = nullptr;
@@ -119,6 +120,7 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_enable_prompt", &api->enable_prompt) &&
         LoadSymbol(api->handle, "codex_ohos_host_disable_all_prompts", &api->disable_all_prompts) &&
         LoadSymbol(api->handle, "codex_ohos_host_initialize", &api->initialize) &&
+        LoadSymbol(api->handle, "codex_ohos_host_collaboration_mode_list", &api->collaboration_mode_list) &&
         LoadSymbol(api->handle, "codex_ohos_host_thread_start", &api->thread_start) &&
         LoadSymbol(api->handle, "codex_ohos_host_thread_list", &api->thread_list) &&
         LoadSymbol(api->handle, "codex_ohos_host_thread_read", &api->thread_read) &&
@@ -528,6 +530,7 @@ napi_value DisableAllPrompts(napi_env env, napi_callback_info info) {
 }
 
 napi_value InitializeBridge(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->initialize); return result; }
+napi_value CollaborationModeList(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->collaboration_mode_list); return result; }
 napi_value ThreadStart(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_start); return result; }
 napi_value ThreadList(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_list); return result; }
 napi_value ThreadRead(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->thread_read); return result; }
@@ -611,6 +614,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"enablePrompt", nullptr, EnablePrompt, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"disableAllPrompts", nullptr, DisableAllPrompts, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"initialize", nullptr, InitializeBridge, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"collaborationModeList", nullptr, CollaborationModeList, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"threadStart", nullptr, ThreadStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"threadList", nullptr, ThreadList, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"threadRead", nullptr, ThreadRead, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -4,10 +4,14 @@ import {
   CodexBackendSnapshot,
   CodexConnectionState,
   CodexDiffLine,
+  CodexRequestUserInput,
+  CodexRequestUserInputOption,
+  CodexRequestUserInputQuestion,
   CodexTurnRequest,
   CodexTurnResult
 } from '../backend/CodexBackend';
 import {
+  CollaborationModeOption,
   CodexProviderConfig,
   WorkspaceAccessStatus,
   checkWorkspaceAccess,
@@ -113,6 +117,8 @@ struct Index {
   private readonly workspaceRoots: Map<number, string> = new Map();
   private readonly workspaceIds: Map<number, string> = new Map();
   private readonly workspaceUris: Map<number, string> = new Map();
+  private readonly collaborationModeByWorkspaceId: Map<string, string> = new Map();
+  private readonly requestUserInputDrafts: Map<string, string> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private workspaces: WorkspaceItem[] = [];
@@ -126,6 +132,10 @@ struct Index {
   @State private workspaceStatusText: string = 'å°šæœªæ£€æµ‹å·¥ä½œåŒºæƒé™';
   @State private selectedEffortIndex: number = 0;
   @State private showEffortOptions: boolean = false;
+  @State private collaborationModes: CollaborationModeOption[] = [];
+  @State private selectedCollaborationModeName: string = 'default';
+  @State private collaborationModeVersion: number = 0;
+  @State private showCollaborationModeOptions: boolean = false;
   @State private serverUrl: string = 'ws://127.0.0.1:7456';
   @State private workspaceRoot: string = '';
   @State private workspaceDraftText: string = '';
@@ -166,6 +176,8 @@ struct Index {
   @State private draft: string = '检查当前工作目录，并说明需要我批准的操作。';
   private savedDraft: string = '';
   @State private pendingApproval: CodexApprovalRequest | null = null;
+  @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
+  @State private requestUserInputVersion: number = 0;
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -217,10 +229,20 @@ struct Index {
   }
 
   private applyBackendSnapshot(snapshot: CodexBackendSnapshot): void {
+    hilog.info(0x0001, 'ArkPilot', `applyBackendSnapshot: conn=${snapshot.connectionState} modes=${snapshot.collaborationModes.length} selected=${this.selectedCollaborationModeName}`);
     this.serverUrl = snapshot.serverUrl;
     this.connectionState = snapshot.connectionState;
     this.connectionText = snapshot.connectionText;
     this.pendingApproval = snapshot.pendingApproval;
+    const previousRequestId: string = this.pendingRequestUserInput !== null ? `${this.pendingRequestUserInput.requestId}` : '';
+    const nextRequestId: string = snapshot.pendingRequestUserInput !== null ? `${snapshot.pendingRequestUserInput.requestId}` : '';
+    this.pendingRequestUserInput = snapshot.pendingRequestUserInput;
+    this.collaborationModes = snapshot.collaborationModes;
+    if (previousRequestId !== nextRequestId) {
+      this.requestUserInputDrafts.clear();
+      this.requestUserInputVersion += 1;
+    }
+    this.syncSelectedCollaborationMode();
     if (snapshot.tokenUsage !== null && snapshot.tokenUsage !== undefined) {
       this.tokenUsage = snapshot.tokenUsage;
     }
@@ -523,6 +545,7 @@ struct Index {
     nextWorkspaceRoots.forEach((value: string, key: number) => this.workspaceRoots.set(key, value));
     nextWorkspaceUris.forEach((value: string, key: number) => this.workspaceUris.set(key, value));
     this.activeWorkspaceId = nextActiveWorkspaceId;
+    this.syncSelectedCollaborationMode();
     this.workspaceRoot = this.workspaceRoots.get(this.activeWorkspaceId) ?? '';
     this.workspaceDraftText = this.workspaceRoot;
     this.syncWorkspaceSelectionText();
@@ -633,6 +656,7 @@ struct Index {
     const preferredActiveId: number = snapshot.activeWorkspaceId > 0 ? snapshot.activeWorkspaceId : restoredItems[0].id;
     const matched: WorkspaceItem | undefined = this.workspaces.find((item: WorkspaceItem) => item.id === preferredActiveId);
     this.activeWorkspaceId = matched?.id ?? this.workspaces[0].id;
+    this.syncSelectedCollaborationMode();
     this.workspaceRoot = this.workspaceRoots.get(this.activeWorkspaceId) ?? '';
     this.workspaceDraftText = this.workspaceRoot;
     this.syncWorkspaceSelectionText();
@@ -735,14 +759,15 @@ struct Index {
   }
 
   private currentModelLabel(): string {
-    const model: string = this.manualModel.trim();
-    if (model.length === 0) {
-      return 'default';
-    }
-    return model;
+    return this.currentModelValue();
   }
 
   private currentModelValue(): string {
+    const mode: CollaborationModeOption | null = this.selectedCollaborationMode();
+    const modeModel: string = mode?.model?.trim() ?? '';
+    if (modeModel.length > 0) {
+      return modeModel;
+    }
     const model: string = this.manualModel.trim();
     if (model.length === 0) {
       return 'default';
@@ -751,11 +776,129 @@ struct Index {
   }
 
   private currentEffortLabel(): string {
-    return this.effortOptions[this.selectedEffortIndex].label;
+    const currentValue: string = this.currentEffortValue();
+    const matched: SelectorOption | undefined = this.effortOptions.find((item: SelectorOption) => item.value === currentValue);
+    return matched?.label ?? currentValue;
   }
 
   private currentEffortValue(): string {
+    const mode: CollaborationModeOption | null = this.selectedCollaborationMode();
+    if (mode?.reasoningEffort === null) {
+      return 'default';
+    }
+    const modeEffort: string = mode?.reasoningEffort?.trim() ?? '';
+    if (modeEffort.length > 0) {
+      return modeEffort;
+    }
     return this.effortOptions[this.selectedEffortIndex].value;
+  }
+
+  private collaborationModeKey(): string {
+    return this.activeWorkspaceBindingId;
+  }
+
+  private syncSelectedCollaborationMode(): void {
+    if (this.collaborationModes.length === 0) {
+      hilog.info(0x0001, 'ArkPilot', `syncSelectedCollaborationMode: modes empty, resetting to default`);
+      this.selectedCollaborationModeName = 'default';
+      return;
+    }
+    const modeKey: string = this.collaborationModeKey();
+    const mappedName: string | undefined = this.collaborationModeByWorkspaceId.get(modeKey);
+    const currentName: string = mappedName ?? this.selectedCollaborationModeName;
+    hilog.info(0x0001, 'ArkPilot', `syncSelectedCollaborationMode: key=${modeKey} mappedName=${mappedName} currentName=${currentName} modes=${this.collaborationModes.map((m: CollaborationModeOption) => m.name).join(',')}`);
+    const matched: CollaborationModeOption | undefined = this.collaborationModes.find((item: CollaborationModeOption) => item.name === currentName);
+    if (matched !== undefined) {
+      hilog.info(0x0001, 'ArkPilot', `syncSelectedCollaborationMode: matched=${matched.name}`);
+      this.selectedCollaborationModeName = matched.name;
+      this.collaborationModeByWorkspaceId.set(modeKey, matched.name);
+      this.collaborationModeVersion += 1;
+      return;
+    }
+    const defaultMode: CollaborationModeOption | undefined = this.collaborationModes.find((item: CollaborationModeOption) => item.mode === 'default');
+    const fallback: CollaborationModeOption = defaultMode ?? this.collaborationModes[0];
+    hilog.info(0x0001, 'ArkPilot', `syncSelectedCollaborationMode: fallback=${fallback.name}`);
+    this.selectedCollaborationModeName = fallback.name;
+    this.collaborationModeByWorkspaceId.set(modeKey, fallback.name);
+    this.collaborationModeVersion += 1;
+  }
+
+  private selectedCollaborationMode(): CollaborationModeOption | null {
+    const matched: CollaborationModeOption | undefined = this.collaborationModes.find((item: CollaborationModeOption) => item.name === this.selectedCollaborationModeName);
+    if (this.selectedCollaborationModeName !== 'default') {
+      hilog.info(0x0001, 'ArkPilot', `selectedCollaborationMode: searching=${this.selectedCollaborationModeName} found=${matched !== undefined} modes=[${this.collaborationModes.map((m: CollaborationModeOption) => `"${m.name}"`).join(',')}]`);
+    }
+    return matched ?? null;
+  }
+
+  private currentCollaborationModeLabel(): string {
+    this.collaborationModeVersion; // touch to register as dependency
+    const mode: CollaborationModeOption | null = this.selectedCollaborationMode();
+    const label: string = mode !== null ? mode.name : 'Default';
+    hilog.info(0x0001, 'ArkPilot', `currentCollaborationModeLabel: selected=${this.selectedCollaborationModeName} modes=${this.collaborationModes.length} label=${label}`);
+    return label;
+  }
+
+  private chooseCollaborationMode(mode: CollaborationModeOption): void {
+    hilog.info(0x0001, 'ArkPilot', `chooseCollaborationMode: name=${mode.name} mode=${mode.mode} key=${this.collaborationModeKey()}`);
+    this.selectedCollaborationModeName = mode.name;
+    this.collaborationModeByWorkspaceId.set(this.collaborationModeKey(), mode.name);
+    this.showCollaborationModeOptions = false;
+    this.collaborationModeVersion += 1;
+    hilog.info(0x0001, 'ArkPilot', `chooseCollaborationMode done: selectedCollaborationModeName=${this.selectedCollaborationModeName} version=${this.collaborationModeVersion}`);
+  }
+
+  private visibleMessages(): ChatMessage[] {
+    if (this.pendingRequestUserInput === null) {
+      return this.messages;
+    }
+    const request: CodexRequestUserInput = this.pendingRequestUserInput;
+    const promptMessage = new ChatMessage(
+      `request-user-input:${request.requestId}`,
+      'ArkPilot',
+      'plan',
+      request.detail.trim().length > 0 ? request.detail : request.title,
+      '刚刚',
+      'plan'
+    );
+    return [...this.messages, promptMessage];
+  }
+
+  private requestUserInputAnswer(questionId: string): string {
+    this.requestUserInputVersion;
+    return this.requestUserInputDrafts.get(questionId) ?? '';
+  }
+
+  private setRequestUserInputAnswer(questionId: string, value: string): void {
+    this.requestUserInputDrafts.set(questionId, value);
+    this.requestUserInputVersion += 1;
+  }
+
+  private async submitRequestUserInput(): Promise<void> {
+    const request: CodexRequestUserInput | null = this.pendingRequestUserInput;
+    if (request === null) {
+      return;
+    }
+    const answers: Record<string, string[]> = {};
+    for (let index: number = 0; index < request.questions.length; index += 1) {
+      const question = request.questions[index];
+      const value: string = this.requestUserInputAnswer(question.id).trim();
+      if (value.length === 0) {
+        this.summaryTitle = '需要补充信息';
+        this.summaryPoints = [`请先回答“${question.header}”再继续。`];
+        return;
+      }
+      answers[question.id] = [value];
+    }
+    await codexBackend.submitPendingUserInput(answers);
+    this.requestUserInputDrafts.clear();
+    this.requestUserInputVersion += 1;
+  }
+
+  private async declineRequestUserInput(): Promise<void> {
+    await codexBackend.declinePendingUserInput();
+    this.requestUserInputDrafts.clear();
+    this.requestUserInputVersion += 1;
   }
 
   private sendMessage(): void {
@@ -804,6 +947,7 @@ struct Index {
           trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
           this.currentModelValue(),
           this.currentEffortValue(),
+          this.selectedCollaborationMode(),
           prompt
         ),
         (update: CodexTurnResult) => {
@@ -1071,6 +1215,7 @@ struct Index {
 
   private async selectWorkspace(item: WorkspaceItem): Promise<void> {
     this.activeWorkspaceId = item.id;
+    this.syncSelectedCollaborationMode();
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
     this.workspaceDraftText = this.workspaceRoot;
     this.directoryFilter = this.workspaceRoot;
@@ -1849,6 +1994,129 @@ struct Index {
   }
 
   @Builder
+  private requestUserInputCard(request: CodexRequestUserInput) {
+    Column() {
+      Row() {
+        this.panelTitle(request.title, '继续执行当前计划前，需要你补充信息')
+
+        Blank()
+          .layoutWeight(1)
+
+        this.chip('Plan', '#FFF7ED', '#C2410C')
+      }
+      .width('100%')
+
+      if (request.detail.trim().length > 0) {
+        Text(request.detail)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .fontColor('#334155')
+          .lineHeight(19)
+          .margin({ top: 10 })
+      }
+
+      Column() {
+        ForEach(request.questions, (question: CodexRequestUserInputQuestion) => {
+          Column() {
+            Text(question.header)
+              .fontSize(11)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#0F172A')
+
+            Text(question.question)
+              .fontSize(11)
+              .fontColor('#475569')
+              .lineHeight(18)
+              .margin({ top: 4 })
+
+            if (question.options.length > 0) {
+              Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+                ForEach(question.options, (option: CodexRequestUserInputOption) => {
+                  Column() {
+                    this.optionChip(
+                      new SelectorOption(option.label, option.label),
+                      this.requestUserInputAnswer(question.id) === option.label,
+                      () => {
+                        this.setRequestUserInputAnswer(question.id, option.label);
+                      }
+                    )
+                    if (option.description.trim().length > 0) {
+                      Text(option.description)
+                        .fontSize(10)
+                        .fontColor('#64748B')
+                        .lineHeight(16)
+                    }
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .margin({ right: 8, bottom: 8 })
+                }, (option: CodexRequestUserInputOption) => `${question.id}:${option.label}`)
+              }
+              .width('100%')
+              .margin({ top: 8 })
+            }
+
+            if (question.isOther || question.options.length === 0) {
+              TextInput({
+                text: this.requestUserInputAnswer(question.id),
+                placeholder: question.isSecret ? '输入不会展示在会话流里的私密内容' : '输入你的回答'
+              })
+                .width('100%')
+                .height(40)
+                .margin({ top: 8 })
+                .fontSize(11)
+                .backgroundColor('#FFFFFF')
+                .borderRadius(12)
+                .border({ width: 1, color: '#E2E8F0' })
+                .padding({ left: 12, right: 12 })
+                .onChange((value: string) => {
+                  this.setRequestUserInputAnswer(question.id, value);
+                })
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .margin({ top: 12 })
+        }, (question: CodexRequestUserInputQuestion) => question.id)
+      }
+      .width('100%')
+
+      Row() {
+        Button('继续')
+          .height(34)
+          .fontSize(12)
+          .backgroundColor('#111827')
+          .fontColor('#FFFFFF')
+          .borderRadius(16)
+          .onClick(() => {
+            void this.submitRequestUserInput();
+          })
+
+        Button('取消')
+          .height(34)
+          .margin({ left: 8 })
+          .fontSize(12)
+          .backgroundColor('#FFFFFF')
+          .fontColor('#334155')
+          .borderRadius(16)
+          .border({ width: 1, color: '#CBD5E1' })
+          .onClick(() => {
+            void this.declineRequestUserInput();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+      .margin({ top: 14 })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(14)
+    .backgroundColor('#FFFDF5')
+    .border({ width: 1, color: '#FCD34D' })
+    .borderRadius(18)
+    .margin({ top: 10 })
+  }
+
+  @Builder
   private leftPanel() {
     Column() {
     Scroll() {
@@ -2109,10 +2377,31 @@ struct Index {
           .layoutWeight(1)
 
         Row() {
-          this.chip(this.currentModelLabel(), '#EEF4FF', '#1D4ED8')
+          Text(this.currentCollaborationModeLabel())
+            .copyOption(CopyOptions.None)
+            .fontSize(10)
+            .fontColor('#C2410C')
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor('#FFF7ED')
+            .borderRadius(10)
           Blank()
             .width(6)
-          this.chip(this.currentEffortLabel(), '#F8FAFC', '#64748B')
+          Text(this.currentModelLabel())
+            .copyOption(CopyOptions.None)
+            .fontSize(10)
+            .fontColor('#1D4ED8')
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor('#EEF4FF')
+            .borderRadius(10)
+          Blank()
+            .width(6)
+          Text(this.currentEffortLabel())
+            .copyOption(CopyOptions.None)
+            .fontSize(10)
+            .fontColor('#64748B')
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor('#F8FAFC')
+            .borderRadius(10)
           Blank()
             .width(6)
           Button() {
@@ -2191,9 +2480,13 @@ struct Index {
         this.approvalCard(this.pendingApproval!)
       }
 
+      if (this.pendingRequestUserInput !== null) {
+        this.requestUserInputCard(this.pendingRequestUserInput!)
+      }
+
       Scroll(this.messageScroller) {
         Column() {
-          ForEach(this.messages, (item: ChatMessage) => {
+          ForEach(this.visibleMessages(), (item: ChatMessage) => {
             this.messageCard(item)
           }, (item: ChatMessage) => this.messageRenderKey(item))
         }
@@ -2207,11 +2500,59 @@ struct Index {
 
       Column() {
         Row() {
+          Row() {
+            Text('模式')
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#64748B')
+            Text(this.currentCollaborationModeLabel())
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#0F172A')
+              .margin({ left: 6 })
+            Text('▾')
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#94A3B8')
+              .margin({ left: 6 })
+          }
+          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+          .backgroundColor(this.showCollaborationModeOptions ? '#EEF4FF' : '#FFFFFF')
+          .border({ width: 1, color: this.showCollaborationModeOptions ? '#BFDBFE' : '#D7DEE8' })
+          .borderRadius(12)
+          .onClick(() => {
+            this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
+            if (this.showCollaborationModeOptions) {
+              this.showEffortOptions = false;
+            }
+          })
+
+          Blank()
+            .width(8)
           this.selectorButton('推理', this.currentEffortLabel(), this.showEffortOptions, () => {
             this.showEffortOptions = !this.showEffortOptions;
+            if (this.showEffortOptions) {
+              this.showCollaborationModeOptions = false;
+            }
           })
         }
         .width('100%')
+
+        if (this.showCollaborationModeOptions) {
+          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+            ForEach(this.collaborationModes, (item: CollaborationModeOption) => {
+              this.optionChip(
+                new SelectorOption(item.name, item.name),
+                this.selectedCollaborationModeName === item.name,
+                () => {
+                  this.chooseCollaborationMode(item);
+                }
+              )
+            }, (item: CollaborationModeOption) => item.name)
+          }
+          .width('100%')
+          .margin({ top: 8 })
+        }
 
         if (this.showEffortOptions) {
           Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {

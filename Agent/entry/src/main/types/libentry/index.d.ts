@@ -44,6 +44,13 @@ export interface NativeWorkspaceAccessStatus {
   message?: string;
 }
 
+export interface NativeCollaborationModeMask {
+  name?: string;
+  mode?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+}
+
 export interface EntryBridgeModule {
   startHost: (codexHome?: string, serverUrl?: string) => NativeCodexHostStatus;
   getStatus: () => NativeCodexHostStatus;
@@ -73,6 +80,7 @@ export interface EntryBridgeModule {
   enablePrompt: (codexHome?: string, promptId?: string) => string;
   disableAllPrompts: (codexHome?: string) => number;
   initialize: (configJson?: string) => string;
+  collaborationModeList: (paramsJson?: string) => string;
   threadStart: (paramsJson?: string) => string;
   threadList: (paramsJson?: string) => string;
   threadRead: (paramsJson?: string) => string;

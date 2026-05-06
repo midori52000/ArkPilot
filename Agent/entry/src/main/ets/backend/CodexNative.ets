@@ -1,4 +1,5 @@
 import entry, {
+  NativeCollaborationModeMask,
   EntryBridgeModule,
   NativeCodexHostStatus,
   NativeCodexProviderCatalog,
@@ -51,6 +52,20 @@ export class WorkspaceAccessStatus {
     this.writable = writable;
     this.exists = exists;
     this.message = message;
+  }
+}
+
+export class CollaborationModeOption {
+  name: string;
+  mode: string;
+  model?: string;
+  reasoningEffort?: string | null;
+
+  constructor(name: string, mode: string, model?: string, reasoningEffort?: string | null) {
+    this.name = name;
+    this.mode = mode;
+    this.model = model;
+    this.reasoningEffort = reasoningEffort;
   }
 }
 
@@ -166,6 +181,34 @@ function parseWorkspaceAccessStatus(rawValue: string): WorkspaceAccessStatus {
     return normalizeWorkspaceAccessStatus(rawStatus);
   } catch (_err) {
     return new WorkspaceAccessStatus('', 'unknown', 'unavailable', false, false, 'failed to parse workspace status');
+  }
+}
+
+function normalizeCollaborationMode(rawMode: string | null | undefined): string {
+  return rawMode === 'plan' ? 'plan' : 'default';
+}
+
+function normalizeCollaborationModeOption(rawOption: NativeCollaborationModeMask | undefined): CollaborationModeOption {
+  const rawEffort = rawOption?.reasoning_effort;
+  const reasoningEffort = rawEffort === undefined ? undefined : (rawEffort === null ? null : rawEffort);
+  return new CollaborationModeOption(
+    rawOption?.name ?? '',
+    normalizeCollaborationMode(rawOption?.mode ?? 'default'),
+    rawOption?.model ?? undefined,
+    reasoningEffort
+  );
+}
+
+function parseCollaborationModeList(rawValue: string): CollaborationModeOption[] {
+  if (rawValue.trim().length === 0) {
+    return [];
+  }
+  try {
+    const payload = JSON.parse(rawValue) as Record<string, Object>;
+    const data = Array.isArray(payload['data']) ? (payload['data'] as NativeCollaborationModeMask[]) : [];
+    return data.map((item: NativeCollaborationModeMask) => normalizeCollaborationModeOption(item));
+  } catch (_err) {
+    return [];
   }
 }
 
@@ -463,6 +506,21 @@ export function initializeNative(configJson: string): string {
   } catch (_err) {
     return '{}';
   }
+}
+
+export function collaborationModeListNative(paramsJson: string = '{}'): string {
+  if (nativeModuleUnavailable()) {
+    return '{"data":[]}';
+  }
+  try {
+    return nativeBridge!.collaborationModeList(paramsJson);
+  } catch (_err) {
+    return '{"data":[]}';
+  }
+}
+
+export function listCollaborationModes(): CollaborationModeOption[] {
+  return parseCollaborationModeList(collaborationModeListNative('{}'));
 }
 
 export function threadStartNative(paramsJson: string): string {

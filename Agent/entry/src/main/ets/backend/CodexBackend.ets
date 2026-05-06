@@ -5,7 +5,9 @@ import {
   approvalApproveNative,
   approvalDeclineNative,
   approvalPollNative,
+  CollaborationModeOption,
   CodexHostStatus,
+  collaborationModeListNative,
   getEmbeddedCodexHostStatus,
   initializeNative,
   mcpConfigAddNative,
@@ -66,7 +68,7 @@ export type CodexMessageRole = 'user' | 'assistant' | 'system' | 'reasoning' | '
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
 export type CodexDiffKind = 'add' | 'delete' | 'context';
 export type CodexConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
-export type CodexApprovalKind = 'command' | 'fileChange' | 'permissions' | 'mcpToolApproval';
+export type CodexApprovalKind = 'command' | 'fileChange' | 'permissions' | 'mcpToolApproval' | 'requestUserInput';
 export type CodexAuthMode = 'none' | 'apiKey' | 'chatgpt' | 'chatgptAuthTokens' | 'unknown';
 export type CodexTurnUpdateHandler = (result: CodexTurnResult) => void;
 type BackendListener = (snapshot: CodexBackendSnapshot) => void;
@@ -726,6 +728,11 @@ class ApprovalActionRequestPayload {
   turnId: string = '';
   itemId: string = '';
   kind: CodexApprovalKind = 'command';
+  answers: Record<string, RequestUserInputAnswerPayload> = {};
+}
+
+class RequestUserInputAnswerPayload {
+  answers: string[] = [];
 }
 
 class TurnInputItemPayload {
@@ -739,6 +746,14 @@ class TurnStartRequestPayload {
   cwd?: string;
   model?: string;
   effort?: string;
+  collaborationMode?: CollaborationModePayload;
+}
+
+class CollaborationModePayload {
+  name: string = '';
+  mode: string = 'default';
+  model?: string;
+  reasoningEffort?: string | null;
 }
 
 class McpStatusListRequestPayload {
@@ -781,6 +796,10 @@ class ThreadStartRequestPayload {
 class ThreadListRequestPayload {
   limit: number = 100;
   archived: boolean = false;
+}
+
+class CollaborationModeListResponsePayload {
+  data: Object[] = [];
 }
 
 class ThreadListResponsePayload {
@@ -888,6 +907,7 @@ export class CodexTurnRequest {
   writableRoots: string[];
   model: string;
   reasoningEffort: string;
+  collaborationMode: CollaborationModeOption | null;
   prompt: string;
 
   constructor(
@@ -900,6 +920,7 @@ export class CodexTurnRequest {
     writableRoots: string[],
     model: string,
     reasoningEffort: string,
+    collaborationMode: CollaborationModeOption | null,
     prompt: string
   ) {
     this.threadKey = threadKey;
@@ -911,6 +932,7 @@ export class CodexTurnRequest {
     this.writableRoots = writableRoots;
     this.model = model;
     this.reasoningEffort = reasoningEffort;
+    this.collaborationMode = collaborationMode;
     this.prompt = prompt;
   }
 }
@@ -962,11 +984,60 @@ export class CodexApprovalRequest {
   }
 }
 
+export class CodexRequestUserInputOption {
+  label: string;
+  description: string;
+
+  constructor(label: string, description: string) {
+    this.label = label;
+    this.description = description;
+  }
+}
+
+export class CodexRequestUserInputQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: CodexRequestUserInputOption[];
+
+  constructor(id: string, header: string, question: string, isOther: boolean, isSecret: boolean, options?: CodexRequestUserInputOption[]) {
+    this.id = id;
+    this.header = header;
+    this.question = question;
+    this.isOther = isOther;
+    this.isSecret = isSecret;
+    this.options = options ?? [];
+  }
+}
+
+export class CodexRequestUserInput {
+  requestId: string | number;
+  title: string;
+  detail: string;
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  questions: CodexRequestUserInputQuestion[];
+
+  constructor(requestId: string | number, title: string, detail: string, threadId: string, turnId: string, itemId: string, questions?: CodexRequestUserInputQuestion[]) {
+    this.requestId = requestId;
+    this.title = title;
+    this.detail = detail;
+    this.threadId = threadId;
+    this.turnId = turnId;
+    this.itemId = itemId;
+    this.questions = questions ?? [];
+  }
+}
+
 export class CodexBackendSnapshot {
   serverUrl: string;
   connectionState: CodexConnectionState;
   connectionText: string;
   pendingApproval: CodexApprovalRequest | null;
+  pendingRequestUserInput: CodexRequestUserInput | null;
   authMode: CodexAuthMode;
   requiresOpenAIAuth: boolean;
   authStatusText: string;
@@ -974,13 +1045,15 @@ export class CodexBackendSnapshot {
   mcpStatusText: string;
   mcpServerCount: number;
   mcpErrorText: string;
+  collaborationModes: CollaborationModeOption[];
   tokenUsage: TurnTokenUsage | null;
 
-  constructor(serverUrl: string, connectionState: CodexConnectionState, connectionText: string, pendingApproval: CodexApprovalRequest | null, authMode: CodexAuthMode, requiresOpenAIAuth: boolean, authStatusText: string, planTypeText: string, mcpStatusText: string, mcpServerCount: number, mcpErrorText: string, tokenUsage?: TurnTokenUsage | null) {
+  constructor(serverUrl: string, connectionState: CodexConnectionState, connectionText: string, pendingApproval: CodexApprovalRequest | null, pendingRequestUserInput: CodexRequestUserInput | null, authMode: CodexAuthMode, requiresOpenAIAuth: boolean, authStatusText: string, planTypeText: string, mcpStatusText: string, mcpServerCount: number, mcpErrorText: string, collaborationModes?: CollaborationModeOption[], tokenUsage?: TurnTokenUsage | null) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
     this.connectionText = connectionText;
     this.pendingApproval = pendingApproval;
+    this.pendingRequestUserInput = pendingRequestUserInput;
     this.authMode = authMode;
     this.requiresOpenAIAuth = requiresOpenAIAuth;
     this.authStatusText = authStatusText;
@@ -988,6 +1061,7 @@ export class CodexBackendSnapshot {
     this.mcpStatusText = mcpStatusText;
     this.mcpServerCount = mcpServerCount;
     this.mcpErrorText = mcpErrorText;
+    this.collaborationModes = collaborationModes ?? [];
     this.tokenUsage = tokenUsage ?? null;
   }
 }
@@ -1086,10 +1160,12 @@ export class CodexBackend {
   private serverUrl: string = DEFAULT_SERVER_URL;
   private listenerSequence: number = 1;
   private pendingApproval: CodexApprovalRequest | null = null;
+  private pendingRequestUserInput: CodexRequestUserInput | null = null;
   private authMode: CodexAuthMode = 'none';
   private requiresOpenAIAuth: boolean = true;
   private authStatusText: string = '未登录';
   private planTypeText: string = '';
+  private collaborationModes: CollaborationModeOption[] = [];
   private mcpServersCache: McpServerRecord[] = [];
   private readonly mcpConfigByName: Map<string, Object> = new Map();
   private mcpStatusText: string = '尚未加载 MCP 状态';
@@ -1123,6 +1199,7 @@ export class CodexBackend {
       this.connectionState,
       this.connectionText,
       this.cloneApproval(this.pendingApproval),
+      this.cloneRequestUserInput(this.pendingRequestUserInput),
       this.authMode,
       this.requiresOpenAIAuth,
       this.authStatusText,
@@ -1130,6 +1207,7 @@ export class CodexBackend {
       this.mcpStatusText,
       this.mcpServersCache.length,
       this.mcpErrorText,
+      this.collaborationModes.map((mode: CollaborationModeOption) => this.cloneCollaborationMode(mode)),
       activeTokenUsage
     );
   }
@@ -1217,6 +1295,7 @@ export class CodexBackend {
     const initRequest: InitializeRequestPayload = new InitializeRequestPayload();
     const initResult: Object = parseJsonText(initializeNative(JSON.stringify(initRequest)), new Object() as Object);
     this.initialized = true;
+    this.refreshCollaborationModes();
     await this.refreshAccountState();
     const platformOs: string = typeof (initResult as Record<string, Object>)['platformOs'] === 'string'
       ? ((initResult as Record<string, Object>)['platformOs'] as string)
@@ -1229,6 +1308,7 @@ export class CodexBackend {
     this.initialized = false;
     this.stopApprovalPolling();
     this.pendingApproval = null;
+    this.pendingRequestUserInput = null;
     this.updateConnectionState('disconnected', '已断开连接');
   }
 
@@ -1260,6 +1340,30 @@ export class CodexBackend {
     this.notifyListeners();
   }
 
+  async submitPendingUserInput(answers: Record<string, string[]>): Promise<void> {
+    if (this.pendingRequestUserInput === null) {
+      return;
+    }
+    const request: CodexRequestUserInput = this.pendingRequestUserInput;
+    this.pendingRequestUserInput = null;
+    const approveRequest: ApprovalActionRequestPayload = new ApprovalActionRequestPayload();
+    approveRequest.requestId = request.requestId;
+    approveRequest.threadId = request.threadId;
+    approveRequest.turnId = request.turnId;
+    approveRequest.itemId = request.itemId;
+    approveRequest.kind = 'requestUserInput';
+    Object.keys(answers).forEach((questionId: string) => {
+      const values: string[] = answers[questionId]
+        .map((value: string) => value.trim())
+        .filter((value: string) => value.length > 0);
+      const answerPayload: RequestUserInputAnswerPayload = new RequestUserInputAnswerPayload();
+      answerPayload.answers = values;
+      approveRequest.answers[questionId] = answerPayload;
+    });
+    approvalApproveNative(JSON.stringify(approveRequest));
+    this.notifyListeners();
+  }
+
   async declinePendingRequest(): Promise<void> {
     if (this.pendingApproval === null) {
       return;
@@ -1272,6 +1376,22 @@ export class CodexBackend {
     declineRequest.turnId = request.turnId;
     declineRequest.itemId = request.itemId;
     declineRequest.kind = request.kind;
+    approvalDeclineNative(JSON.stringify(declineRequest));
+    this.notifyListeners();
+  }
+
+  async declinePendingUserInput(): Promise<void> {
+    if (this.pendingRequestUserInput === null) {
+      return;
+    }
+    const request: CodexRequestUserInput = this.pendingRequestUserInput;
+    this.pendingRequestUserInput = null;
+    const declineRequest: ApprovalActionRequestPayload = new ApprovalActionRequestPayload();
+    declineRequest.requestId = request.requestId;
+    declineRequest.threadId = request.threadId;
+    declineRequest.turnId = request.turnId;
+    declineRequest.itemId = request.itemId;
+    declineRequest.kind = 'requestUserInput';
     approvalDeclineNative(JSON.stringify(declineRequest));
     this.notifyListeners();
   }
@@ -1454,6 +1574,8 @@ export class CodexBackend {
     turnRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
     turnRequest.model = request.model !== 'default' ? request.model : undefined;
     turnRequest.effort = request.reasoningEffort !== 'default' ? request.reasoningEffort : undefined;
+    turnRequest.collaborationMode = this.buildCollaborationModePayload(request.collaborationMode, turnRequest.model, turnRequest.effort);
+    this.logInfo(`turnStart collaborationMode=${turnRequest.collaborationMode !== undefined ? JSON.stringify(turnRequest.collaborationMode) : 'undefined'}`);
     const turnResult: Object = parseJsonText(turnStartNative(JSON.stringify(turnRequest)), new Object() as Object);
 
     const turnPayload: Record<string, Object> = ((turnResult as Record<string, Object>)['turn'] as Record<string, Object> | undefined) ?? {};
@@ -1641,6 +1763,19 @@ export class CodexBackend {
     this.applyAccountState(payload);
   }
 
+  private refreshCollaborationModes(): void {
+    const rawJson: string = collaborationModeListNative('{}');
+    this.logInfo(`refreshCollaborationModes raw=${rawJson.substring(0, 200)}`);
+    const payload: Record<string, Object> = parseJsonText(
+      rawJson,
+      new CollaborationModeListResponsePayload() as Object
+    ) as Record<string, Object>;
+    const data: Object[] = Array.isArray(payload['data']) ? (payload['data'] as Object[]) : [];
+    this.collaborationModes = data.map((item: Object) => this.buildCollaborationMode(item as Record<string, Object>));
+    this.logInfo(`refreshCollaborationModes count=${this.collaborationModes.length} names=${this.collaborationModes.map((m: CollaborationModeOption) => m.name).join(',')}`);
+    this.notifyListeners();
+  }
+
   private ensureApprovalPolling(): void {
     if (this.approvalTimerId >= 0) {
       return;
@@ -1665,8 +1800,15 @@ export class CodexBackend {
     if (parsed === null) {
       return;
     }
-    const approval = this.buildApprovalFromNative(parsed as Record<string, Object>);
-    this.pendingApproval = approval;
+    const payload: Record<string, Object> = parsed as Record<string, Object>;
+    const kindRaw: string = typeof payload['kind'] === 'string' ? (payload['kind'] as string) : '';
+    if (kindRaw === 'requestUserInput') {
+      this.pendingRequestUserInput = this.buildRequestUserInputFromNative(payload);
+      this.pendingApproval = null;
+    } else {
+      this.pendingRequestUserInput = null;
+      this.pendingApproval = this.buildApprovalFromNative(payload);
+    }
     this.notifyListeners();
   }
 
@@ -2188,6 +2330,87 @@ export class CodexBackend {
     return merged;
   }
 
+  private buildCollaborationModePayload(mode: CollaborationModeOption | null, fallbackModel?: string, fallbackEffort?: string): CollaborationModePayload | undefined {
+    if (mode === null) {
+      return undefined;
+    }
+    const payload: CollaborationModePayload = new CollaborationModePayload();
+    payload.name = mode.name;
+    payload.mode = mode.mode;
+    payload.model = mode.model !== undefined ? mode.model : fallbackModel;
+    if (mode.reasoningEffort === null) {
+      payload.reasoningEffort = null;
+    } else if (mode.reasoningEffort !== undefined) {
+      payload.reasoningEffort = mode.reasoningEffort;
+    } else if (fallbackEffort !== undefined) {
+      payload.reasoningEffort = fallbackEffort;
+    }
+    return payload;
+  }
+
+  private buildCollaborationMode(payload: Record<string, Object>): CollaborationModeOption {
+    const reasoningEffortRaw = payload['reasoning_effort'];
+    let reasoningEffort: string | null | undefined = undefined;
+    if (typeof reasoningEffortRaw === 'string') {
+      reasoningEffort = reasoningEffortRaw as string;
+    } else if (reasoningEffortRaw === null) {
+      reasoningEffort = null;
+    }
+    const modeRaw: string = typeof payload['mode'] === 'string' ? (payload['mode'] as string) : 'default';
+    return new CollaborationModeOption(
+      typeof payload['name'] === 'string' ? (payload['name'] as string) : modeRaw,
+      modeRaw === 'plan' ? 'plan' : 'default',
+      typeof payload['model'] === 'string' ? (payload['model'] as string) : undefined,
+      reasoningEffort
+    );
+  }
+
+  private buildRequestUserInputFromNative(payload: Record<string, Object>): CodexRequestUserInput | null {
+    const requestId: string | number = typeof payload['requestId'] === 'string' || typeof payload['requestId'] === 'number'
+      ? payload['requestId'] as string | number
+      : `request-user-input-${Date.now()}`;
+    const questionsRaw: Object[] = Array.isArray(payload['questions'])
+      ? (payload['questions'] as Object[])
+      : this.questionsFromDetail(typeof payload['detail'] === 'string' ? (payload['detail'] as string) : '');
+    const questions: CodexRequestUserInputQuestion[] = questionsRaw.map((item: Object, index: number) => {
+      const question = item as Record<string, Object>;
+      const optionsRaw: Object[] = Array.isArray(question['options']) ? (question['options'] as Object[]) : [];
+      const options: CodexRequestUserInputOption[] = optionsRaw.map((option: Object) => {
+        const optionRecord = option as Record<string, Object>;
+        return new CodexRequestUserInputOption(
+          typeof optionRecord['label'] === 'string' ? (optionRecord['label'] as string) : '',
+          typeof optionRecord['description'] === 'string' ? (optionRecord['description'] as string) : ''
+        );
+      });
+      return new CodexRequestUserInputQuestion(
+        typeof question['id'] === 'string' ? (question['id'] as string) : `question-${index + 1}`,
+        typeof question['header'] === 'string' ? (question['header'] as string) : `Question ${index + 1}`,
+        typeof question['question'] === 'string' ? (question['question'] as string) : '',
+        question['isOther'] === true || question['is_other'] === true,
+        question['isSecret'] === true || question['is_secret'] === true,
+        options
+      );
+    });
+    return new CodexRequestUserInput(
+      requestId,
+      typeof payload['title'] === 'string' ? (payload['title'] as string) : 'Need user input',
+      typeof payload['detail'] === 'string' ? (payload['detail'] as string) : '',
+      typeof payload['threadId'] === 'string' ? (payload['threadId'] as string) : '',
+      typeof payload['turnId'] === 'string' ? (payload['turnId'] as string) : '',
+      typeof payload['itemId'] === 'string' ? (payload['itemId'] as string) : '',
+      questions
+    );
+  }
+
+  private questionsFromDetail(detail: string): Object[] {
+    const parsed: Object | null = safeJsonParse(detail);
+    if (parsed === null) {
+      return [];
+    }
+    const record = parsed as Record<string, Object>;
+    return Array.isArray(record['questions']) ? (record['questions'] as Object[]) : [];
+  }
+
   private buildApprovalFromNative(payload: Record<string, Object>): CodexApprovalRequest | null {
     const kindRaw: string = typeof payload['kind'] === 'string' ? (payload['kind'] as string) : '';
     if (kindRaw.length === 0) {
@@ -2395,6 +2618,7 @@ export class CodexBackend {
     this.connectionText = connectionText;
     if (connectionState !== 'connected') {
       this.pendingApproval = null;
+      this.pendingRequestUserInput = null;
     }
     this.notifyListeners();
   }
@@ -2413,6 +2637,36 @@ export class CodexBackend {
     const cloned: CodexApprovalRequest = new CodexApprovalRequest(approval.requestId, approval.kind, approval.title, approval.detail, approval.threadId, approval.turnId, approval.itemId);
     cloned.grantedPermissions = approval.grantedPermissions;
     return cloned;
+  }
+
+  private cloneRequestUserInput(request: CodexRequestUserInput | null): CodexRequestUserInput | null {
+    if (request === null) {
+      return null;
+    }
+    return new CodexRequestUserInput(
+      request.requestId,
+      request.title,
+      request.detail,
+      request.threadId,
+      request.turnId,
+      request.itemId,
+      request.questions.map((question: CodexRequestUserInputQuestion) => this.cloneRequestUserInputQuestion(question))
+    );
+  }
+
+  private cloneRequestUserInputQuestion(question: CodexRequestUserInputQuestion): CodexRequestUserInputQuestion {
+    return new CodexRequestUserInputQuestion(
+      question.id,
+      question.header,
+      question.question,
+      question.isOther,
+      question.isSecret,
+      question.options.map((option: CodexRequestUserInputOption) => new CodexRequestUserInputOption(option.label, option.description))
+    );
+  }
+
+  private cloneCollaborationMode(mode: CollaborationModeOption): CollaborationModeOption {
+    return new CollaborationModeOption(mode.name, mode.mode, mode.model, mode.reasoningEffort);
   }
 
   private cloneMessage(message: CodexChatMessage): CodexChatMessage {
