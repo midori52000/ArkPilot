@@ -3078,7 +3078,7 @@ struct Index {
         } else if (this.activeSidebarView === 'sessions') {
           Column() {
             this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-            this.infoRow('当前会话', this.activeWorkspace().title)
+            this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
             this.infoRow('会话总数', this.sessionSummaries.length.toString())
             this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
             this.summaryBullet('在中间列表里点击”打开”会切回 Chat 并加载该会话。')
@@ -3106,22 +3106,6 @@ struct Index {
 
       // Token 用量卡片（底部）
       this.tokenUsageCard()
-    Column() {
-      if (this.activeSidebarView === 'chat') {
-        this.chatContextPanel()
-      } else if (this.activeSidebarView === 'sessions') {
-        Column() {
-          this.panelTitle('会话上下文', '显示当前选中会话与管理说明')
-          this.infoRow('当前会话', this.activeWorkspace()?.title ?? '-')
-          this.infoRow('会话总数', this.sessionSummaries.length.toString())
-          this.infoRow('工作目录', this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
-          this.summaryBullet('在中间列表里点击“打开”会切回 Chat 并加载该会话。')
-          this.summaryBullet('点击“删除”会归档该线程，并从左侧/中间列表里移除。')
-        }
-        .alignItems(HorizontalAlign.Start)
-        .height('100%')
-        .width('100%')
-      }
     }
     .height('100%')
     .width(this.rightPanelWidth)
