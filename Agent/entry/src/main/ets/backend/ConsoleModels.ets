@@ -476,17 +476,40 @@ export class TokenUsageAggregate {
   }
 }
 
+export class ProjectRecord {
+  id: string;
+  name: string;
+  path: string;
+  expanded: boolean;
+
+  constructor(id: string, name: string, path: string, expanded?: boolean) {
+    this.id = id;
+    this.name = name;
+    this.path = path;
+    this.expanded = expanded ?? true;
+  }
+}
+
+export class ProjectStoreSnapshot {
+  projects: ProjectRecord[];
+  constructor(projects: ProjectRecord[]) {
+    this.projects = projects;
+  }
+}
+
 export class WorkspaceItem {
   id: number;
   title: string;
   description: string;
   workspaceId: string;
+  projectId: string;
 
-  constructor(id: number, title: string, description: string, workspaceId?: string) {
+  constructor(id: number, title: string, description: string, workspaceId?: string, projectId?: string) {
     this.id = id;
     this.title = title;
     this.description = description;
     this.workspaceId = workspaceId ?? `session:${id.toString()}`;
+    this.projectId = projectId ?? '';
   }
 }
 
@@ -497,14 +520,16 @@ export class WorkspaceBindingDraft {
   workspaceId: string;
   workspaceRoot: string;
   workspaceUri: string;
+  projectId: string;
 
-  constructor(id: number, title: string, description: string, workspaceId: string, workspaceRoot: string, workspaceUri?: string) {
+  constructor(id: number, title: string, description: string, workspaceId: string, workspaceRoot: string, workspaceUri?: string, projectId?: string) {
     this.id = id;
     this.title = title;
     this.description = description;
     this.workspaceId = workspaceId;
     this.workspaceRoot = workspaceRoot;
     this.workspaceUri = workspaceUri ?? '';
+    this.projectId = projectId ?? '';
   }
 }
 

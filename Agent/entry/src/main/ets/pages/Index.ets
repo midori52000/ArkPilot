@@ -21,8 +21,9 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, SidebarItem, DailyTokenSnapshot } from '../backend/ConsoleModels';
+import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, SidebarItem, DailyTokenSnapshot, ProjectRecord } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
+import { projectStore } from '../backend/ProjectStore';
 import router from '@ohos.router';
 import pasteboard from '@ohos.pasteboard';
 import { promptAction } from '@kit.ArkUI';
@@ -202,6 +203,19 @@ struct Index {
   @State private tokenTrendRange: number = 0;
   @State private compacting: boolean = false;
   @State private compactError: string = '';
+  @State private projects: ProjectRecord[] = [];
+  @State private showCreateProjectDialog: boolean = false;
+  @State private newProjectName: string = '';
+  @State private newProjectPath: string = '';
+  @State private renamingProjectId: string = '';
+  @State private renameProjectText: string = '';
+  @State private showNewSessionDialog: boolean = false;
+  @State private newSessionProjectId: string = '';
+  @State private newSessionName: string = '';
+  @State private renamingSessionId: string = '';
+  @State private renameSessionText: string = '';
+  @State private hoveredProjectId: string = '';
+  @State private hoveredSessionId: string = '';
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -211,6 +225,7 @@ struct Index {
     this.applyEmbeddedHostStatus();
     this.loadProviderConfig();
     this.restoreWorkspaceBindings();
+    this.loadProjects();
 
     // Check if SessionsPage passed a selected session ID
     const selectedSessionId: string = (AppStorage.get('sessionsPageSelectedSessionId') as string) ?? '';
@@ -474,15 +489,17 @@ struct Index {
 
   private applySessionSummariesToWorkspaces(summaries: SessionSummary[], preferredThreadId?: string): void {
     if (summaries.length === 0) {
-      this.workspaces = [];
-      this.activeWorkspaceId = 0;
-      this.workspaceRoot = '';
-      this.workspaceDraftText = '';
-      this.currentWorkspaceTitle = '';
-      this.currentWorkspaceDescription = '';
+      if (this.workspaces.length === 0) {
+        this.activeWorkspaceId = 0;
+        this.workspaceRoot = '';
+        this.workspaceDraftText = '';
+        this.currentWorkspaceTitle = '';
+        this.currentWorkspaceDescription = '';
+      }
       this.syncRecentWorkspaces();
       this.syncWorkspaceSelectionText();
       this.refreshWorkspaceBindingState();
+      this.syncCurrentWorkspaceState();
       this.persistWorkspaceBindings();
       return;
     }
@@ -511,6 +528,7 @@ struct Index {
     const nextWorkspaceRoots: Map<number, string> = new Map();
     const nextWorkspaceUris: Map<number, string> = new Map();
     const usedIds: Set<number> = new Set();
+    const newProjects: ProjectRecord[] = [];
     let nextIdSeed: number = this.nextWorkspaceId();
     let nextActiveWorkspaceId: number = 0;
 
@@ -543,8 +561,42 @@ struct Index {
       nextWorkspaceRoots.set(workspace.id, nextRoot);
       nextWorkspaceUris.set(workspace.id, this.workspaceUris.get(workspace.id) ?? bindingByThreadId.get(summary.sessionId)?.workspaceUri ?? '');
 
+      // Assign project by matching session root to project path
+      const sessionRoot: string = nextRoot.trim();
+      if (sessionRoot.length > 0) {
+        let matchedProject: ProjectRecord | undefined = undefined;
+        for (let pi: number = 0; pi < this.projects.length; pi += 1) {
+          if (this.projects[pi].path.trim() === sessionRoot) {
+            matchedProject = this.projects[pi];
+            break;
+          }
+        }
+        if (matchedProject !== undefined) {
+          workspace.projectId = matchedProject.id;
+        } else {
+          const projId: string = `proj_${Date.now().toString()}_${index.toString()}`;
+          const projName: string = sessionRoot.substring(sessionRoot.lastIndexOf('/') + 1);
+          const newProj: ProjectRecord = new ProjectRecord(projId, projName.length > 0 ? projName : sessionRoot, sessionRoot, true);
+          newProjects.push(newProj);
+          workspace.projectId = projId;
+        }
+      }
+
       if (summary.sessionId === preferredThreadId || (nextActiveWorkspaceId === 0 && summary.sessionId === this.activeWorkspaceBindingId)) {
         nextActiveWorkspaceId = workspace.id;
+      }
+    }
+
+    // Preserve manually created workspaces that have local session IDs
+    for (let index: number = 0; index < this.workspaces.length; index += 1) {
+      const ws: WorkspaceItem = this.workspaces[index];
+      if (!this.isRemoteThreadId(ws.workspaceId) && !usedIds.has(ws.id)) {
+        usedIds.add(ws.id);
+        nextWorkspaces.push(ws);
+        nextWorkspaceIds.set(ws.id, ws.workspaceId);
+        const preservedRoot: string = this.workspaceRoots.get(ws.id) ?? '';
+        nextWorkspaceRoots.set(ws.id, preservedRoot);
+        nextWorkspaceUris.set(ws.id, this.workspaceUris.get(ws.id) ?? '');
       }
     }
 
@@ -554,6 +606,10 @@ struct Index {
     }
 
     this.workspaces = [...nextWorkspaces];
+    if (newProjects.length > 0) {
+      this.projects = [...this.projects, ...newProjects];
+    }
+    this.saveProjects();
     this.syncRecentWorkspaces();
     this.workspaceIds.clear();
     this.workspaceRoots.clear();
@@ -644,7 +700,8 @@ struct Index {
         item.description,
         item.workspaceId.trim().length > 0 ? item.workspaceId : `session:${item.id.toString()}`,
         item.workspaceRoot,
-        item.workspaceUri
+        item.workspaceUri,
+        item.projectId
       ));
     }
 
@@ -661,7 +718,7 @@ struct Index {
     const restoredWorkspaces: WorkspaceItem[] = [];
     for (let index: number = 0; index < restoredItems.length; index += 1) {
       const restored: WorkspaceBindingDraft = restoredItems[index];
-      const workspace: WorkspaceItem = new WorkspaceItem(restored.id, restored.title, restored.description, restored.workspaceId);
+      const workspace: WorkspaceItem = new WorkspaceItem(restored.id, restored.title, restored.description, restored.workspaceId, restored.projectId);
       restoredWorkspaces.push(workspace);
       this.workspaceIds.set(restored.id, restored.workspaceId);
       this.workspaceRoots.set(restored.id, restored.workspaceRoot);
@@ -692,9 +749,228 @@ struct Index {
       item.workspaceId = this.ensureWorkspaceBinding(workspace);
       item.workspaceRoot = this.workspaceRoots.get(workspace.id) ?? '';
       item.workspaceUri = this.workspaceUris.get(workspace.id) ?? '';
+      item.projectId = workspace.projectId;
       items.push(item);
     }
     workspaceBindingStore.saveBindings(this.activeWorkspaceId, items);
+  }
+
+  // ── Project management ──────────────────────────────────────────
+
+  private loadProjects(): void {
+    this.projects = projectStore.load();
+  }
+
+  private saveProjects(): void {
+    projectStore.save(this.projects);
+  }
+
+  private sessionsForProject(projectId: string): WorkspaceItem[] {
+    const result: WorkspaceItem[] = [];
+    for (let i: number = 0; i < this.workspaces.length; i += 1) {
+      if (this.workspaces[i].projectId === projectId) {
+        result.push(this.workspaces[i]);
+      }
+    }
+    return result;
+  }
+
+  private async createProject(): Promise<void> {
+    const name: string = this.newProjectName.trim();
+    const path: string = this.newProjectPath.trim();
+    if (name.length === 0 || path.length === 0) {
+      promptAction.showToast({ message: '请输入项目名称并选择目录', duration: 2000 });
+      return;
+    }
+    const id: string = `proj_${Date.now().toString()}`;
+    const next: ProjectRecord[] = [...this.projects, new ProjectRecord(id, name, path, true)];
+    this.projects = next;
+    this.saveProjects();
+    this.showCreateProjectDialog = false;
+    this.newProjectName = '';
+    this.newProjectPath = '';
+    promptAction.showToast({ message: `项目"${name}"已创建`, duration: 2000 });
+  }
+
+  private startRenameProject(projectId: string): void {
+    const proj: ProjectRecord | undefined = this.projects.find((p: ProjectRecord) => p.id === projectId);
+    if (proj !== undefined) {
+      this.renamingProjectId = projectId;
+      this.renameProjectText = proj.name;
+    }
+  }
+
+  private confirmRenameProject(): void {
+    const name: string = this.renameProjectText.trim();
+    if (name.length === 0 || this.renamingProjectId.length === 0) {
+      return;
+    }
+    const next: ProjectRecord[] = [];
+    for (let i: number = 0; i < this.projects.length; i += 1) {
+      const p: ProjectRecord = this.projects[i];
+      if (p.id === this.renamingProjectId) {
+        next.push(new ProjectRecord(p.id, name, p.path, p.expanded));
+      } else {
+        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
+      }
+    }
+    this.projects = next;
+    this.saveProjects();
+    this.renamingProjectId = '';
+    this.renameProjectText = '';
+  }
+
+  private cancelRenameProject(): void {
+    this.renamingProjectId = '';
+    this.renameProjectText = '';
+  }
+
+  private toggleProjectExpanded(projectId: string): void {
+    const next: ProjectRecord[] = [];
+    for (let i: number = 0; i < this.projects.length; i += 1) {
+      const p: ProjectRecord = this.projects[i];
+      if (p.id === projectId) {
+        next.push(new ProjectRecord(p.id, p.name, p.path, !p.expanded));
+      } else {
+        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
+      }
+    }
+    this.projects = next;
+    this.saveProjects();
+  }
+
+  private openNewSessionDialog(projectId: string): void {
+    this.newSessionProjectId = projectId;
+    this.newSessionName = '';
+    this.showNewSessionDialog = true;
+  }
+
+  private async confirmCreateSession(): Promise<void> {
+    const name: string = this.newSessionName.trim();
+    if (name.length === 0 || this.newSessionProjectId.length === 0) {
+      promptAction.showToast({ message: '请输入会话名称', duration: 2000 });
+      return;
+    }
+    const proj: ProjectRecord | undefined = this.projects.find((p: ProjectRecord) => p.id === this.newSessionProjectId);
+    if (proj === undefined) {
+      return;
+    }
+    const nextId: number = this.nextWorkspaceId();
+    const workspace: WorkspaceItem = new WorkspaceItem(nextId, name, '', `session:${nextId.toString()}`, proj.id);
+    this.workspaces.push(workspace);
+    this.workspaceRoots.set(nextId, proj.path);
+    this.workspaceIds.set(nextId, `session:${nextId.toString()}`);
+    this.showNewSessionDialog = false;
+    this.newSessionProjectId = '';
+    this.newSessionName = '';
+    this.syncRecentWorkspaces();
+    this.persistWorkspaceBindings();
+    await this.selectWorkspace(workspace);
+  }
+
+  private startRenameSession(sessionId: string): void {
+    const ws: WorkspaceItem | undefined = this.workspaces.find((w: WorkspaceItem) => this.ensureWorkspaceBinding(w) === sessionId);
+    if (ws !== undefined) {
+      this.renamingSessionId = sessionId;
+      this.renameSessionText = ws.title;
+    }
+  }
+
+  private confirmRenameSession(): void {
+    const name: string = this.renameSessionText.trim();
+    if (name.length === 0 || this.renamingSessionId.length === 0) {
+      return;
+    }
+    for (let i: number = 0; i < this.workspaces.length; i += 1) {
+      if (this.ensureWorkspaceBinding(this.workspaces[i]) === this.renamingSessionId) {
+        this.workspaces[i].title = name;
+        break;
+      }
+    }
+    this.syncRecentWorkspaces();
+    this.syncCurrentWorkspaceState();
+    this.persistWorkspaceBindings();
+    this.renamingSessionId = '';
+    this.renameSessionText = '';
+  }
+
+  private cancelRenameSession(): void {
+    this.renamingSessionId = '';
+    this.renameSessionText = '';
+  }
+
+  private async deleteSession(sessionId: string): Promise<void> {
+    let targetIndex: number = -1;
+    for (let i: number = 0; i < this.workspaces.length; i += 1) {
+      if (this.ensureWorkspaceBinding(this.workspaces[i]) === sessionId) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex < 0) {
+      return;
+    }
+    this.workspaces.splice(targetIndex, 1);
+    if (this.workspaces.length === 0) {
+      this.activeWorkspaceId = 0;
+    } else if (targetIndex <= this.workspaces.length) {
+      const newIndex: number = targetIndex < this.workspaces.length ? targetIndex : this.workspaces.length - 1;
+      await this.selectWorkspace(this.workspaces[newIndex]);
+    }
+    this.syncRecentWorkspaces();
+    this.persistWorkspaceBindings();
+  }
+
+  private async deleteProject(projectId: string): Promise<void> {
+    let targetIndex: number = -1;
+    for (let i: number = 0; i < this.projects.length; i += 1) {
+      if (this.projects[i].id === projectId) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex < 0) {
+      return;
+    }
+    const next: ProjectRecord[] = [];
+    for (let i: number = 0; i < this.projects.length; i += 1) {
+      if (this.projects[i].id !== projectId) {
+        next.push(this.projects[i]);
+      }
+    }
+    this.projects = next;
+    this.saveProjects();
+    for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
+      if (this.workspaces[i].projectId === projectId) {
+        this.workspaces.splice(i, 1);
+      }
+    }
+    this.syncRecentWorkspaces();
+    this.persistWorkspaceBindings();
+  }
+
+  private relativeTime(updatedAt: string): string {
+    const parsed: number = Date.parse(updatedAt);
+    if (isNaN(parsed)) {
+      return '';
+    }
+    const diffMs: number = Date.now() - parsed;
+    if (diffMs < 0) {
+      return '刚刚';
+    }
+    const minutes: number = Math.floor(diffMs / 60000);
+    if (minutes < 1) {
+      return '刚刚';
+    }
+    if (minutes < 60) {
+      return `${minutes.toString()} 分`;
+    }
+    const hours: number = Math.floor(minutes / 60);
+    if (hours < 24) {
+      return `${hours.toString()} 时`;
+    }
+    const days: number = Math.floor(hours / 24);
+    return `${days.toString()} 天`;
   }
 
   private applyWorkspaceRootBinding(): void {
@@ -758,6 +1034,17 @@ struct Index {
       this.applyWorkspaceDirectorySelection(selection.rootPath, selection.sourceUri);
     } catch (err) {
       this.workspaceStatusText = `选择目录失败: ${this.describeError(err)}`;
+    }
+  }
+
+  private async pickWorkspaceDirectoryForProject(): Promise<void> {
+    try {
+      const selection: WorkspaceDirectorySelection | null = await this.pickDirectorySelection();
+      if (selection !== null) {
+        this.newProjectPath = selection.rootPath;
+      }
+    } catch (err) {
+      promptAction.showToast({ message: `选择目录失败: ${this.describeError(err)}`, duration: 3000 });
     }
   }
 
@@ -1606,33 +1893,213 @@ struct Index {
   }
 
   @Builder
-  private workspaceRow(item: WorkspaceItem) {
+  private projectGroup(proj: ProjectRecord) {
     Column() {
-      Text(item.title)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor('#18181B')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      // Project header row
+      Row() {
+        Text(proj.expanded ? '▾' : '▸')
+          .fontSize(11)
+          .fontColor('#71717A')
+          .width(16)
 
-      Text(item.description)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#A1A1AA')
-        .margin({ top: 4 })
-        .lineHeight(16)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Stack({ alignContent: Alignment.TopStart }) {
+          Column()
+            .width(14)
+            .height(10)
+            .border({ width: 1, color: '#A1A1AA' })
+            .borderRadius({ bottomLeft: 2, bottomRight: 2, topLeft: 0, topRight: 2 })
+          Column()
+            .width(7)
+            .height(3)
+            .border({ width: 1, color: '#A1A1AA' })
+            .borderRadius({ topLeft: 2, topRight: 2 })
+            .backgroundColor('#FAFAFA')
+            .position({ x: 0, y: -1 })
+        }
+        .width(14)
+        .height(12)
+        .margin({ right: 6 })
+
+        Text(proj.name)
+          .copyOption(CopyOptions.None)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#18181B')
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        // Rename button
+        Text('...')
+          .fontSize(12)
+          .fontColor('#A1A1AA')
+          .padding({ left: 6, right: 6 })
+          .onClick(() => {
+            this.startRenameProject(proj.id);
+          })
+
+        // New session button (pen icon)
+        Text('✎')
+          .fontSize(14)
+          .fontColor('#71717A')
+          .padding({ left: 4, right: 4 })
+          .onClick(() => {
+            this.openNewSessionDialog(proj.id);
+          })
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+      .borderRadius(6)
+      .backgroundColor(this.hoveredProjectId === proj.id ? '#F4F4F5' : 'transparent')
+      .onHover((isHover: boolean) => {
+        this.hoveredProjectId = isHover ? proj.id : '';
+      })
+      .onClick(() => {
+        this.toggleProjectExpanded(proj.id);
+      })
+
+      // Inline rename input
+      if (this.renamingProjectId === proj.id) {
+        Row() {
+          TextInput({ text: this.renameProjectText })
+            .layoutWeight(1)
+            .height(28)
+            .fontSize(12)
+            .backgroundColor('#FFFFFF')
+            .border({ width: 0.5, color: '#D4D4D8' })
+            .borderRadius(6)
+            .padding({ left: 8, right: 8 })
+            .onChange((value: string) => {
+              this.renameProjectText = value;
+            })
+
+          Text('✓')
+            .fontSize(14)
+            .fontColor('#16A34A')
+            .padding({ left: 8 })
+            .onClick(() => {
+              this.confirmRenameProject();
+            })
+
+          Text('✕')
+            .fontSize(14)
+            .fontColor('#DC2626')
+            .padding({ left: 4 })
+            .onClick(() => {
+              this.cancelRenameProject();
+            })
+        }
+        .width('100%')
+        .padding({ left: 24, right: 8, bottom: 6 })
+      }
+
+      // Sessions under this project
+      if (proj.expanded) {
+        Column() {
+          if (this.sessionsForProject(proj.id).length === 0) {
+            Text('暂无会话')
+              .fontSize(10)
+              .fontColor('#D4D4D8')
+              .padding({ left: 24, top: 4, bottom: 4 })
+          } else {
+            ForEach(this.sessionsForProject(proj.id), (session: WorkspaceItem) => {
+              this.sessionItem(session)
+            }, (session: WorkspaceItem) => `${session.id.toString()}:${session.title}`)
+          }
+        }
+        .width('100%')
+        .padding({ left: 16 })
+      }
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(10)
-    .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : '#FFFFFF')
-    .borderRadius(8)
-    .onClick(() => {
-      void this.selectWorkspace(item);
-    })
+    .margin({ bottom: 4 })
+  }
+
+  @Builder
+  private sessionItem(item: WorkspaceItem) {
+    Column() {
+      if (this.renamingSessionId === this.ensureWorkspaceBinding(item)) {
+        // Inline rename mode
+        Row() {
+          TextInput({ text: this.renameSessionText })
+            .layoutWeight(1)
+            .height(24)
+            .fontSize(11)
+            .backgroundColor('#FFFFFF')
+            .border({ width: 0.5, color: '#D4D4D8' })
+            .borderRadius(4)
+            .padding({ left: 6, right: 6 })
+            .onChange((value: string) => {
+              this.renameSessionText = value;
+            })
+
+          Text('✓')
+            .fontSize(12)
+            .fontColor('#16A34A')
+            .padding({ left: 6 })
+            .onClick(() => {
+              this.confirmRenameSession();
+            })
+
+          Text('✕')
+            .fontSize(12)
+            .fontColor('#DC2626')
+            .padding({ left: 4 })
+            .onClick(() => {
+              this.cancelRenameSession();
+            })
+        }
+        .width('100%')
+        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      } else {
+        // Normal session display
+        Row() {
+          Text(item.title)
+            .copyOption(CopyOptions.None)
+            .fontSize(11)
+            .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
+            .fontColor(this.isWorkspaceActive(item) ? '#18181B' : '#52525B')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(this.relativeTime(this.findSessionUpdatedAt(item)))
+            .fontSize(9)
+            .fontColor('#A1A1AA')
+            .margin({ right: 4 })
+
+          Text('···')
+            .fontSize(11)
+            .fontColor('#A1A1AA')
+            .padding({ left: 2, right: 2 })
+            .onClick(() => {
+              this.startRenameSession(this.ensureWorkspaceBinding(item));
+            })
+        }
+        .width('100%')
+        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+        .borderRadius(6)
+        .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
+        .onHover((isHover: boolean) => {
+          this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
+        })
+        .onClick(() => {
+          void this.selectWorkspace(item);
+        })
+      }
+    }
+    .width('100%')
+  }
+
+  private findSessionUpdatedAt(item: WorkspaceItem): string {
+    const summaries: SessionSummary[] = codexBackend.sessionSummaries();
+    const sessionId: string = this.ensureWorkspaceBinding(item);
+    for (let i: number = 0; i < summaries.length; i += 1) {
+      if (summaries[i].sessionId === sessionId) {
+        return summaries[i].lastUpdatedAt;
+      }
+    }
+    return '';
   }
 
   @Builder
@@ -2104,99 +2571,174 @@ struct Index {
   @Builder
   private leftPanel() {
     Column() {
-    Scroll() {
-    Column() {
-      Row() {
+      Scroll() {
         Column() {
-          Text('ArkPilot')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#18181B')
+          // Header
+          Row() {
+            Column() {
+              Text('ArkPilot')
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#18181B')
 
-          Text('项目侧边栏控制台')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#A1A1AA')
-            .margin({ top: 4 })
-        }
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-
-      Column() {
-        this.panelTitle('导航', '通过项目侧边栏切换控制台子面板')
-
-        List({ space: 0 }) {
-          ForEach(this.sidebarItems, (item: SidebarItem) => {
-            ListItem() {
-              this.sidebarRow(item)
+              Text('项目侧边栏控制台')
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(10)
+                .fontColor('#A1A1AA')
+                .margin({ top: 4 })
             }
-          }, (item: SidebarItem) => item.view)
-        }
-        .width('100%')
-        .width('100%')
-        .scrollBar(BarState.Off)
-        .margin({ top: 10 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-      .padding(12)
-      .margin({ top: 12 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 0.5, color: '#E4E4E7' })
-      .borderRadius(12)
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
 
-      Column() {
-        this.panelTitle('会话概况', '')
-
-        Column() {
-          this.panelTitle('筛选目录', '选择目录以筛选下方会话列表')
-
-          Text(this.directoryFilterText)
+          // Navigation
+          Column() {
+            this.panelTitle('导航', '通过项目侧边栏切换控制台子面板')
+            List({ space: 0 }) {
+              ForEach(this.sidebarItems, (item: SidebarItem) => {
+                ListItem() {
+                  this.sidebarRow(item)
+                }
+              }, (item: SidebarItem) => item.view)
+            }
             .width('100%')
+            .scrollBar(BarState.Off)
             .margin({ top: 10 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(12)
+          .margin({ top: 12 })
+          .backgroundColor('#FFFFFF')
+          .border({ width: 0.5, color: '#E4E4E7' })
+          .borderRadius(12)
+
+          // Projects section
+          Column() {
+            // Header row with title + icons
+            Row() {
+              Text('项目')
+                .fontSize(13)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#18181B')
+
+              Blank()
+                .layoutWeight(1)
+
+              Text('★')
+                .fontSize(12)
+                .fontColor('#A1A1AA')
+                .padding({ left: 6, right: 6 })
+
+              Text('≡')
+                .fontSize(14)
+                .fontColor('#A1A1AA')
+                .padding({ left: 6, right: 6 })
+
+              Text('⊞')
+                .fontSize(14)
+                .fontColor('#A1A1AA')
+                .padding({ left: 2, right: 4 })
+                .onClick(() => {
+                  this.newProjectName = '';
+                  this.newProjectPath = '';
+                  this.showCreateProjectDialog = true;
+                })
+            }
+            .width('100%')
+            .padding({ left: 4, right: 4, top: 4, bottom: 8 })
+
+            if (this.projects.length === 0) {
+              Text('暂无项目，点击右上角 + 创建')
+                .fontSize(10)
+                .fontColor('#D4D4D8')
+                .margin({ top: 8 })
+            } else {
+              ForEach(this.projects, (proj: ProjectRecord) => {
+                this.projectGroup(proj)
+              }, (proj: ProjectRecord) => `${proj.id}_${proj.expanded.toString()}`)
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(12)
+          .margin({ top: 10 })
+          .backgroundColor('#FFFFFF')
+          .border({ width: 0.5, color: '#E4E4E7' })
+          .borderRadius(12)
+        }
+      }
+      .scrollable(ScrollDirection.Vertical)
+      .scrollBar(BarState.Auto)
+      .layoutWeight(1)
+      .width('100%')
+
+      // Create project dialog
+      if (this.showCreateProjectDialog) {
+        Column() {
+          Text('新建项目')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .margin({ bottom: 10 })
+
+          TextInput({ placeholder: '项目名称', text: this.newProjectName })
+            .width('100%')
+            .height(36)
             .fontSize(12)
-            .fontColor('#111827')
             .backgroundColor('#FFFFFF')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12, top: 11, bottom: 11 })
-            .copyOption(CopyOptions.LocalDevice)
+            .border({ width: 0.5, color: '#D4D4D8' })
+            .borderRadius(8)
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => {
+              this.newProjectName = value;
+            })
+
+          Text(this.newProjectPath.length > 0 ? this.newProjectPath : '未选择目录')
+            .width('100%')
+            .fontSize(11)
+            .fontColor(this.newProjectPath.length > 0 ? '#27272A' : '#A1A1AA')
+            .margin({ top: 8 })
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .backgroundColor('#F4F4F5')
+            .borderRadius(8)
+
+          Button('选择目录')
+            .width('100%')
+            .height(32)
+            .fontSize(12)
+            .backgroundColor('#FFFFFF')
+            .fontColor('#27272A')
+            .border({ width: 0.5, color: '#E4E4E7' })
+            .borderRadius(8)
+            .margin({ top: 8 })
+            .onClick(() => {
+              void this.pickWorkspaceDirectoryForProject();
+            })
 
           Row() {
-            Button('选择目录')
+            Button('取消')
               .layoutWeight(1)
-              .height(34)
+              .height(32)
               .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#111827')
-              .borderRadius(16)
-              .border({ width: 0.5, color: '#E4E4E7' })
+              .backgroundColor('#F4F4F5')
+              .fontColor('#27272A')
+              .borderRadius(8)
               .onClick(() => {
-                void this.pickWorkspaceDirectory();
+                this.showCreateProjectDialog = false;
               })
 
-            Button('复制路径')
+            Button('创建')
               .layoutWeight(1)
-              .height(34)
+              .height(32)
               .margin({ left: 8 })
               .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#111827')
-              .borderRadius(16)
-              .border({ width: 0.5, color: '#E4E4E7' })
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(8)
               .onClick(() => {
-                const targetPath: string = this.directoryFilter.length > 0 ? this.directoryFilter : this.workspaceRoot;
-                if (targetPath.length === 0) {
-                  return;
-                }
-                const clipData: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, targetPath);
-                const clip: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
-                clip.setData(clipData).then(() => {
-                  promptAction.showToast({ message: '路径已复制到剪贴板', duration: 2000 });
-                }).catch((err: Error) => {
-                  hilog.error(INDEX_DOMAIN, INDEX_TAG, 'Failed to copy path: %{public}s', JSON.stringify(err));
-                });
+                void this.createProject();
               })
           }
           .width('100%')
@@ -2206,100 +2748,90 @@ struct Index {
         .width('100%')
         .padding(12)
         .margin({ top: 10 })
-        .backgroundColor('#FAFAFA')
+        .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(16)
+        .borderRadius(12)
+      }
 
-        Row() {
-          Button('新建会话')
-            .layoutWeight(1)
-            .height(34)
-            .fontSize(12)
-            .backgroundColor('#111827')
-            .fontColor('#FFFFFF')
-            .borderRadius(16)
-            .onClick(() => {
-              AppStorage.setOrCreate('sessionsPageOpenCreateDialog', true);
-              router.pushUrl({ url: 'pages/SessionsPage' });
-            })
+      // Create session dialog
+      if (this.showNewSessionDialog) {
+        Column() {
+          Text('新建会话')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .margin({ bottom: 10 })
 
-          Button('会话管理')
-            .layoutWeight(1)
-            .height(34)
-            .margin({ left: 8 })
+          TextInput({ placeholder: '会话名称', text: this.newSessionName })
+            .width('100%')
+            .height(36)
             .fontSize(12)
-            .backgroundColor('#FAFAFA')
-            .fontColor('#27272A')
+            .backgroundColor('#FFFFFF')
+            .border({ width: 0.5, color: '#D4D4D8' })
             .borderRadius(8)
-            .border({ width: 0.5, color: '#E4E4E7' })
-            .onClick(() => {
-              router.pushUrl({ url: 'pages/SessionsPage' });
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => {
+              this.newSessionName = value;
             })
-        }
-        .width('100%')
-        .margin({ top: 12 })
 
-        if (this.recentWorkspaces.length === 0) {
-          Text('当前目录下暂无会话')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#A1A1AA')
-            .margin({ top: 12 })
-        } else {
-          Text('当前目录下的所有会话')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#A1A1AA')
-            .margin({ top: 12, bottom: 8 })
+          Row() {
+            Button('取消')
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .backgroundColor('#F4F4F5')
+              .fontColor('#27272A')
+              .borderRadius(8)
+              .onClick(() => {
+                this.showNewSessionDialog = false;
+              })
 
-          List({ space: 6 }) {
-            ForEach(this.recentWorkspaces, (item: WorkspaceItem) => {
-              ListItem() {
-                this.workspaceRow(item)
-              }
-            }, (item: WorkspaceItem) => `${item.id.toString()}:${item.title}`)
+            Button('创建')
+              .layoutWeight(1)
+              .height(32)
+              .margin({ left: 8 })
+              .fontSize(12)
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(8)
+              .onClick(() => {
+                void this.confirmCreateSession();
+              })
           }
-          .layoutWeight(1)
           .width('100%')
-          .scrollBar(BarState.Off)
+          .margin({ top: 10 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(12)
+      }
+
+      // Settings button
+      Button() {
+        Row() {
+          Text('⚙')
+            .fontSize(14)
+            .fontColor('#71717A')
+
+          Text('设置')
+            .fontSize(12)
+            .fontColor('#71717A')
+            .margin({ left: 6 })
         }
       }
-      .alignItems(HorizontalAlign.Start)
+      .height(38)
       .width('100%')
-      .padding(12)
-      .margin({ top: 10 })
+      .margin({ top: 8 })
       .backgroundColor('#FFFFFF')
+      .borderRadius(16)
       .border({ width: 0.5, color: '#E4E4E7' })
-      .borderRadius(12)
-
-    }
-    }
-    .scrollable(ScrollDirection.Vertical)
-    .scrollBar(BarState.Auto)
-    .layoutWeight(1)
-    .width('100%')
-
-    Button() {
-      Row() {
-        Text('⚙')
-          .fontSize(14)
-          .fontColor('#71717A')
-
-        Text('设置')
-          .fontSize(12)
-          .fontColor('#71717A')
-          .margin({ left: 6 })
-      }
-    }
-    .height(38)
-    .width('100%')
-    .margin({ top: 8 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(16)
-    .border({ width: 0.5, color: '#E4E4E7' })
-    .onClick(() => {
-      router.pushUrl({ url: 'pages/SettingsPage' });
-    })
+      .onClick(() => {
+        router.pushUrl({ url: 'pages/SettingsPage' });
+      })
     }
     .height('100%')
     .width(this.leftPanelWidth)
@@ -2662,7 +3194,7 @@ struct Index {
   @Builder
   private centerPanel() {
     Column() {
-      if (this.recentWorkspaces.length === 0) {
+      if (this.workspaces.length === 0) {
         Row() {
           Button() {
           Stack() {
@@ -2723,11 +3255,11 @@ struct Index {
         .alignItems(VerticalAlign.Center)
 
         Column() {
-          Text('当前目录下暂无会话')
+          Text('暂无会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontColor('#A1A1AA')
-          Text(this.directoryFilterText)
+          Text('请在左侧项目中新建会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontColor('#D4D4D8')

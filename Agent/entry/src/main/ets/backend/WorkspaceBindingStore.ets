@@ -12,6 +12,7 @@ export class StoredWorkspaceItem {
   workspaceId: string = '';
   workspaceRoot: string = '';
   workspaceUri: string = '';
+  projectId: string = '';
 }
 
 export class StoredWorkspaceSnapshot {
@@ -72,6 +73,7 @@ function safeParseSnapshot(rawText: string): StoredWorkspaceSnapshot {
         item.workspaceId = typeof itemRecord['workspaceId'] === 'string' ? (itemRecord['workspaceId'] as string) : '';
         item.workspaceRoot = typeof itemRecord['workspaceRoot'] === 'string' ? (itemRecord['workspaceRoot'] as string) : '';
         item.workspaceUri = typeof itemRecord['workspaceUri'] === 'string' ? (itemRecord['workspaceUri'] as string) : '';
+        item.projectId = typeof itemRecord['projectId'] === 'string' ? (itemRecord['projectId'] as string) : '';
         return item;
       }).filter((item: StoredWorkspaceItem) => item.id > 0);
     }
