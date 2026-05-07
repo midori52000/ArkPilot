@@ -16,11 +16,13 @@
     ],
     "buildModeSet": [
       {
-        "name": "debug",
+        "name": "debug"
       },
       {
         "name": "release"
       }
+    ],
+    "signingConfigs": [
     ]
     // Local signing is intentionally not committed.
     // Fresh clones should be able to build an unsigned debug HAP without

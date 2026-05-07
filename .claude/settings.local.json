@@ -13,7 +13,10 @@
       "Bash(xargs grep -l \"getUIContext\\\\|getHostContext\")",
       "mcp__web-search-fast__get_page_content",
       "Bash(xargs grep -l \"featureAbility\")",
-      "Bash(xargs grep -l \"fileManager\\\\|FileManager\")"
+      "Bash(xargs grep -l \"fileManager\\\\|FileManager\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\build\" -Recurse -Filter \"*.hap\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object FullName, LastWriteTime, Length)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\build\" -Recurse -ErrorAction SilentlyContinue | Where-Object { !$_.PSIsContainer } | Select-Object FullName -First 20)"
     ]
   }
 }
