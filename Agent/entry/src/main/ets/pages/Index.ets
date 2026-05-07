@@ -217,6 +217,23 @@ struct Index {
   @State private renameSessionText: string = '';
   @State private hoveredProjectId: string = '';
   @State private hoveredSessionId: string = '';
+  @State private showProjectMenuId: string = '';
+  @State private showSessionMenuId: string = '';
+  @State private showRenameSessionDialog: boolean = false;
+  @State private renameSessionDialogText: string = '';
+  @State private renameSessionDialogId: string = '';
+  @State private showDeleteSessionDialog: boolean = false;
+  @State private deleteSessionDialogId: string = '';
+  @State private deleteSessionDialogTitle: string = '';
+  @State private hoveredSessionMenuKey: string = '';
+  @State private showRenameProjectDialog: boolean = false;
+  @State private renameProjectDialogText: string = '';
+  @State private renameProjectDialogId: string = '';
+  @State private showDeleteProjectDialog: boolean = false;
+  @State private deleteProjectDialogId: string = '';
+  @State private deleteProjectDialogName: string = '';
+  @State private hoveredMenuKey: string = '';
+
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -574,7 +591,7 @@ struct Index {
         }
         if (matchedProject !== undefined) {
           workspace.projectId = matchedProject.id;
-        } else {
+        } else if (!projectStore.isDeletedPath(sessionRoot)) {
           const projId: string = `proj_${Date.now().toString()}_${index.toString()}`;
           const projName: string = sessionRoot.substring(sessionRoot.lastIndexOf('/') + 1);
           const newProj: ProjectRecord = new ProjectRecord(projId, projName.length > 0 ? projName : sessionRoot, sessionRoot, true);
@@ -882,15 +899,20 @@ struct Index {
     if (name.length === 0 || this.renamingSessionId.length === 0) {
       return;
     }
+    const next: WorkspaceItem[] = [];
     for (let i: number = 0; i < this.workspaces.length; i += 1) {
-      if (this.ensureWorkspaceBinding(this.workspaces[i]) === this.renamingSessionId) {
-        this.workspaces[i].title = name;
-        break;
+      const w: WorkspaceItem = this.workspaces[i];
+      if (this.ensureWorkspaceBinding(w) === this.renamingSessionId) {
+        next.push(new WorkspaceItem(w.id, name, w.description, w.workspaceId, w.projectId));
+      } else {
+        next.push(new WorkspaceItem(w.id, w.title, w.description, w.workspaceId, w.projectId));
       }
     }
+    this.workspaces = next;
     this.syncRecentWorkspaces();
     this.syncCurrentWorkspaceState();
     this.persistWorkspaceBindings();
+    void codexBackend.renameSession(this.renamingSessionId, name);
     this.renamingSessionId = '';
     this.renameSessionText = '';
   }
@@ -910,6 +932,12 @@ struct Index {
     }
     if (targetIndex < 0) {
       return;
+    }
+    // Archive backend session data
+    try {
+      await codexBackend.archiveSession(sessionId);
+    } catch (_err) {
+      // ignore archive errors
     }
     this.workspaces.splice(targetIndex, 1);
     if (this.workspaces.length === 0) {
@@ -933,6 +961,20 @@ struct Index {
     if (targetIndex < 0) {
       return;
     }
+    projectStore.addDeletedPath(this.projects[targetIndex].path);
+
+    // Archive all backend sessions belonging to this project
+    for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
+      if (this.workspaces[i].projectId === projectId) {
+        const sessionId: string = this.ensureWorkspaceBinding(this.workspaces[i]);
+        try {
+          await codexBackend.archiveSession(sessionId);
+        } catch (_err) {
+          // ignore archive errors
+        }
+      }
+    }
+
     const next: ProjectRecord[] = [];
     for (let i: number = 0; i < this.projects.length; i += 1) {
       if (this.projects[i].id !== projectId) {
@@ -1897,121 +1939,203 @@ struct Index {
 
   @Builder
   private projectGroup(proj: ProjectRecord) {
-    Column() {
-      // Project header row
-      Row() {
-        Text(proj.expanded ? '▾' : '▸')
-          .fontSize(11)
-          .fontColor('#71717A')
-          .width(16)
-
-        Stack({ alignContent: Alignment.TopStart }) {
-          Column()
-            .width(14)
-            .height(10)
-            .border({ width: 1, color: '#A1A1AA' })
-            .borderRadius({ bottomLeft: 2, bottomRight: 2, topLeft: 0, topRight: 2 })
-          Column()
-            .width(7)
-            .height(3)
-            .border({ width: 1, color: '#A1A1AA' })
-            .borderRadius({ topLeft: 2, topRight: 2 })
-            .backgroundColor('#FAFAFA')
-            .position({ x: 0, y: -1 })
-        }
-        .width(14)
-        .height(12)
-        .margin({ right: 6 })
-
-        Text(proj.name)
-          .copyOption(CopyOptions.None)
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#18181B')
-          .layoutWeight(1)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        // Rename button
-        Text('...')
-          .fontSize(12)
-          .fontColor('#A1A1AA')
-          .padding({ left: 6, right: 6 })
-          .onClick(() => {
-            this.startRenameProject(proj.id);
-          })
-
-        // New session button (pen icon)
-        Text('✎')
-          .fontSize(14)
-          .fontColor('#71717A')
-          .padding({ left: 4, right: 4 })
-          .onClick(() => {
-            this.openNewSessionDialog(proj.id);
-          })
-      }
-      .width('100%')
-      .padding({ left: 8, right: 8, top: 6, bottom: 6 })
-      .borderRadius(6)
-      .backgroundColor(this.hoveredProjectId === proj.id ? '#F4F4F5' : 'transparent')
-      .onHover((isHover: boolean) => {
-        this.hoveredProjectId = isHover ? proj.id : '';
-      })
-      .onClick(() => {
-        this.toggleProjectExpanded(proj.id);
-      })
-
-      // Inline rename input
-      if (this.renamingProjectId === proj.id) {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column() {
+        // Project header row
         Row() {
-          TextInput({ text: this.renameProjectText })
-            .layoutWeight(1)
-            .height(28)
+          Text(proj.expanded ? '▾' : '▸')
+            .fontSize(11)
+            .fontColor('#71717A')
+            .width(16)
+
+          Stack({ alignContent: Alignment.TopStart }) {
+            Column()
+              .width(14)
+              .height(10)
+              .border({ width: 1, color: '#A1A1AA' })
+              .borderRadius({ bottomLeft: 2, bottomRight: 2, topLeft: 0, topRight: 2 })
+            Column()
+              .width(7)
+              .height(3)
+              .border({ width: 1, color: '#A1A1AA' })
+              .borderRadius({ topLeft: 2, topRight: 2 })
+              .backgroundColor('#FAFAFA')
+              .position({ x: 0, y: -1 })
+          }
+          .width(14)
+          .height(12)
+          .margin({ right: 6 })
+
+          Text(proj.name)
+            .copyOption(CopyOptions.None)
             .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#D4D4D8' })
-            .borderRadius(6)
-            .padding({ left: 8, right: 8 })
-            .onChange((value: string) => {
-              this.renameProjectText = value;
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          // Context menu button (hover-visible)
+          Text('···')
+            .fontSize(16)
+            .fontColor('#52525B')
+            .padding({ left: 6, right: 6, top: 0, bottom: 0 })
+            .height(20)
+            .visibility(this.hoveredProjectId === proj.id ? Visibility.Visible : Visibility.Hidden)
+            .onClick(() => {
+              this.showProjectMenuId = this.showProjectMenuId === proj.id ? '' : proj.id;
             })
 
-          Text('✓')
-            .fontSize(14)
-            .fontColor('#16A34A')
-            .padding({ left: 8 })
+          // New session button (plus)
+          Text('+')
+            .fontSize(18)
+            .fontColor('#71717A')
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .onClick(() => {
-              this.confirmRenameProject();
-            })
-
-          Text('✕')
-            .fontSize(14)
-            .fontColor('#DC2626')
-            .padding({ left: 4 })
-            .onClick(() => {
-              this.cancelRenameProject();
+              this.openNewSessionDialog(proj.id);
             })
         }
         .width('100%')
-        .padding({ left: 24, right: 8, bottom: 6 })
+        .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+        .borderRadius(6)
+        .backgroundColor(this.hoveredProjectId === proj.id ? '#F4F4F5' : 'transparent')
+        .onHover((isHover: boolean) => {
+          this.hoveredProjectId = isHover ? proj.id : '';
+        })
+        .onClick(() => {
+          this.showProjectMenuId = '';
+          this.toggleProjectExpanded(proj.id);
+        })
+        .bindContextMenu(this.projectContextMenuBuilder(proj), ResponseType.RightClick)
+
+        // Inline rename input
+        if (this.renamingProjectId === proj.id) {
+          Row() {
+            TextInput({ text: this.renameProjectText })
+              .layoutWeight(1)
+              .height(28)
+              .fontSize(12)
+              .backgroundColor('#FFFFFF')
+              .border({ width: 0.5, color: '#D4D4D8' })
+              .borderRadius(6)
+              .padding({ left: 8, right: 8 })
+              .onChange((value: string) => {
+                this.renameProjectText = value;
+              })
+
+            Text('✓')
+              .fontSize(14)
+              .fontColor('#16A34A')
+              .padding({ left: 8 })
+              .onClick(() => {
+                this.confirmRenameProject();
+              })
+
+            Text('✕')
+              .fontSize(14)
+              .fontColor('#DC2626')
+              .padding({ left: 4 })
+              .onClick(() => {
+                this.cancelRenameProject();
+              })
+          }
+          .width('100%')
+          .padding({ left: 24, right: 8, bottom: 6 })
+        }
+
+        // Sessions under this project
+        if (proj.expanded) {
+          Column() {
+            if (this.sessionsForProject(proj.id).length === 0) {
+              Text('暂无会话')
+                .fontSize(10)
+                .fontColor('#D4D4D8')
+                .padding({ left: 24, top: 4, bottom: 4 })
+            } else {
+              ForEach(this.sessionsForProject(proj.id), (session: WorkspaceItem) => {
+                this.sessionItem(session)
+              }, (session: WorkspaceItem) => `${session.id.toString()}:${session.title}`)
+            }
+          }
+          .width('100%')
+          .padding({ left: 16 })
+        }
       }
 
-      // Sessions under this project
-      if (proj.expanded) {
+      // Dropdown context menu for "..." button
+      if (this.showProjectMenuId === proj.id) {
         Column() {
-          if (this.sessionsForProject(proj.id).length === 0) {
-            Text('暂无会话')
-              .fontSize(10)
-              .fontColor('#D4D4D8')
-              .padding({ left: 24, top: 4, bottom: 4 })
-          } else {
-            ForEach(this.sessionsForProject(proj.id), (session: WorkspaceItem) => {
-              this.sessionItem(session)
-            }, (session: WorkspaceItem) => `${session.id.toString()}:${session.title}`)
-          }
+          Text('重命名项目')
+            .fontSize(12)
+            .fontColor('#27272A')
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .backgroundColor(this.hoveredMenuKey === 'rename' ? '#F4F4F5' : '#FFFFFF')
+            .borderRadius({ topLeft: 8, topRight: 8 })
+            .onHover((isHover: boolean) => {
+              this.hoveredMenuKey = isHover ? 'rename' : '';
+            })
+            .onClick(() => {
+              this.showProjectMenuId = '';
+              this.renameProjectDialogId = proj.id;
+              this.renameProjectDialogText = proj.name;
+              this.showRenameProjectDialog = true;
+            })
+
+          Text('删除项目')
+            .fontSize(12)
+            .fontColor('#DC2626')
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .backgroundColor(this.hoveredMenuKey === 'delete' ? '#FEF2F2' : '#FFFFFF')
+            .onHover((isHover: boolean) => {
+              this.hoveredMenuKey = isHover ? 'delete' : '';
+            })
+            .onClick(() => {
+              this.showProjectMenuId = '';
+              this.deleteProjectDialogId = proj.id;
+              this.deleteProjectDialogName = proj.name;
+              this.showDeleteProjectDialog = true;
+            })
+
+          Text('复制路径')
+            .fontSize(12)
+            .fontColor('#27272A')
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .backgroundColor(this.hoveredMenuKey === 'copy' ? '#F4F4F5' : '#FFFFFF')
+            .borderRadius({ bottomLeft: 8, bottomRight: 8 })
+            .onHover((isHover: boolean) => {
+              this.hoveredMenuKey = isHover ? 'copy' : '';
+            })
+            .onClick(() => {
+              this.showProjectMenuId = '';
+              let targetPath: string = '';
+              for (let i: number = 0; i < this.projects.length; i += 1) {
+                if (this.projects[i].id === proj.id) {
+                  targetPath = this.projects[i].path;
+                  break;
+                }
+              }
+              if (targetPath.length > 0) {
+                try {
+                  const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, targetPath);
+                  const systemPasteboard = pasteboard.getSystemPasteboard();
+                  void systemPasteboard.setData(pasteData);
+                  promptAction.showToast({ message: '路径已复制', duration: 2000 });
+                } catch (_err) {
+                  promptAction.showToast({ message: '复制失败', duration: 2000 });
+                }
+              }
+            })
         }
-        .width('100%')
-        .padding({ left: 16 })
+        .width(140)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(8)
+        .shadow({ radius: 8, color: 'rgba(0,0,0,0.1)', offsetX: 0, offsetY: 2 })
+        .position({ x: 60, y: 32 })
+        .zIndex(100)
       }
     }
     .width('100%')
@@ -2019,76 +2143,168 @@ struct Index {
   }
 
   @Builder
+  private projectContextMenuBuilder(proj: ProjectRecord) {
+    Menu() {
+      MenuItem({ content: '重命名项目' })
+        .onClick(() => {
+          this.renameProjectDialogId = proj.id;
+          this.renameProjectDialogText = proj.name;
+          this.showRenameProjectDialog = true;
+        })
+
+      MenuItem({ content: '删除项目' })
+        .onClick(() => {
+          this.deleteProjectDialogId = proj.id;
+          this.deleteProjectDialogName = proj.name;
+          this.showDeleteProjectDialog = true;
+        })
+
+      MenuItem({ content: '复制路径' })
+        .onClick(() => {
+          let targetPath: string = '';
+          for (let i: number = 0; i < this.projects.length; i += 1) {
+            if (this.projects[i].id === proj.id) {
+              targetPath = this.projects[i].path;
+              break;
+            }
+          }
+          if (targetPath.length > 0) {
+            try {
+              const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, targetPath);
+              const systemPasteboard = pasteboard.getSystemPasteboard();
+              void systemPasteboard.setData(pasteData);
+              promptAction.showToast({ message: '路径已复制', duration: 2000 });
+            } catch (_err) {
+              promptAction.showToast({ message: '复制失败', duration: 2000 });
+            }
+          }
+        })
+    }
+  }
+
+  @Builder
   private sessionItem(item: WorkspaceItem) {
-    Column() {
-      if (this.renamingSessionId === this.ensureWorkspaceBinding(item)) {
-        // Inline rename mode
-        Row() {
-          TextInput({ text: this.renameSessionText })
-            .layoutWeight(1)
-            .height(24)
-            .fontSize(11)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#D4D4D8' })
-            .borderRadius(4)
-            .padding({ left: 6, right: 6 })
-            .onChange((value: string) => {
-              this.renameSessionText = value;
-            })
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column() {
+        if (this.renamingSessionId === this.ensureWorkspaceBinding(item)) {
+          // Inline rename mode
+          Row() {
+            TextInput({ text: this.renameSessionText })
+              .layoutWeight(1)
+              .height(24)
+              .fontSize(11)
+              .backgroundColor('#FFFFFF')
+              .border({ width: 0.5, color: '#D4D4D8' })
+              .borderRadius(4)
+              .padding({ left: 6, right: 6 })
+              .onChange((value: string) => {
+                this.renameSessionText = value;
+              })
 
-          Text('✓')
+            Text('✓')
+              .fontSize(12)
+              .fontColor('#16A34A')
+              .padding({ left: 6 })
+              .onClick(() => {
+                this.confirmRenameSession();
+              })
+
+            Text('✕')
+              .fontSize(12)
+              .fontColor('#DC2626')
+              .padding({ left: 4 })
+              .onClick(() => {
+                this.cancelRenameSession();
+              })
+          }
+          .width('100%')
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+        } else {
+          // Normal session display
+          Row() {
+            Text(item.title)
+              .copyOption(CopyOptions.None)
+              .fontSize(11)
+              .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
+              .fontColor(this.isWorkspaceActive(item) ? '#18181B' : '#52525B')
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Text(this.relativeTime(this.findSessionUpdatedAt(item)))
+              .fontSize(9)
+              .fontColor('#A1A1AA')
+              .margin({ right: 4 })
+
+            Text('···')
+              .fontSize(11)
+              .fontColor('#A1A1AA')
+              .padding({ left: 2, right: 2 })
+              .visibility(this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? Visibility.Visible : Visibility.Hidden)
+              .onClick(() => {
+                const sid: string = this.ensureWorkspaceBinding(item);
+                this.showSessionMenuId = this.showSessionMenuId === sid ? '' : sid;
+              })
+          }
+          .width('100%')
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .borderRadius(6)
+          .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
+          .onHover((isHover: boolean) => {
+            this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
+          })
+          .onClick(() => {
+            this.showSessionMenuId = '';
+            void this.selectWorkspace(item);
+          })
+          .bindContextMenu(this.sessionContextMenuBuilder(item), ResponseType.RightClick)
+        }
+      }
+
+      // Dropdown context menu for session "..." button
+      if (this.showSessionMenuId === this.ensureWorkspaceBinding(item) && this.renamingSessionId !== this.ensureWorkspaceBinding(item)) {
+        Column() {
+          Text('重命名会话')
             .fontSize(12)
-            .fontColor('#16A34A')
-            .padding({ left: 6 })
+            .fontColor('#27272A')
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .backgroundColor(this.hoveredSessionMenuKey === 'rename' ? '#F4F4F5' : '#FFFFFF')
+            .borderRadius({ topLeft: 8, topRight: 8 })
+            .onHover((isHover: boolean) => {
+              this.hoveredSessionMenuKey = isHover ? 'rename' : '';
+            })
             .onClick(() => {
-              this.confirmRenameSession();
+              this.showSessionMenuId = '';
+              this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
+              this.renameSessionDialogText = item.title;
+              this.showRenameSessionDialog = true;
             })
 
-          Text('✕')
+          Text('删除会话')
             .fontSize(12)
             .fontColor('#DC2626')
-            .padding({ left: 4 })
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .backgroundColor(this.hoveredSessionMenuKey === 'delete' ? '#FEF2F2' : '#FFFFFF')
+            .borderRadius({ bottomLeft: 8, bottomRight: 8 })
+            .onHover((isHover: boolean) => {
+              this.hoveredSessionMenuKey = isHover ? 'delete' : '';
+            })
             .onClick(() => {
-              this.cancelRenameSession();
+              this.showSessionMenuId = '';
+              this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
+              this.deleteSessionDialogTitle = item.title;
+              this.showDeleteSessionDialog = true;
             })
         }
-        .width('100%')
-        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-      } else {
-        // Normal session display
-        Row() {
-          Text(item.title)
-            .copyOption(CopyOptions.None)
-            .fontSize(11)
-            .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
-            .fontColor(this.isWorkspaceActive(item) ? '#18181B' : '#52525B')
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text(this.relativeTime(this.findSessionUpdatedAt(item)))
-            .fontSize(9)
-            .fontColor('#A1A1AA')
-            .margin({ right: 4 })
-
-          Text('···')
-            .fontSize(11)
-            .fontColor('#A1A1AA')
-            .padding({ left: 2, right: 2 })
-            .onClick(() => {
-              this.startRenameSession(this.ensureWorkspaceBinding(item));
-            })
-        }
-        .width('100%')
-        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-        .borderRadius(6)
-        .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
-        .onHover((isHover: boolean) => {
-          this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
-        })
-        .onClick(() => {
-          void this.selectWorkspace(item);
-        })
+        .width(140)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(8)
+        .shadow({ radius: 8, color: 'rgba(0,0,0,0.1)', offsetX: 0, offsetY: 2 })
+        .position({ x: 40, y: 28 })
+        .zIndex(100)
       }
     }
     .width('100%')
@@ -2103,6 +2319,25 @@ struct Index {
       }
     }
     return '';
+  }
+
+  @Builder
+  private sessionContextMenuBuilder(item: WorkspaceItem) {
+    Menu() {
+      MenuItem({ content: '重命名会话' })
+        .onClick(() => {
+          this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
+          this.renameSessionDialogText = item.title;
+          this.showRenameSessionDialog = true;
+        })
+
+      MenuItem({ content: '删除会话' })
+        .onClick(() => {
+          this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
+          this.deleteSessionDialogTitle = item.title;
+          this.showDeleteSessionDialog = true;
+        })
+    }
   }
 
   @Builder
@@ -2889,6 +3124,261 @@ struct Index {
         .borderRadius(12)
       }
 
+      // Rename project dialog
+      if (this.showRenameProjectDialog) {
+        Column() {
+          Text('重命名项目')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .margin({ bottom: 10 })
+
+          TextInput({ placeholder: '项目名称', text: this.renameProjectDialogText })
+            .width('100%')
+            .height(36)
+            .fontSize(12)
+            .backgroundColor('#FFFFFF')
+            .border({ width: 0.5, color: '#D4D4D8' })
+            .borderRadius(8)
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => {
+              this.renameProjectDialogText = value;
+            })
+
+          Row() {
+            Button('取消')
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .backgroundColor('#F4F4F5')
+              .fontColor('#27272A')
+              .borderRadius(8)
+              .onClick(() => {
+                this.showRenameProjectDialog = false;
+              })
+
+            Button('确认')
+              .layoutWeight(1)
+              .height(32)
+              .margin({ left: 8 })
+              .fontSize(12)
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(8)
+              .onClick(() => {
+                const name: string = this.renameProjectDialogText.trim();
+                if (name.length === 0 || this.renameProjectDialogId.length === 0) {
+                  return;
+                }
+                const next: ProjectRecord[] = [];
+                for (let i: number = 0; i < this.projects.length; i += 1) {
+                  const p: ProjectRecord = this.projects[i];
+                  if (p.id === this.renameProjectDialogId) {
+                    next.push(new ProjectRecord(p.id, name, p.path, p.expanded));
+                  } else {
+                    next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
+                  }
+                }
+                this.projects = next;
+                this.saveProjects();
+                this.showRenameProjectDialog = false;
+              })
+          }
+          .width('100%')
+          .margin({ top: 10 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(12)
+      }
+
+      // Delete project dialog
+      if (this.showDeleteProjectDialog) {
+        Column() {
+          Text('删除项目')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .margin({ bottom: 10 })
+
+          Text(`确认删除项目「${this.deleteProjectDialogName}」？`)
+            .fontSize(12)
+            .fontColor('#52525B')
+            .width('100%')
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .backgroundColor('#FEF2F2')
+            .borderRadius(8)
+
+          Row() {
+            Button('取消')
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .backgroundColor('#F4F4F5')
+              .fontColor('#27272A')
+              .borderRadius(8)
+              .onClick(() => {
+                this.showDeleteProjectDialog = false;
+              })
+
+            Button('删除')
+              .layoutWeight(1)
+              .height(32)
+              .margin({ left: 8 })
+              .fontSize(12)
+              .backgroundColor('#DC2626')
+              .fontColor('#FFFFFF')
+              .borderRadius(8)
+              .onClick(() => {
+                void this.deleteProject(this.deleteProjectDialogId);
+                this.showDeleteProjectDialog = false;
+              })
+          }
+          .width('100%')
+          .margin({ top: 10 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(12)
+      }
+
+      // Rename session dialog
+      if (this.showRenameSessionDialog) {
+        Column() {
+          Text('重命名会话')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .margin({ bottom: 10 })
+
+          TextInput({ placeholder: '会话名称', text: this.renameSessionDialogText })
+            .width('100%')
+            .height(36)
+            .fontSize(12)
+            .backgroundColor('#FFFFFF')
+            .border({ width: 0.5, color: '#D4D4D8' })
+            .borderRadius(8)
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => {
+              this.renameSessionDialogText = value;
+            })
+
+          Row() {
+            Button('取消')
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .backgroundColor('#F4F4F5')
+              .fontColor('#27272A')
+              .borderRadius(8)
+              .onClick(() => {
+                this.showRenameSessionDialog = false;
+              })
+
+            Button('确认')
+              .layoutWeight(1)
+              .height(32)
+              .margin({ left: 8 })
+              .fontSize(12)
+              .backgroundColor('#111827')
+              .fontColor('#FFFFFF')
+              .borderRadius(8)
+              .onClick(() => {
+                const name: string = this.renameSessionDialogText.trim();
+                if (name.length === 0 || this.renameSessionDialogId.length === 0) {
+                  return;
+                }
+                const next: WorkspaceItem[] = [];
+                for (let i: number = 0; i < this.workspaces.length; i += 1) {
+                  const w: WorkspaceItem = this.workspaces[i];
+                  if (this.ensureWorkspaceBinding(w) === this.renameSessionDialogId) {
+                    next.push(new WorkspaceItem(w.id, name, w.description, w.workspaceId, w.projectId));
+                  } else {
+                    next.push(new WorkspaceItem(w.id, w.title, w.description, w.workspaceId, w.projectId));
+                  }
+                }
+                this.workspaces = next;
+                this.syncRecentWorkspaces();
+                this.syncCurrentWorkspaceState();
+                this.persistWorkspaceBindings();
+                this.showRenameSessionDialog = false;
+                void codexBackend.renameSession(this.renameSessionDialogId, name);
+              })
+          }
+          .width('100%')
+          .margin({ top: 10 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(12)
+      }
+
+      // Delete session dialog
+      if (this.showDeleteSessionDialog) {
+        Column() {
+          Text('删除会话')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18181B')
+            .margin({ bottom: 10 })
+
+          Text(`确认删除会话「${this.deleteSessionDialogTitle}」？`)
+            .fontSize(12)
+            .fontColor('#52525B')
+            .width('100%')
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .backgroundColor('#FEF2F2')
+            .borderRadius(8)
+
+          Row() {
+            Button('取消')
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .backgroundColor('#F4F4F5')
+              .fontColor('#27272A')
+              .borderRadius(8)
+              .onClick(() => {
+                this.showDeleteSessionDialog = false;
+              })
+
+            Button('删除')
+              .layoutWeight(1)
+              .height(32)
+              .margin({ left: 8 })
+              .fontSize(12)
+              .backgroundColor('#DC2626')
+              .fontColor('#FFFFFF')
+              .borderRadius(8)
+              .onClick(() => {
+                void this.deleteSession(this.deleteSessionDialogId);
+                this.showDeleteSessionDialog = false;
+              })
+          }
+          .width('100%')
+          .margin({ top: 10 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(12)
+        .margin({ top: 10 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .borderRadius(12)
+      }
+
       // Settings button
       Button() {
         Row() {
@@ -2918,6 +3408,10 @@ struct Index {
     .backgroundColor('#FAFAFA')
     .border({ width: 0.5, color: '#E4E4E7' })
     .borderRadius(20)
+    .onClick(() => {
+      this.showProjectMenuId = '';
+      this.showSessionMenuId = '';
+    })
   }
 
   @Builder
@@ -4172,5 +4666,9 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    .onClick(() => {
+      this.showProjectMenuId = '';
+      this.showSessionMenuId = '';
+    })
   }
 }

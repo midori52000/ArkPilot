@@ -27,51 +27,73 @@ function ensureParentDirectory(path: string): void {
   }
 }
 
-function safeParseSnapshot(rawText: string): ProjectRecord[] {
+interface ProjectStoreSnapshot {
+  projects: ProjectRecord[];
+  deletedPaths: string[];
+}
+
+function safeParseSnapshot(rawText: string): ProjectStoreSnapshot {
   try {
     const parsed: Object = JSON.parse(rawText) as Object;
     const record: Record<string, Object> = parsed as Record<string, Object>;
+    const projects: ProjectRecord[] = [];
     const itemsRaw: Object | undefined = record['projects'];
     if (Array.isArray(itemsRaw)) {
-      return itemsRaw.map((itemRaw: Object) => {
+      itemsRaw.forEach((itemRaw: Object) => {
         const itemRecord: Record<string, Object> = itemRaw as Record<string, Object>;
         const id: string = typeof itemRecord['id'] === 'string' ? (itemRecord['id'] as string) : '';
         const name: string = typeof itemRecord['name'] === 'string' ? (itemRecord['name'] as string) : '';
         const path: string = typeof itemRecord['path'] === 'string' ? (itemRecord['path'] as string) : '';
         const expanded: boolean = typeof itemRecord['expanded'] === 'boolean' ? (itemRecord['expanded'] as boolean) : true;
         if (id.length > 0 && name.length > 0) {
-          return new ProjectRecord(id, name, path, expanded);
+          projects.push(new ProjectRecord(id, name, path, expanded));
         }
-        return null;
-      }).filter((item: ProjectRecord | null) => item !== null) as ProjectRecord[];
+      });
     }
-    return [];
+    const deletedPaths: string[] = [];
+    const deletedRaw: Object | undefined = record['deletedPaths'];
+    if (Array.isArray(deletedRaw)) {
+      deletedRaw.forEach((item: Object) => {
+        if (typeof item === 'string') {
+          deletedPaths.push(item as string);
+        }
+      });
+    }
+    return { projects, deletedPaths };
   } catch (_err) {
-    return [];
+    return { projects: [], deletedPaths: [] };
   }
 }
 
 export class ProjectStore {
+  private cachedDeletedPaths: string[] = [];
+
   load(): ProjectRecord[] {
+    const snapshot = this.loadSnapshot();
+    this.cachedDeletedPaths = snapshot.deletedPaths;
+    return snapshot.projects;
+  }
+
+  private loadSnapshot(): ProjectStoreSnapshot {
     const path: string = storeFilePath();
     try {
       fileIo.statSync(path);
     } catch (_err) {
-      return [];
+      return { projects: [], deletedPaths: [] };
     }
     try {
       const rawText: string = fileIo.readTextSync(path);
       return safeParseSnapshot(rawText);
     } catch (err) {
       hilog.error(STORE_DOMAIN, STORE_TAG, 'load failed: %{public}s', `${err}`);
-      return [];
+      return { projects: [], deletedPaths: [] };
     }
   }
 
   save(projects: ProjectRecord[]): void {
     const path: string = storeFilePath();
     ensureParentDirectory(path);
-    const payload: string = JSON.stringify({ projects }, null, 2);
+    const payload: string = JSON.stringify({ projects, deletedPaths: this.cachedDeletedPaths }, null, 2);
     try {
       const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       fileIo.writeSync(file.fd, payload);
@@ -79,6 +101,20 @@ export class ProjectStore {
     } catch (err) {
       hilog.error(STORE_DOMAIN, STORE_TAG, 'save failed: %{public}s', `${err}`);
     }
+  }
+
+  addDeletedPath(path: string): void {
+    if (path.trim().length > 0 && this.cachedDeletedPaths.indexOf(path.trim()) < 0) {
+      this.cachedDeletedPaths.push(path.trim());
+    }
+  }
+
+  isDeletedPath(path: string): boolean {
+    return this.cachedDeletedPaths.indexOf(path.trim()) >= 0;
+  }
+
+  getDeletedPaths(): string[] {
+    return this.cachedDeletedPaths;
   }
 }
 

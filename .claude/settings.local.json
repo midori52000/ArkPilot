@@ -16,7 +16,9 @@
       "Bash(xargs grep -l \"fileManager\\\\|FileManager\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\build\" -Recurse -Filter \"*.hap\" -ErrorAction SilentlyContinue)",
       "Bash(Select-Object FullName, LastWriteTime, Length)",
-      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\build\" -Recurse -ErrorAction SilentlyContinue | Where-Object { !$_.PSIsContainer } | Select-Object FullName -First 20)"
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\build\" -Recurse -ErrorAction SilentlyContinue | Where-Object { !$_.PSIsContainer } | Select-Object FullName -First 20)",
+      "Bash(python *)",
+      "Bash(git -C \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\" diff HEAD -- \"Agent/entry/src/main/ets/pages/Index.ets\")"
     ]
   }
 }
