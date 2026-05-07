@@ -1317,9 +1317,9 @@ struct Index {
     switch (role) {
       case 'assistant':
       case 'agent':
-        return '#FFFFFF';
+        return '#FAFAFA';
       case 'system':
-        return '#F8FAFC';
+        return '#F4F4F5';
       case 'reasoning':
         return '#FFFBEB';
       case 'command':
@@ -1327,7 +1327,7 @@ struct Index {
       case 'tool':
         return '#EFF6FF';
       case 'file':
-        return '#FDF4FF';
+        return '#FAF5FF';
       case 'search':
         return '#ECFDF5';
       case 'plan':
@@ -1337,41 +1337,10 @@ struct Index {
       case 'hook':
         return '#FEF3C7';
       case 'review':
-        return '#FEF08A';
+        return '#FEF9C3';
       case 'user':
       default:
-        return '#F6F3FF';
-    }
-  }
-
-  private messageBorder(role: string): string {
-    switch (role) {
-      case 'assistant':
-      case 'agent':
-        return '#DBEAFE';
-      case 'system':
-        return '#CBD5E1';
-      case 'reasoning':
-        return '#FEF3C7';
-      case 'command':
-        return '#BBF7D0';
-      case 'tool':
-        return '#BFDBFE';
-      case 'file':
-        return '#E9D5FF';
-      case 'search':
-        return '#A7F3D0';
-      case 'plan':
-        return '#FED7AA';
-      case 'image':
-        return '#FBCFE8';
-      case 'hook':
-        return '#FCD34D';
-      case 'review':
-        return '#FACC15';
-      case 'user':
-      default:
-        return '#DDD6FE';
+        return '#F5F3FF';
     }
   }
 
@@ -1379,9 +1348,9 @@ struct Index {
     switch (role) {
       case 'assistant':
       case 'agent':
-        return '#1D4ED8';
+        return '#3B82F6';
       case 'system':
-        return '#475569';
+        return '#71717A';
       case 'reasoning':
         return '#D97706';
       case 'command':
@@ -1571,7 +1540,7 @@ struct Index {
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
       .backgroundColor(background)
-      .borderRadius(10)
+      .borderRadius(6)
   }
 
   @Builder
@@ -1581,12 +1550,12 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
+        .fontColor('#18181B')
 
       Text(subtitle)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .margin({ top: 4 })
     }
     .alignItems(HorizontalAlign.Start)
@@ -1598,24 +1567,24 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor('#71717A')
 
       Text(value)
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#0F172A')
+        .fontColor('#18181B')
         .margin({ left: 6 })
 
       Text('▾')
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .margin({ left: 6 })
     }
     .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-    .backgroundColor(active ? '#EEF4FF' : '#FFFFFF')
-    .border({ width: 1, color: active ? '#BFDBFE' : '#D7DEE8' })
-    .borderRadius(12)
+    .backgroundColor(active ? '#F4F4F5' : '#FAFAFA')
+    .border({ width: 0.5, color: active ? '#D4D4D8' : '#E4E4E7' })
+    .borderRadius(8)
     .onClick(() => {
       onPress();
     })
@@ -1626,11 +1595,11 @@ struct Index {
     Text(option.label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor(selected ? '#1D4ED8' : '#475569')
-      .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-      .backgroundColor(selected ? '#DBEAFE' : '#FFFFFF')
-      .border({ width: 1, color: selected ? '#93C5FD' : '#E2E8F0' })
-      .borderRadius(10)
+      .fontColor(selected ? '#18181B' : '#71717A')
+      .fontWeight(selected ? FontWeight.Medium : FontWeight.Normal)
+      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+      .backgroundColor(selected ? '#E4E4E7' : '#FAFAFA')
+      .borderRadius(6)
       .margin({ right: 6, bottom: 6 })
       .onClick(() => {
         onPress();
@@ -1644,14 +1613,14 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor('#0F172A')
+        .fontColor('#18181B')
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(item.description)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor('#A1A1AA')
         .margin({ top: 4 })
         .lineHeight(16)
         .maxLines(2)
@@ -1660,12 +1629,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(10)
-    .backgroundColor(this.isWorkspaceActive(item) ? '#EEF4FF' : '#FFFFFF')
-    .border({
-      width: 1,
-      color: this.isWorkspaceActive(item) ? '#BFDBFE' : '#E5E7EB'
-    })
-    .borderRadius(14)
+    .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : '#FFFFFF')
+    .borderRadius(8)
     .onClick(() => {
       void this.selectWorkspace(item);
     })
@@ -1679,7 +1644,7 @@ struct Index {
           .copyOption(CopyOptions.None)
           .fontSize(12)
           .fontWeight(this.isSidebarActive(item.view) ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor('#0F172A')
+          .fontColor('#18181B')
 
         Blank()
           .layoutWeight(1)
@@ -1689,7 +1654,7 @@ struct Index {
       Text(item.description)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor('#A1A1AA')
         .margin({ top: 4 })
         .lineHeight(16)
         .maxLines(2)
@@ -1698,9 +1663,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(10)
-    .backgroundColor(this.isSidebarActive(item.view) ? '#EEF4FF' : '#FFFFFF')
-    .border({ width: 1, color: this.isSidebarActive(item.view) ? '#BFDBFE' : '#E5E7EB' })
-    .borderRadius(14)
+    .backgroundColor(this.isSidebarActive(item.view) ? '#F4F4F5' : '#FFFFFF')
+    .borderRadius(8)
     .margin({ bottom: 6 })
     .onClick(() => {
       if (item.view === 'sessions') {
@@ -1717,13 +1681,13 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .width(78)
 
       Text(value)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
-        .fontColor('#334155')
+        .fontColor('#27272A')
         .layoutWeight(1)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1739,13 +1703,13 @@ struct Index {
       Text('•')
         .copyOption(CopyOptions.None)
         .fontSize(12)
-        .fontColor('#475569')
+        .fontColor('#A1A1AA')
         .margin({ right: 6 })
 
       Text(text)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
-        .fontColor('#334155')
+        .fontColor('#27272A')
         .layoutWeight(1)
         .lineHeight(18)
     }
@@ -1770,7 +1734,7 @@ struct Index {
         Text(item.timestamp)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor('#A1A1AA')
           .margin({ left: 8 })
 
         if (item.status && item.status !== 'completed') {
@@ -1779,7 +1743,7 @@ struct Index {
             .fontColor(this.statusColor(item.status))
             .backgroundColor(this.statusBgColor(item.status))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(8)
+            .borderRadius(6)
             .margin({ left: 8 })
         }
       }
@@ -1794,13 +1758,9 @@ struct Index {
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(12)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-    .border({
-      width: 1,
-      color: this.messageBorder(item.itemType ?? item.role)
-    })
-    .borderRadius(16)
+    .borderRadius(10)
   }
 
   private messageIcon(itemType?: string): string {
@@ -1852,7 +1812,7 @@ struct Index {
       case 'declined':
         return '#D97706';
       default:
-        return '#64748B';
+        return '#71717A';
     }
   }
 
@@ -1865,19 +1825,19 @@ struct Index {
       case 'declined':
         return '#FEF3C7';
       default:
-        return '#F1F5F9';
+        return '#F4F4F5';
     }
   }
 
   private messageContentColor(itemType?: string): string {
     switch (itemType) {
       case 'reasoning':
-        return '#6B7280';
+        return '#71717A';
       case 'command':
       case 'tool':
         return '#1E40AF';
       default:
-        return '#334155';
+        return '#27272A';
     }
   }
 
@@ -1888,7 +1848,7 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .width(28)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .fontFamily('monospace')
 
       Text(line.sign)
@@ -1910,7 +1870,7 @@ struct Index {
     .width('100%')
     .padding({ left: 8, right: 8, top: 7, bottom: 7 })
     .backgroundColor(this.diffBackground(line.kind))
-    .borderRadius(10)
+    .borderRadius(8)
   }
 
   @Builder
@@ -1921,14 +1881,14 @@ struct Index {
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontWeight(this.isDiffFileSelected(file) ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor('#0F172A')
+          .fontColor('#18181B')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(file.path)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(9)
-          .fontColor('#64748B')
+          .fontColor('#A1A1AA')
           .margin({ top: 4 })
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1939,13 +1899,12 @@ struct Index {
       Text(file.diffStat)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor(this.isDiffFileSelected(file) ? '#1D4ED8' : '#15803D')
+        .fontColor(this.isDiffFileSelected(file) ? '#2563EB' : '#16A34A')
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor(this.isDiffFileSelected(file) ? '#EEF4FF' : '#FFFFFF')
-    .border({ width: 1, color: this.isDiffFileSelected(file) ? '#BFDBFE' : '#E2E8F0' })
-    .borderRadius(12)
+    .backgroundColor(this.isDiffFileSelected(file) ? '#F4F4F5' : '#FFFFFF')
+    .borderRadius(8)
     .onClick(() => {
       this.selectDiffFile(file.path);
     })
@@ -1956,11 +1915,10 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor('#475569')
-      .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(10)
+      .fontColor('#71717A')
+      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+      .backgroundColor('#FAFAFA')
+      .borderRadius(6)
       .margin({ right: 6, bottom: 6 })
       .onClick(() => {
         this.draft = label;
@@ -1983,7 +1941,7 @@ struct Index {
       Text(approval.detail)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
-        .fontColor('#334155')
+        .fontColor('#27272A')
         .lineHeight(19)
         .margin({ top: 10 })
 
@@ -1991,9 +1949,9 @@ struct Index {
         Button('允许')
           .height(34)
           .fontSize(12)
-          .backgroundColor('#111827')
+          .backgroundColor('#27272A')
           .fontColor('#FFFFFF')
-          .borderRadius(16)
+          .borderRadius(8)
           .onClick(() => {
             void this.approvePending();
           })
@@ -2002,10 +1960,10 @@ struct Index {
           .height(34)
           .margin({ left: 8 })
           .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(16)
-          .border({ width: 1, color: '#CBD5E1' })
+          .backgroundColor('#FAFAFA')
+          .fontColor('#27272A')
+          .borderRadius(8)
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             void this.declinePending();
           })
@@ -2017,9 +1975,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFF7ED')
-    .border({ width: 1, color: '#FED7AA' })
-    .borderRadius(18)
+    .backgroundColor('#FFFBEB')
+    .borderRadius(10)
     .margin({ top: 10 })
   }
 
@@ -2040,7 +1997,7 @@ struct Index {
         Text(request.detail)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
-          .fontColor('#334155')
+          .fontColor('#27272A')
           .lineHeight(19)
           .margin({ top: 10 })
       }
@@ -2051,11 +2008,11 @@ struct Index {
             Text(question.header)
               .fontSize(11)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
+              .fontColor('#18181B')
 
             Text(question.question)
               .fontSize(11)
-              .fontColor('#475569')
+              .fontColor('#71717A')
               .lineHeight(18)
               .margin({ top: 4 })
 
@@ -2073,7 +2030,7 @@ struct Index {
                     if (option.description.trim().length > 0) {
                       Text(option.description)
                         .fontSize(10)
-                        .fontColor('#64748B')
+                        .fontColor('#A1A1AA')
                         .lineHeight(16)
                     }
                   }
@@ -2094,9 +2051,9 @@ struct Index {
                 .height(40)
                 .margin({ top: 8 })
                 .fontSize(11)
-                .backgroundColor('#FFFFFF')
-                .borderRadius(12)
-                .border({ width: 1, color: '#E2E8F0' })
+                .backgroundColor('#FAFAFA')
+                .borderRadius(8)
+                .border({ width: 0.5, color: '#E4E4E7' })
                 .padding({ left: 12, right: 12 })
                 .onChange((value: string) => {
                   this.setRequestUserInputAnswer(question.id, value);
@@ -2114,9 +2071,9 @@ struct Index {
         Button('继续')
           .height(34)
           .fontSize(12)
-          .backgroundColor('#111827')
+          .backgroundColor('#27272A')
           .fontColor('#FFFFFF')
-          .borderRadius(16)
+          .borderRadius(8)
           .onClick(() => {
             void this.submitRequestUserInput();
           })
@@ -2125,10 +2082,10 @@ struct Index {
           .height(34)
           .margin({ left: 8 })
           .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(16)
-          .border({ width: 1, color: '#CBD5E1' })
+          .backgroundColor('#FAFAFA')
+          .fontColor('#27272A')
+          .borderRadius(8)
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             void this.declineRequestUserInput();
           })
@@ -2140,9 +2097,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFFDF5')
-    .border({ width: 1, color: '#FCD34D' })
-    .borderRadius(18)
+    .backgroundColor('#FFFBEB')
+    .borderRadius(10)
     .margin({ top: 10 })
   }
 
@@ -2157,12 +2113,12 @@ struct Index {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
+            .fontColor('#18181B')
 
           Text('项目侧边栏控制台')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -2189,8 +2145,8 @@ struct Index {
       .padding(12)
       .margin({ top: 12 })
       .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(12)
 
       Column() {
         this.panelTitle('会话概况', '')
@@ -2216,7 +2172,7 @@ struct Index {
               .backgroundColor('#FFFFFF')
               .fontColor('#111827')
               .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
+              .border({ width: 0.5, color: '#E4E4E7' })
               .onClick(() => {
                 void this.pickWorkspaceDirectory();
               })
@@ -2229,7 +2185,7 @@ struct Index {
               .backgroundColor('#FFFFFF')
               .fontColor('#111827')
               .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
+              .border({ width: 0.5, color: '#E4E4E7' })
               .onClick(() => {
                 const targetPath: string = this.directoryFilter.length > 0 ? this.directoryFilter : this.workspaceRoot;
                 if (targetPath.length === 0) {
@@ -2251,8 +2207,8 @@ struct Index {
         .width('100%')
         .padding(12)
         .margin({ top: 10 })
-        .backgroundColor('#F8FAFC')
-        .border({ width: 1, color: '#E2E8F0' })
+        .backgroundColor('#FAFAFA')
+        .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(16)
 
         Row() {
@@ -2273,10 +2229,10 @@ struct Index {
             .height(34)
             .margin({ left: 8 })
             .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .fontColor('#334155')
-            .borderRadius(16)
-            .border({ width: 1, color: '#CBD5E1' })
+            .backgroundColor('#FAFAFA')
+            .fontColor('#27272A')
+            .borderRadius(8)
+            .border({ width: 0.5, color: '#E4E4E7' })
             .onClick(() => {
               router.pushUrl({ url: 'pages/SessionsPage' });
             })
@@ -2288,13 +2244,13 @@ struct Index {
           Text('当前目录下暂无会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 12 })
         } else {
           Text('当前目录下的所有会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 12, bottom: 8 })
 
           List({ space: 6 }) {
@@ -2314,8 +2270,8 @@ struct Index {
       .padding(12)
       .margin({ top: 10 })
       .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(12)
 
     }
     }
@@ -2328,11 +2284,11 @@ struct Index {
       Row() {
         Text('⚙')
           .fontSize(14)
-          .fontColor('#64748B')
+          .fontColor('#71717A')
 
         Text('设置')
           .fontSize(12)
-          .fontColor('#64748B')
+          .fontColor('#71717A')
           .margin({ left: 6 })
       }
     }
@@ -2341,7 +2297,7 @@ struct Index {
     .margin({ top: 8 })
     .backgroundColor('#FFFFFF')
     .borderRadius(16)
-    .border({ width: 1, color: '#E2E8F0' })
+    .border({ width: 0.5, color: '#E4E4E7' })
     .onClick(() => {
       router.pushUrl({ url: 'pages/SettingsPage' });
     })
@@ -2349,8 +2305,8 @@ struct Index {
     .height('100%')
     .width(this.leftPanelWidth)
     .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
     .borderRadius(20)
   }
 
@@ -2364,12 +2320,12 @@ struct Index {
               .width(16)
               .height(12)
               .borderRadius(3)
-              .border({ width: 1.5, color: '#64748B' })
-              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+              .border({ width: 1.5, color: '#71717A' })
+              .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
             Column()
               .width(1.5)
               .height(8)
-              .backgroundColor('#64748B')
+              .backgroundColor('#71717A')
               .position({ x: 4, y: 2 })
           }
           .width(16)
@@ -2378,9 +2334,9 @@ struct Index {
         .type(ButtonType.Normal)
         .width(32)
         .height(28)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor('#FAFAFA')
         .borderRadius(8)
-        .border({ width: 1, color: '#E2E8F0' })
+        .border({ width: 0.5, color: '#E4E4E7' })
         .onClick(() => {
           this.toggleLeftDrawer();
         })
@@ -2393,12 +2349,12 @@ struct Index {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
+            .fontColor('#18181B')
 
           Text(this.currentWorkspaceDescription)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -2413,25 +2369,25 @@ struct Index {
             .fontColor('#C2410C')
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .backgroundColor('#FFF7ED')
-            .borderRadius(10)
+            .borderRadius(6)
           Blank()
             .width(6)
           Text(this.currentModelLabel())
             .copyOption(CopyOptions.None)
             .fontSize(10)
-            .fontColor('#1D4ED8')
+            .fontColor('#2563EB')
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#EEF4FF')
-            .borderRadius(10)
+            .backgroundColor('#EFF6FF')
+            .borderRadius(6)
           Blank()
             .width(6)
           Text(this.currentEffortLabel())
             .copyOption(CopyOptions.None)
             .fontSize(10)
-            .fontColor('#64748B')
+            .fontColor('#71717A')
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#F8FAFC')
-            .borderRadius(10)
+            .backgroundColor('#F4F4F5')
+            .borderRadius(6)
           Blank()
             .width(6)
           Button() {
@@ -2440,12 +2396,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#64748B' })
-                .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+                .border({ width: 1.5, color: '#71717A' })
+                .backgroundColor(this.showRightDrawer ? '#F4F4F5' : '#FFFFFF')
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#64748B')
+                .backgroundColor('#71717A')
                 .position({ x: 10.5, y: 2 })
             }
             .width(16)
@@ -2454,9 +2410,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor('#FAFAFA')
           .borderRadius(8)
-          .border({ width: 1, color: '#E2E8F0' })
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             this.toggleRightDrawer();
           })
@@ -2471,7 +2427,7 @@ struct Index {
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#0F172A')
+          .fontColor('#18181B')
 
         Column() {
           ForEach(this.summaryPoints, (item: string) => {
@@ -2485,7 +2441,7 @@ struct Index {
           Text(this.changedFiles)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
-            .fontColor('#64748B')
+            .fontColor('#71717A')
             .layoutWeight(1)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2503,8 +2459,8 @@ struct Index {
       .padding(14)
       .margin({ top: 10 })
       .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E5E7EB' })
-      .borderRadius(18)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(12)
 
       if (this.pendingApproval !== null) {
         this.approvalCard(this.pendingApproval!)
@@ -2534,22 +2490,22 @@ struct Index {
             Text('模式')
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#64748B')
+              .fontColor('#71717A')
             Text(this.currentCollaborationModeLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#0F172A')
+              .fontColor('#18181B')
               .margin({ left: 6 })
             Text('▾')
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#94A3B8')
+              .fontColor('#A1A1AA')
               .margin({ left: 6 })
           }
           .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-          .backgroundColor(this.showCollaborationModeOptions ? '#EEF4FF' : '#FFFFFF')
-          .border({ width: 1, color: this.showCollaborationModeOptions ? '#BFDBFE' : '#D7DEE8' })
-          .borderRadius(12)
+          .backgroundColor(this.showCollaborationModeOptions ? '#F4F4F5' : '#FAFAFA')
+          .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#D4D4D8' : '#E4E4E7' })
+          .borderRadius(8)
           .onClick(() => {
             this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
             if (this.showCollaborationModeOptions) {
@@ -2606,14 +2562,15 @@ struct Index {
         .margin({ top: 8 })
 
         Row() {
-          TextInput({ text: this.draft, placeholder: '输入要发送给真实 ArkPilot 的指令...' })
+          TextInput({ text: this.draft, placeholder: '输入要发送给 ArkPilot 的指令...' })
             .layoutWeight(1)
             .height(40)
             .fontSize(12)
-            .fontColor('#0F172A')
-            .placeholderColor('#94A3B8')
-            .backgroundColor('#FFFFFF')
-            .borderRadius(19)
+            .fontColor('#18181B')
+            .placeholderColor('#A1A1AA')
+            .backgroundColor('#FAFAFA')
+            .borderRadius(10)
+            .border({ width: 0.5, color: '#E4E4E7' })
             .padding({ left: 12, right: 12 })
             .enterKeyType(EnterKeyType.Send)
             .onChange((value: string) => {
@@ -2638,8 +2595,8 @@ struct Index {
             .width(64)
             .height(36)
             .margin({ left: 8 })
-            .backgroundColor('#111827')
-            .borderRadius(18)
+            .backgroundColor('#27272A')
+            .borderRadius(10)
             .opacity(1)
             .onClick(() => {
               if (this.isRunning) {
@@ -2656,12 +2613,12 @@ struct Index {
           Text(this.connectionText)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
 
           Text(this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ left: 10 })
             .layoutWeight(1)
             .maxLines(1)
@@ -2673,9 +2630,9 @@ struct Index {
       .width('100%')
       .padding(12)
       .margin({ top: 10 })
-      .backgroundColor('#F8FAFC')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .backgroundColor('#FAFAFA')
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(10)
     }
     .height('100%')
     .width('100%')
@@ -2692,12 +2649,12 @@ struct Index {
               .width(16)
               .height(12)
               .borderRadius(3)
-              .border({ width: 1.5, color: '#64748B' })
-              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+              .border({ width: 1.5, color: '#71717A' })
+              .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
             Column()
               .width(1.5)
               .height(8)
-              .backgroundColor('#64748B')
+              .backgroundColor('#71717A')
               .position({ x: 4, y: 2 })
           }
           .width(16)
@@ -2706,9 +2663,9 @@ struct Index {
         .type(ButtonType.Normal)
         .width(32)
         .height(28)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor('#FAFAFA')
         .borderRadius(8)
-        .border({ width: 1, color: '#E2E8F0' })
+        .border({ width: 0.5, color: '#E4E4E7' })
         .onClick(() => {
           this.toggleLeftDrawer();
         })
@@ -2720,12 +2677,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#64748B' })
-                .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+                .border({ width: 1.5, color: '#71717A' })
+                .backgroundColor(this.showRightDrawer ? '#F4F4F5' : '#FFFFFF')
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#64748B')
+                .backgroundColor('#71717A')
                 .position({ x: 10.5, y: 2 })
             }
             .width(16)
@@ -2734,9 +2691,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor('#FAFAFA')
           .borderRadius(8)
-          .border({ width: 1, color: '#E2E8F0' })
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             this.toggleRightDrawer();
           })
@@ -2748,11 +2705,11 @@ struct Index {
           Text('当前目录下暂无会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
           Text(this.directoryFilterText)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
-            .fontColor('#CBD5E1')
+            .fontColor('#D4D4D8')
             .margin({ top: 8 })
         }
         .layoutWeight(1)
@@ -2764,9 +2721,9 @@ struct Index {
     .height('100%')
     .layoutWeight(1)
     .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
-    .borderRadius(20)
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
+    .borderRadius(12)
   }
 
   @Builder
@@ -2781,17 +2738,17 @@ struct Index {
         Text(this.diffFiles.length > 0 ? this.currentDiffFileStat() : this.diffStat)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#15803D')
+          .fontColor('#16A34A')
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('#ECFDF3')
-          .borderRadius(10)
+          .backgroundColor('#F0FDF4')
+          .borderRadius(6)
       }
       .width('100%')
 
       Text(this.changedFiles)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
-        .fontColor('#64748B')
+        .fontColor('#71717A')
         .margin({ top: 8 })
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2800,7 +2757,7 @@ struct Index {
         Text('\u53d8\u66f4\u6587\u4ef6')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor('#A1A1AA')
           .margin({ top: 10 })
 
         List({ space: 6 }) {
@@ -2819,12 +2776,12 @@ struct Index {
           Text('\u5f53\u524d')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
 
           Text(this.currentDiffFilePath())
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#334155')
+            .fontColor('#27272A')
             .layoutWeight(1)
             .margin({ left: 8 })
             .maxLines(1)
@@ -2871,8 +2828,8 @@ struct Index {
     .height('100%')
     .width(this.rightPanelWidth)
     .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
     .borderRadius(20)
   }
 
@@ -3023,35 +2980,36 @@ struct Index {
 
   @Builder tokenUsageCard() {
     Column() {
-      // 箭头指示器（可拖拽调整高度）
-      Row() {
-        Text(this.tokenCardExpanded ? '▼' : '▲')
-          .fontSize(10)
-          .fontColor('#A1A1AA')
-      }
-      .width('100%')
-      .height(16)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-      .backgroundColor(this.tokenCardExpanded ? '#FFFFFF' : '#FAFAFA')
-      .borderRadius({ topLeft: 10, topRight: 10 })
-      .border({ width: 0.5, color: '#E4E4E7' })
-      .margin({ bottom: -1 })
-      .hitTestBehavior(HitTestMode.Block)
-      .gesture(
-        TapGesture()
-          .onAction(() => {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-              this.tokenCardExpanded = !this.tokenCardExpanded;
-            });
-          })
-      )
-      .gesture(
-        PanGesture({ direction: PanDirection.Vertical })
-          .onActionStart(() => {
-            this.tokenCardDragStartY = 0;
-            this.tokenCardDragStartH = this.tokenCardHeight;
-          })
+      // 箭头指示器（展开时显示，可拖拽调整高度）
+      if (this.tokenCardExpanded) {
+        Row() {
+          Text('▼')
+            .fontSize(10)
+            .fontColor('#A1A1AA')
+        }
+        .width('100%')
+        .height(16)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor('#FFFFFF')
+        .borderRadius({ topLeft: 10, topRight: 10 })
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .margin({ bottom: -1 })
+        .hitTestBehavior(HitTestMode.Block)
+        .gesture(
+          TapGesture()
+            .onAction(() => {
+              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                this.tokenCardExpanded = false;
+              });
+            })
+        )
+        .gesture(
+          PanGesture({ direction: PanDirection.Vertical })
+            .onActionStart(() => {
+              this.tokenCardDragStartY = 0;
+              this.tokenCardDragStartH = this.tokenCardHeight;
+            })
           .onActionUpdate((event: GestureEvent) => {
             const newH = this.tokenCardDragStartH - event.offsetY;
             if (newH >= 120 && newH <= 600) {
@@ -3059,6 +3017,7 @@ struct Index {
             }
           })
       )
+      }
 
       // 卡片内容
       Column() {
@@ -3069,9 +3028,25 @@ struct Index {
               .fontSize(11)
               .fontColor('#71717A')
               .maxLines(1)
+            Blank()
+            Text('▲')
+              .fontSize(10)
+              .fontColor('#A1A1AA')
           }
           .width('100%')
-          .padding({ top: 8, bottom: 8, left: 12 })
+          .padding({ top: 8, bottom: 8, left: 12, right: 12 })
+          .borderRadius({ topLeft: 10, topRight: 10 })
+          .backgroundColor('#FAFAFA')
+          .border({ width: 0.5, color: '#E4E4E7' })
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            TapGesture()
+              .onAction(() => {
+                animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                  this.tokenCardExpanded = true;
+                });
+              })
+          )
         } else {
           // 展开状态：固定高度 + 滚动
           Scroll() {
@@ -3480,7 +3455,7 @@ struct Index {
             .width(8)
             .height('100%')
             .justifyContent(FlexAlign.Center)
-            .backgroundColor('#F1F5F9')
+            .backgroundColor('#F4F4F5')
             .borderRadius(4)
             .hitTestBehavior(HitTestMode.Block)
             .gesture(
@@ -3524,7 +3499,7 @@ struct Index {
             .width(8)
             .height('100%')
             .justifyContent(FlexAlign.Center)
-            .backgroundColor('#F1F5F9')
+            .backgroundColor('#F4F4F5')
             .borderRadius(4)
             .hitTestBehavior(HitTestMode.Block)
             .gesture(
