@@ -180,6 +180,7 @@ struct Index {
   @State private pendingApproval: CodexApprovalRequest | null = null;
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
+  @State private expandedIntermediateMessageIds: string[] = [];
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -1720,59 +1721,126 @@ struct Index {
 
   @Builder
   private messageCard(item: ChatMessage) {
-    Row() {
-      if (item.role === 'user') {
-        // 用户消息占位，推动气泡到右侧
-        Column().layoutWeight(1)
-      }
-
-      Column() {
-        Row() {
-          Text(this.messageIcon(item.itemType))
+    Column() {
+      Row() {
+        if (this.isCollapsibleMessage(item)) {
+          Text(this.isMessageCollapsed(item) ? '▸' : '▾')
+            .copyOption(CopyOptions.None)
             .fontSize(12)
-            .margin({ right: 4 })
-
-          Text(item.author)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(item.role === 'user' ? '#2563EB' : this.authorColor(item.role))
-
-          Text(item.timestamp)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor(item.role === 'user' ? '#93C5FD' : '#A1A1AA')
-            .margin({ left: 8 })
-
-          if (item.status && item.status !== 'completed') {
-            Text(this.statusLabel(item.status))
-              .fontSize(9)
-              .fontColor(item.role === 'user' ? '#1E40AF' : this.statusColor(item.status))
-              .backgroundColor(item.role === 'user' ? '#BFDBFE' : this.statusBgColor(item.status))
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(6)
-              .margin({ left: 8 })
-          }
+            .fontColor('#71717A')
+            .width(14)
+            .margin({ right: 2 })
         }
-        .width('100%')
 
+        Text(this.messageIcon(item.itemType))
+          .fontSize(12)
+          .margin({ right: 4 })
+
+        Text(item.author)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.authorColor(item.itemType ?? item.role))
+
+        Text(item.timestamp)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(10)
+          .fontColor('#A1A1AA')
+          .margin({ left: 8 })
+
+        if (item.status && item.status !== 'completed') {
+          Text(this.statusLabel(item.status))
+            .fontSize(9)
+            .fontColor(this.statusColor(item.status))
+            .backgroundColor(this.statusBgColor(item.status))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(6)
+            .margin({ left: 8 })
+        }
+      }
+      .constraintSize({ maxWidth: '100%' })
+      .onClick(() => {
+        if (this.isCollapsibleMessage(item)) {
+          this.toggleMessageExpanded(item.id);
+        }
+      })
+
+      if (this.isMessageCollapsed(item)) {
         Text(item.content)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
           .lineHeight(19)
-          .fontColor(item.role === 'user' ? '#1E293B' : this.messageContentColor(item.itemType))
+          .fontColor(this.messageContentColor(item.itemType))
+          .margin({ top: 6 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      } else {
+        Text(item.content)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .lineHeight(19)
+          .fontColor(this.messageContentColor(item.itemType))
           .margin({ top: 6 })
       }
-      .alignItems(HorizontalAlign.Start)
-      .width(item.role === 'user' ? '75%' : '85%')
-      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-      .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-      .borderRadius(10)
+    }
+    .alignItems(HorizontalAlign.Start)
+    .constraintSize({ maxWidth: '100%' })
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.messageBackground(item.itemType ?? item.role))
+    .borderRadius(10)
+  }
+
+  @Builder
+  private messageLine(item: ChatMessage) {
+    Row() {
+      if (this.isUserMessage(item)) {
+        Blank()
+          .layoutWeight(1)
+        this.messageCard(item)
+      } else {
+        this.messageCard(item)
+        Blank()
+          .layoutWeight(1)
+      }
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
+    .margin({ bottom: 8 })
   }
 
+  private isUserMessage(item: ChatMessage): boolean {
+    return item.role === 'user';
+  }
+
+  private isCollapsibleMessage(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    return type === 'reasoning' ||
+      type === 'command' ||
+      type === 'tool' ||
+      type === 'file' ||
+      type === 'search' ||
+      type === 'plan' ||
+      type === 'image' ||
+      type === 'hook' ||
+      type === 'review' ||
+      type === 'system';
+  }
+
+  private isMessageCollapsed(item: ChatMessage): boolean {
+    return this.isCollapsibleMessage(item) && !this.isMessageExpanded(item.id);
+  }
+
+  private isMessageExpanded(messageId: string): boolean {
+    return this.expandedIntermediateMessageIds.indexOf(messageId) >= 0;
+  }
+
+  private toggleMessageExpanded(messageId: string): void {
+    if (this.isMessageExpanded(messageId)) {
+      this.expandedIntermediateMessageIds = this.expandedIntermediateMessageIds.filter((id: string) => id !== messageId);
+      return;
+    }
+    this.expandedIntermediateMessageIds = [...this.expandedIntermediateMessageIds, messageId];
+  }
   private messageIcon(itemType?: string): string {
     switch (itemType) {
       case 'reasoning':
@@ -2483,7 +2551,7 @@ struct Index {
       Scroll(this.messageScroller) {
         Column() {
           ForEach(this.visibleMessages(), (item: ChatMessage) => {
-            this.messageCard(item)
+            this.messageLine(item)
           }, (item: ChatMessage) => this.messageRenderKey(item))
         }
         .width('100%')
