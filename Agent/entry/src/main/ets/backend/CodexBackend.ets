@@ -265,6 +265,16 @@ export class ConfigManagerFacade {
     }
   }
 
+  reorderProviders(providers: ProviderRecord[]): ConfigActionResult<void> {
+    try {
+      apiManagementService.reorderProviders(providers);
+      this.reloadProviders();
+      return configSuccess<void>(undefined);
+    } catch (err) {
+      return this.configFailureFromError<void>(err as Object, 'REORDER_PROVIDERS_FAILED', '保存排序失败。');
+    }
+  }
+
   setActiveProvider(id: string): ConfigActionResult<ProviderRecord> {
     try {
       const activated = apiManagementService.activateProvider(id);

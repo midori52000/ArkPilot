@@ -154,15 +154,6 @@ struct SettingsPage {
   @State private apiSpeedTesting: boolean = false;
   @State private apiSpeedResults: EndpointSpeedResult[] = [];
   @State private apiShowSpeedResults: boolean = false;
-  @State private dragTargetName: string = '';
-  @State private dragFromIndex: number = -1;
-  @State private dragOverIndex: number = -1;
-  private dragStartY: number = 0;
-  private dragStartIndex: number = -1;
-  private dragDownTime: number = 0;
-  private dragMoved: boolean = false;
-  private readonly CARD_HEIGHT_ESTIMATE: number = 76;
-  private readonly LONG_PRESS_MS: number = 500;
 
   aboutToAppear(): void {
     this.loadMockData();
@@ -260,8 +251,16 @@ struct SettingsPage {
       this.apiEndpoints = [];
       return;
     }
-    const currentId = this.selectedApiProviderId.length > 0 ? this.selectedApiProviderId : this.apiProviders[0].id;
-    this.syncApiDraftFromProvider(currentId);
+    if (this.selectedApiProviderId.length > 0) {
+      this.syncApiDraftFromProvider(this.selectedApiProviderId);
+    } else {
+      this.apiProviderName = '';
+      this.apiBaseUrl = '';
+      this.apiModel = '';
+      this.apiWireApi = 'responses';
+      this.apiAuthState = '';
+      this.apiEndpoints = [];
+    }
   }
 
   private syncSkillsStateFromViewModel(): void {
@@ -1224,21 +1223,21 @@ struct SettingsPage {
   }
 
   private apiProviderCardBorder(provider: ProviderRecord): string {
-    if (provider.id === this.selectedApiProviderId || provider.isActive) {
-      return '#6AA7FF';
+    if (provider.id === this.selectedApiProviderId) {
+      return '#93C5FD';
     }
-    return '#D7E2F1';
+    return '#E5E7EB';
   }
 
   private apiProviderCardBackground(provider: ProviderRecord): string {
-    if (provider.id === this.selectedApiProviderId || provider.isActive) {
-      return '#EEF6FF';
+    if (provider.id === this.selectedApiProviderId) {
+      return '#F0F7FF';
     }
     return '#FFFFFF';
   }
 
   private apiProviderEmphasized(provider: ProviderRecord): boolean {
-    return provider.id === this.selectedApiProviderId || provider.isActive;
+    return provider.id === this.selectedApiProviderId;
   }
 
   private syncApiDraftFromProvider(providerId: string): void {
@@ -1650,43 +1649,39 @@ struct SettingsPage {
     Row() {
       Button() {
         Row() {
-          Text('←')
+          Text('<')
             .fontSize(16)
             .fontColor('#0F172A')
+            .fontWeight(FontWeight.Bold)
           Text('返回')
-            .fontSize(12)
+            .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
-            .margin({ left: 8 })
+            .margin({ left: 6 })
         }
       }
-      .height(42)
-      .padding({ left: 14, right: 14 })
+      .height(36)
+      .padding({ left: 12, right: 14 })
       .backgroundColor('#FFFFFF')
-      .borderRadius(18)
-      .border({ width: 1, color: '#D8E1EE' })
+      .borderRadius(10)
+      .border({ width: 1, color: '#E5E7EB' })
       .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .onTouch((event: TouchEvent) => { this.updatePressed('back', event); })
       .onClick(() => { router.back(); })
 
-      Column() {
-        Text('设置')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#0F172A')
-      }
-      .alignItems(HorizontalAlign.Start)
-      .margin({ left: 18 })
+      Text('设置')
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#0F172A')
+        .margin({ left: 16 })
 
       Blank()
         .layoutWeight(1)
-
-      this.particleCluster()
     }
     .width('100%')
-    .padding({ left: 28, right: 28, top: 24, bottom: 16 })
+    .padding({ left: 24, right: 24, top: 20, bottom: 12 })
   }
 
   @Builder
@@ -1710,26 +1705,21 @@ struct SettingsPage {
   @Builder
   private sidebar() {
     Column() {
-      this.sidebarHero()
-
       Column() {
         ForEach(this.navItems, (item: SettingsNavItem) => {
           this.sidebarEntry(item)
         }, (item: SettingsNavItem) => item.tab)
       }
-      .margin({ top: 16 })
 
       Blank()
         .layoutWeight(1)
-
-      this.sideFootnote()
     }
-    .width(288)
+    .width(260)
     .height('100%')
-    .padding(18)
-    .backgroundColor('#F8FBFF')
-    .border({ width: 1, color: '#D6E2F0' })
-    .borderRadius(28)
+    .padding(16)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(16)
   }
 
   @Builder
@@ -1752,39 +1742,35 @@ struct SettingsPage {
   private sidebarEntry(item: SettingsNavItem) {
     Button() {
       Row() {
+        Column()
+          .width(4)
+          .height(20)
+          .backgroundColor(this.activeTab === item.tab ? item.accent : 'transparent')
+          .borderRadius(2)
+
         Column() {
           Text(item.label)
             .copyOption(CopyOptions.None)
-            .fontSize(15)
+            .fontSize(14)
             .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
-            .fontColor('#0F172A')
+            .fontColor(this.activeTab === item.tab ? '#0F172A' : '#374151')
 
           Text(item.subtitle)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
-            .fontColor(this.activeTab === item.tab ? '#334155' : '#64748B')
-            .margin({ top: 4 })
+            .fontColor(this.activeTab === item.tab ? '#4B5563' : '#9CA3AF')
+            .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
-
-        Blank()
-          .layoutWeight(1)
-
-        Column()
-          .width(10)
-          .height(10)
-          .backgroundColor(item.accent)
-          .opacity(this.activeTab === item.tab ? 1 : 0.26)
-          .borderRadius(10)
+        .margin({ left: 10 })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+      .padding({ left: 12, right: 12, top: 12, bottom: 12 })
     }
     .width('100%')
-    .margin({ top: 10 })
-    .backgroundColor(this.activeTab === item.tab ? '#FFFFFF' : '#F3F7FC')
-    .borderRadius(20)
-    .border({ width: 1.4, color: this.activeTab === item.tab ? item.accent : '#D9E5F1' })
+    .margin({ top: 4 })
+    .backgroundColor(this.activeTab === item.tab ? '#F3F4F6' : 'transparent')
+    .borderRadius(10)
     .scale({ x: this.pressScale(`nav-${item.tab}`), y: this.pressScale(`nav-${item.tab}`) })
     .animation({ duration: 120, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => { this.updatePressed(`nav-${item.tab}`, event); })
@@ -1816,44 +1802,33 @@ struct SettingsPage {
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
-      .padding({ left: 24, right: 24, top: 12, bottom: 28 })
+      .padding({ left: 24, right: 24, top: 16, bottom: 28 })
     }
     .layoutWeight(1)
     .height('100%')
     .scrollBar(BarState.Off)
     .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#D6E2F0' })
-    .borderRadius(28)
-    .margin({ left: 18 })
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(16)
+    .margin({ left: 16 })
   }
 
   @Builder
   private contentHero() {
     Column() {
-      Row() {
-        Column() {
-          Text(`${this.navLabel(this.activeTab)} / 设置`)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.tabAccent(this.activeTab))
-          Text(this.heroTitle())
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
-            .margin({ top: 6 })
-          Text(this.heroSubtitle())
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontColor('#475569')
-            .lineHeight(20)
-            .margin({ top: 6 })
-        }
-        .alignItems(HorizontalAlign.Start)
-      }
+      Text(this.heroTitle())
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#0F172A')
+      Text(this.heroSubtitle())
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(12)
+        .fontColor('#6B7280')
+        .margin({ top: 4 })
     }
     .width('100%')
+    .padding({ top: 4, bottom: 16 })
   }
 
   private heroTitle(): string {
@@ -2923,14 +2898,14 @@ struct SettingsPage {
         Text('测速')
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#475569')
+          .fontColor('#374151')
       }
     }
-    .height(30)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(10)
-    .border({ width: 1, color: (this.apiSpeedTesting && this.selectedApiProviderId === provider.id) ? '#93C5FD' : '#D9E2EE' })
-    .padding({ left: 12, right: 12 })
+    .height(28)
+    .backgroundColor('#F9FAFB')
+    .borderRadius(8)
+    .border({ width: 1, color: (this.apiSpeedTesting && this.selectedApiProviderId === provider.id) ? '#93C5FD' : '#E5E7EB' })
+    .padding({ left: 10, right: 10 })
     .scale({ x: this.pressScale(`api-speed-${provider.id}`), y: this.pressScale(`api-speed-${provider.id}`) })
     .animation({ duration: 120, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => { this.updatePressed(`api-speed-${provider.id}`, event); })
@@ -2944,14 +2919,14 @@ struct SettingsPage {
   @Builder
   private apiProviderActionButton(label: string, key: string, danger: boolean, onClick: () => void) {
     Button(label)
-      .height(30)
+      .height(28)
       .fontSize(11)
       .fontWeight(FontWeight.Medium)
-      .fontColor(danger ? '#B91C1C' : '#475569')
-      .backgroundColor('#FFFFFF')
-      .borderRadius(10)
-      .border({ width: 1, color: danger ? '#F4C9C9' : '#D9E2EE' })
-      .padding({ left: 12, right: 12 })
+      .fontColor(danger ? '#DC2626' : '#374151')
+      .backgroundColor('#F9FAFB')
+      .borderRadius(8)
+      .border({ width: 1, color: danger ? '#FECACA' : '#E5E7EB' })
+      .padding({ left: 10, right: 10 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
       .animation({ duration: 120, curve: Curve.EaseOut })
       .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
@@ -2959,214 +2934,143 @@ struct SettingsPage {
   }
 
   @Builder
-  private apiDragPreviewBuilder() {
-    Column() {
-      Text(this.dragTargetName.length > 0 ? this.dragTargetName : '未命名')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-        .maxLines(1)
-    }
-    .width(280)
-    .padding({ left: 20, right: 20, top: 16, bottom: 16 })
-    .backgroundColor('#FFFFFF')
-    .border({ width: 2, color: '#2E8BFF' })
-    .borderRadius(20)
-    .shadow({ radius: 20, color: '#1E3A5F33', offsetX: 0, offsetY: 10 })
-  }
-
-  @Builder
   private apiProviderCard(provider: ProviderRecord) {
-    Row() {
+    Column() {
+      // 顶部行：拖动手柄 + 头像 + 名称信息 + 操作按钮
       Row() {
-        Text('⋮⋮')
-          .fontSize(12)
-          .fontColor('#C0CAD8')
-          .opacity(0.95)
-      }
-      .width(22)
-      .justifyContent(FlexAlign.Center)
-      .margin({ right: 8 })
+        // 拖动手柄
+        Column() {
+          Row()
+            .width(16)
+            .height(2)
+            .backgroundColor('#D1D5DB')
+            .borderRadius(1)
+            .margin({ bottom: 3 })
+          Row()
+            .width(16)
+            .height(2)
+            .backgroundColor('#D1D5DB')
+            .borderRadius(1)
+            .margin({ bottom: 3 })
+          Row()
+            .width(16)
+            .height(2)
+            .backgroundColor('#D1D5DB')
+            .borderRadius(1)
+        }
+        .width(24)
+        .justifyContent(FlexAlign.Center)
+        .margin({ right: 12 })
 
-      Stack({ alignContent: Alignment.Center }) {
-        Column()
-          .width(42)
-          .height(42)
-          .backgroundColor(provider.isActive ? '#FFF5EC' : '#F8FAFC')
-          .border({ width: 1, color: provider.isActive ? '#FAD4B4' : '#E2E8F0' })
-          .borderRadius(21)
+        // 头像
+        Stack({ alignContent: Alignment.Center }) {
+          Column()
+            .width(40)
+            .height(40)
+            .backgroundColor(provider.isActive ? '#EFF6FF' : '#F3F4F6')
+            .borderRadius(10)
 
-        Text(this.apiProviderInitial(provider))
-          .copyOption(CopyOptions.None)
-          .fontSize(17)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(provider.iconColor.trim().length > 0 ? provider.iconColor : (provider.isActive ? '#D97757' : '#64748B'))
-      }
-      .margin({ right: 12 })
+          Text(this.apiProviderInitial(provider))
+            .copyOption(CopyOptions.None)
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(provider.iconColor.trim().length > 0 ? provider.iconColor : (provider.isActive ? '#2563EB' : '#6B7280'))
+        }
+        .margin({ right: 12 })
 
-      Column() {
-        Row() {
-          Text(provider.name.length > 0 ? provider.name : '未命名')
+        // 名称 + 状态
+        Column() {
+          Row() {
+            Text(provider.name.length > 0 ? provider.name : '未命名')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#111827')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            if (provider.isActive) {
+              Text('当前')
+                .copyOption(CopyOptions.None)
+                .fontSize(9)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#2563EB')
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .backgroundColor('#EFF6FF')
+                .borderRadius(4)
+                .margin({ left: 6 })
+            }
+          }
+          .width('100%')
+
+          Text(this.apiProviderSecondaryText(provider))
             .copyOption(CopyOptions.LocalDevice)
-            .fontSize(13)
-            .fontWeight(provider.isActive ? FontWeight.Bold : FontWeight.Medium)
-            .fontColor('#0F172A')
+            .fontSize(11)
+            .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#9CA3AF')
+            .margin({ top: 2 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
 
-          if (provider.isActive) {
-            Text('当前')
-              .copyOption(CopyOptions.None)
-              .fontSize(9)
+        // 操作按钮
+        if (this.apiProviderEmphasized(provider)) {
+          Row({ space: 6 }) {
+            Button(provider.isActive ? '启用中' : '启用')
+              .height(28)
+              .fontSize(11)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#1D4ED8')
-              .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-              .backgroundColor('#EAF2FF')
-              .border({ width: 1, color: '#C7DAFF' })
-              .borderRadius(999)
-              .margin({ left: 8 })
+              .padding({ left: 12, right: 12 })
+              .backgroundColor(provider.isActive ? '#2563EB' : '#F9FAFB')
+              .fontColor(provider.isActive ? '#FFFFFF' : '#374151')
+              .borderRadius(8)
+              .border({ width: provider.isActive ? 0 : 1, color: '#E5E7EB' })
+              .scale({ x: this.pressScale(`api-activate-${provider.id}`), y: this.pressScale(`api-activate-${provider.id}`) })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed(`api-activate-${provider.id}`, event); })
+              .onClick(() => {
+                if (!provider.isActive) {
+                  this.activateApiProvider(provider.id);
+                } else {
+                  this.triggerFeedback('当前服务商已启用。', 'info');
+                }
+              })
+
+            this.apiProviderActionButton('编辑', `api-edit-${provider.id}`, false, () => { this.startEditingApiProvider(provider.id); })
+            this.apiProviderActionButton('验证', `api-validate-${provider.id}`, false, () => {
+              this.syncApiDraftFromProvider(provider.id);
+              this.validateApiDraft();
+            })
+            this.apiSpeedTestButton(provider)
+            this.apiProviderActionButton('删除', `api-delete-${provider.id}`, true, () => { this.removeApiProvider(provider.id); })
           }
         }
-        .width('100%')
-
-        Text(this.apiProviderSecondaryText(provider))
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#94A3B8')
-          .margin({ top: 4 })
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Row() {
-          this.pill(this.apiCategoryLabel(provider.category), '#F4F8FF', '#3563C8')
-          this.pill(this.apiWireApiLabel(provider.wireApi), '#F8FAFC', '#64748B')
-          this.pill(this.apiHealthLabel(provider), this.apiHealthBg(provider.healthStatus), this.apiHealthColor(provider.healthStatus))
-        }
-        .margin({ top: 8 })
       }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
-      if (this.apiProviderEmphasized(provider)) {
-        Row() {
-          Button(provider.isActive ? '启用中' : '启用')
-            .height(30)
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .padding({ left: 14, right: 14 })
-            .backgroundColor(provider.isActive ? '#2E8BFF' : '#F7FAFF')
-            .fontColor(provider.isActive ? '#FFFFFF' : '#2E6EEB')
-            .borderRadius(12)
-            .border({ width: provider.isActive ? 0 : 1, color: '#BFD3F7' })
-            .scale({ x: this.pressScale(`api-activate-${provider.id}`), y: this.pressScale(`api-activate-${provider.id}`) })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed(`api-activate-${provider.id}`, event); })
-            .onClick(() => {
-              if (!provider.isActive) {
-                this.activateApiProvider(provider.id);
-              } else {
-                this.triggerFeedback('当前服务商已启用。', 'info');
-              }
-            })
-
-          this.apiProviderActionButton('编辑', `api-edit-${provider.id}`, false, () => { this.startEditingApiProvider(provider.id); })
-          this.apiProviderActionButton('验证', `api-validate-${provider.id}`, false, () => {
-            this.syncApiDraftFromProvider(provider.id);
-            this.validateApiDraft();
-          })
-          this.apiSpeedTestButton(provider)
-          this.apiProviderActionButton('删除', `api-delete-${provider.id}`, true, () => { this.removeApiProvider(provider.id); })
-        }
-        .margin({ left: 12 })
+      // 标签行
+      Row({ space: 6 }) {
+        this.pill(this.apiCategoryLabel(provider.category), '#F0F4FF', '#3B5BDB')
+        this.pill(this.apiWireApiLabel(provider.wireApi), '#F3F4F6', '#6B7280')
+        this.pill(this.apiHealthLabel(provider), this.apiHealthBg(provider.healthStatus), this.apiHealthColor(provider.healthStatus))
       }
+      .margin({ top: 10 })
+      .width('100%')
     }
-    .alignItems(VerticalAlign.Center)
     .width('100%')
-    .padding({ left: 14, right: 14, top: 16, bottom: 16 })
+    .padding({ left: 14, right: 14, top: 14, bottom: 14 })
     .backgroundColor(this.apiProviderCardBackground(provider))
     .border({
-      width: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 2 : (this.apiProviderEmphasized(provider) ? 2 : 1),
-      color: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? '#2E8BFF' : this.apiProviderCardBorder(provider)
+      width: this.apiProviderEmphasized(provider) ? 1.5 : 1,
+      color: this.apiProviderCardBorder(provider)
     })
-    .borderRadius(20)
-    .opacity(this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.6 : 1.0)
-    .scale({ x: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.97 : 1.0, y: this.dragFromIndex >= 0 && provider.id === this.apiProviders[this.dragFromIndex]?.id ? 0.97 : 1.0 })
+    .borderRadius(12)
     .animation({ duration: 200, curve: Curve.FastOutSlowIn })
-    .onTouch((event: TouchEvent) => {
-      if (event.sourceTool !== SourceTool.Finger) {
-        return;
-      }
-      if (event.type === TouchType.Down) {
-        this.dragStartY = event.touches[0].y;
-        this.dragDownTime = Date.now();
-        this.dragMoved = false;
-      }
-      if (event.type === TouchType.Move) {
-        const currentY = event.touches[0].y;
-        if (Math.abs(currentY - this.dragStartY) > 10) {
-          this.dragMoved = true;
-        }
-        if (this.dragFromIndex < 0) {
-          if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
-            const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
-            if (idx >= 0) {
-              this.dragFromIndex = idx;
-              this.dragStartIndex = idx;
-              this.dragTargetName = provider.name;
-            }
-          }
-          return;
-        }
-        const deltaY = currentY - this.dragStartY;
-        const step = this.CARD_HEIGHT_ESTIMATE;
-        this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
-      }
-      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-        if (this.dragFromIndex < 0) {
-          if (!this.dragMoved && Date.now() - this.dragDownTime >= this.LONG_PRESS_MS) {
-            const idx = this.apiProviders.findIndex((p: ProviderRecord) => p.id === provider.id);
-            if (idx >= 0) {
-              this.dragFromIndex = idx;
-              this.dragStartIndex = idx;
-              this.dragTargetName = provider.name;
-              this.dragOverIndex = idx;
-            }
-          }
-        }
-        if (this.dragFromIndex >= 0) {
-          const deltaY = event.touches[0].y - this.dragStartY;
-          const step = this.CARD_HEIGHT_ESTIMATE;
-          this.dragOverIndex = Math.max(0, Math.min(this.apiProviders.length - 1, this.dragStartIndex + Math.round(deltaY / step)));
-        }
-        if (this.dragFromIndex >= 0 && this.dragOverIndex >= 0 && this.dragFromIndex !== this.dragOverIndex) {
-          const from = this.dragFromIndex;
-          const to = this.dragOverIndex;
-          const moved = this.apiProviders.splice(from, 1)[0];
-          this.apiProviders.splice(to > from ? to - 1 : to, 0, moved);
-          this.apiProviders = [...this.apiProviders];
-        }
-        this.dragFromIndex = -1;
-        this.dragOverIndex = -1;
-      }
-    })
     .onClick(() => {
-      if (this.dragFromIndex >= 0) {
-        return;
-      }
       this.selectApiProvider(provider.id);
     })
-  }
-
-  @Builder
-  private apiDropIndicator() {
-    Row()
-      .width('90%')
-      .height(3)
-      .backgroundColor('#2E8BFF')
-      .borderRadius(2)
-      .margin({ top: -5, bottom: -5 })
-      .opacity(0.9)
   }
 
   @Builder
@@ -3176,14 +3080,14 @@ struct SettingsPage {
         Column() {
           Text('服务商列表')
             .copyOption(CopyOptions.LocalDevice)
-            .fontSize(16)
+            .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
-          Text('长按卡片拖动可调整顺序。')
+            .fontColor('#111827')
+          Text('长按卡片拖动可调整顺序')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ top: 4 })
+            .fontColor('#9CA3AF')
+            .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
 
@@ -3194,22 +3098,30 @@ struct SettingsPage {
       }
       .width('100%')
 
-      Column({ space: 12 }) {
-        ForEach(this.apiProviders, (provider: ProviderRecord, index: number) => {
-          if (this.dragOverIndex === index && this.dragFromIndex !== index) {
-            this.apiDropIndicator()
-          }
-          Column() {
-            this.apiProviderCard(provider)
-            if (this.apiEditorExpanded && this.selectedApiProviderId === provider.id) {
-              this.apiEditorPanel()
+      List({ space: 12 }) {
+        ForEach(this.apiProviders, (provider: ProviderRecord) => {
+          ListItem() {
+            Column() {
+              this.apiProviderCard(provider)
+              if (this.apiEditorExpanded && this.selectedApiProviderId === provider.id) {
+                this.apiEditorPanel()
+              }
             }
+            .width('100%')
           }
-          .width('100%')
         }, (provider: ProviderRecord) => `${provider.id}-${provider.isActive}`)
+          .onMove((from: number, to: number) => {
+            const moved = this.apiProviders.splice(from, 1)[0];
+            this.apiProviders.splice(to, 0, moved);
+            this.apiProviders = [...this.apiProviders];
+            apiManagementVM.reorderProviders(this.apiProviders);
+          })
       }
       .width('100%')
+      .height(this.apiProviders.length * 120)
       .margin({ top: 14 })
+      .scrollBar(BarState.Off)
+      .divider({ strokeWidth: 0 })
 
       if (!this.apiEditorExpanded || this.selectedApiProvider() === null) {
         Column() {
@@ -4118,8 +4030,6 @@ struct SettingsPage {
 
   build() {
     Stack() {
-      this.backdropLayer()
-
       Column() {
         this.topBar()
 
@@ -4129,7 +4039,7 @@ struct SettingsPage {
         }
         .layoutWeight(1)
         .width('100%')
-        .padding({ left: 28, right: 28, bottom: 26 })
+        .padding({ left: 24, right: 24, bottom: 24 })
         .alignItems(VerticalAlign.Top)
       }
       .width('100%')
@@ -4145,6 +4055,6 @@ struct SettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#E9EEF6')
+    .backgroundColor('#F1F3F5')
   }
 }

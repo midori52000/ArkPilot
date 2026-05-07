@@ -193,6 +193,10 @@ export class ApiManagementService {
     saveProvidersToStore(providers);
   }
 
+  reorderProviders(providers: ProviderRecord[]): void {
+    saveProvidersToStore(providers);
+  }
+
   createFromPreset(presetId: string, apiKey: string): ProviderRecord {
     const preset = findPresetById(presetId);
     if (preset === undefined) {
