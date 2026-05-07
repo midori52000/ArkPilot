@@ -1338,6 +1338,7 @@ struct Index {
       case 'review':
         return '#FEF9C3';
       case 'user':
+        return '#E8F0FE';
       default:
         return '#F5F3FF';
     }
@@ -1369,6 +1370,7 @@ struct Index {
       case 'review':
         return '#A16207';
       case 'user':
+        return '#2563EB';
       default:
         return '#7C3AED';
     }
@@ -1718,48 +1720,57 @@ struct Index {
 
   @Builder
   private messageCard(item: ChatMessage) {
-    Column() {
-      Row() {
-        Text(this.messageIcon(item.itemType))
-          .fontSize(12)
-          .margin({ right: 4 })
-
-        Text(item.author)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.authorColor(item.role))
-
-        Text(item.timestamp)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
-          .fontColor('#A1A1AA')
-          .margin({ left: 8 })
-
-        if (item.status && item.status !== 'completed') {
-          Text(this.statusLabel(item.status))
-            .fontSize(9)
-            .fontColor(this.statusColor(item.status))
-            .backgroundColor(this.statusBgColor(item.status))
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(6)
-            .margin({ left: 8 })
-        }
+    Row() {
+      if (item.role === 'user') {
+        // 用户消息占位，推动气泡到右侧
+        Column().layoutWeight(1)
       }
-      .width('100%')
 
-      Text(item.content)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .lineHeight(19)
-        .fontColor(this.messageContentColor(item.itemType))
-        .margin({ top: 6 })
+      Column() {
+        Row() {
+          Text(this.messageIcon(item.itemType))
+            .fontSize(12)
+            .margin({ right: 4 })
+
+          Text(item.author)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(item.role === 'user' ? '#2563EB' : this.authorColor(item.role))
+
+          Text(item.timestamp)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor(item.role === 'user' ? '#93C5FD' : '#A1A1AA')
+            .margin({ left: 8 })
+
+          if (item.status && item.status !== 'completed') {
+            Text(this.statusLabel(item.status))
+              .fontSize(9)
+              .fontColor(item.role === 'user' ? '#1E40AF' : this.statusColor(item.status))
+              .backgroundColor(item.role === 'user' ? '#BFDBFE' : this.statusBgColor(item.status))
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .borderRadius(6)
+              .margin({ left: 8 })
+          }
+        }
+        .width('100%')
+
+        Text(item.content)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .lineHeight(19)
+          .fontColor(item.role === 'user' ? '#1E293B' : this.messageContentColor(item.itemType))
+          .margin({ top: 6 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width(item.role === 'user' ? '75%' : '85%')
+      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .backgroundColor(this.messageBackground(item.itemType ?? item.role))
+      .borderRadius(10)
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-    .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-    .borderRadius(10)
+    .alignItems(VerticalAlign.Top)
   }
 
   private messageIcon(itemType?: string): string {
