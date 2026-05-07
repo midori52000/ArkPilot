@@ -2514,7 +2514,29 @@ struct Index {
 
           Blank()
             .width(8)
-          this.selectorButton('推理', this.currentEffortLabel(), this.showEffortOptions, () => {
+          Row() {
+            Text('推理')
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#64748B')
+
+            Text(this.currentEffortLabel())
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#0F172A')
+              .margin({ left: 6 })
+
+            Text('▾')
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#94A3B8')
+              .margin({ left: 6 })
+          }
+          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+          .backgroundColor(this.showEffortOptions ? '#EEF4FF' : '#FFFFFF')
+          .border({ width: 1, color: this.showEffortOptions ? '#BFDBFE' : '#D7DEE8' })
+          .borderRadius(12)
+          .onClick(() => {
             this.showEffortOptions = !this.showEffortOptions;
             if (this.showEffortOptions) {
               this.showCollaborationModeOptions = false;

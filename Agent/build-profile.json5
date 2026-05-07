@@ -23,34 +23,6 @@
         "name": "release"
       }
     ],
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\平生万里心\\.ohos\\config\\default_Agent_8OIeKp2OGtxiDkCkhej-f8vqeNzJXVBoI4TFaHGfVig=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001ADBA7F632E1E65D56EF3589314399C92CE6CC80D423D784434055547B01E8BBC29EC6089A30E6",
-          "profile": "C:\\Users\\平生万里心\\.ohos\\config\\default_Agent_8OIeKp2OGtxiDkCkhej-f8vqeNzJXVBoI4TFaHGfVig=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\平生万里心\\.ohos\\config\\default_Agent_8OIeKp2OGtxiDkCkhej-f8vqeNzJXVBoI4TFaHGfVig=.p12",
-          "storePassword": "0000001AB48E1D0B2A99DDE2D626228045E4950AAEBF830B3089B6F4BD51832A1447D8BDC7F6271E112F"
-        }
-      },
-      {
-        "name": "111",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\平生万里心\\.ohos\\config\\111_Agent_8OIeKp2OGtxiDkCkhej-f8vqeNzJXVBoI4TFaHGfVig=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001ACF5C4E2A22AC45EEC0BBF5133DA2885E216E56CBEAE19ADFF4750C0498F2E0C51C54F45E0E74",
-          "profile": "C:\\Users\\平生万里心\\.ohos\\config\\111_Agent_8OIeKp2OGtxiDkCkhej-f8vqeNzJXVBoI4TFaHGfVig=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\平生万里心\\.ohos\\config\\111_Agent_8OIeKp2OGtxiDkCkhej-f8vqeNzJXVBoI4TFaHGfVig=.p12",
-          "storePassword": "0000001A19774E779B53F31CBD90BE9B3D14AE1910BAA64D0D4912E4B9FF32CA4E9BC5038EAC2C3817D6"
-        }
-      }
-    ]
     // Local signing is intentionally not committed.
     // Fresh clones should be able to build an unsigned debug HAP without
     // requiring machine-specific .cer/.p12/.p7b paths.
