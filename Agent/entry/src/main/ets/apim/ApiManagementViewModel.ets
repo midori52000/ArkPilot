@@ -135,6 +135,20 @@ export class ApiManagementViewModel {
     }
   }
 
+  reorderProviders(providers: ProviderRecord[]): void {
+    try {
+      const result = configManagerFacade.reorderProviders(providers);
+      if (!result.ok) {
+        this.state.errorText = this.describeActionError(result.error);
+        return;
+      }
+      this.loadProviders();
+      this.state.errorText = '';
+    } catch (err) {
+      this.state.errorText = this.describeError(err);
+    }
+  }
+
   activateProvider(id: string): void {
     try {
       const result = configManagerFacade.setActiveProvider(id);

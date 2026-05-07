@@ -181,6 +181,7 @@ struct Index {
   @State private pendingApproval: CodexApprovalRequest | null = null;
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
+  @State private expandedIntermediateMessageIds: string[] = [];
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -1625,6 +1626,7 @@ struct Index {
       case 'review':
         return '#FEF9C3';
       case 'user':
+        return '#E8F0FE';
       default:
         return '#F5F3FF';
     }
@@ -1656,6 +1658,7 @@ struct Index {
       case 'review':
         return '#A16207';
       case 'user':
+        return '#2563EB';
       default:
         return '#7C3AED';
     }
@@ -2187,6 +2190,15 @@ struct Index {
   private messageCard(item: ChatMessage) {
     Column() {
       Row() {
+        if (this.isCollapsibleMessage(item)) {
+          Text(this.isMessageCollapsed(item) ? '▸' : '▾')
+            .copyOption(CopyOptions.None)
+            .fontSize(12)
+            .fontColor('#71717A')
+            .width(14)
+            .margin({ right: 2 })
+        }
+
         Text(this.messageIcon(item.itemType))
           .fontSize(12)
           .margin({ right: 4 })
@@ -2195,7 +2207,7 @@ struct Index {
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.authorColor(item.role))
+          .fontColor(this.authorColor(item.itemType ?? item.role))
 
         Text(item.timestamp)
           .copyOption(CopyOptions.LocalDevice)
@@ -2213,22 +2225,89 @@ struct Index {
             .margin({ left: 8 })
         }
       }
-      .width('100%')
+      .constraintSize({ maxWidth: '100%' })
+      .onClick(() => {
+        if (this.isCollapsibleMessage(item)) {
+          this.toggleMessageExpanded(item.id);
+        }
+      })
 
-      Text(item.content)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .lineHeight(19)
-        .fontColor(this.messageContentColor(item.itemType))
-        .margin({ top: 6 })
+      if (this.isMessageCollapsed(item)) {
+        Text(item.content)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .lineHeight(19)
+          .fontColor(this.messageContentColor(item.itemType))
+          .margin({ top: 6 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      } else {
+        Text(item.content)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .lineHeight(19)
+          .fontColor(this.messageContentColor(item.itemType))
+          .margin({ top: 6 })
+      }
     }
     .alignItems(HorizontalAlign.Start)
-    .width('100%')
+    .constraintSize({ maxWidth: '100%' })
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
     .borderRadius(10)
   }
 
+  @Builder
+  private messageLine(item: ChatMessage) {
+    Row() {
+      if (this.isUserMessage(item)) {
+        Blank()
+          .layoutWeight(1)
+        this.messageCard(item)
+      } else {
+        this.messageCard(item)
+        Blank()
+          .layoutWeight(1)
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ bottom: 8 })
+  }
+
+  private isUserMessage(item: ChatMessage): boolean {
+    return item.role === 'user';
+  }
+
+  private isCollapsibleMessage(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    return type === 'reasoning' ||
+      type === 'command' ||
+      type === 'tool' ||
+      type === 'file' ||
+      type === 'search' ||
+      type === 'plan' ||
+      type === 'image' ||
+      type === 'hook' ||
+      type === 'review' ||
+      type === 'system';
+  }
+
+  private isMessageCollapsed(item: ChatMessage): boolean {
+    return this.isCollapsibleMessage(item) && !this.isMessageExpanded(item.id);
+  }
+
+  private isMessageExpanded(messageId: string): boolean {
+    return this.expandedIntermediateMessageIds.indexOf(messageId) >= 0;
+  }
+
+  private toggleMessageExpanded(messageId: string): void {
+    if (this.isMessageExpanded(messageId)) {
+      this.expandedIntermediateMessageIds = this.expandedIntermediateMessageIds.filter((id: string) => id !== messageId);
+      return;
+    }
+    this.expandedIntermediateMessageIds = [...this.expandedIntermediateMessageIds, messageId];
+  }
   private messageIcon(itemType?: string): string {
     switch (itemType) {
       case 'reasoning':
@@ -3004,7 +3083,7 @@ struct Index {
       Scroll(this.messageScroller) {
         Column() {
           ForEach(this.visibleMessages(), (item: ChatMessage) => {
-            this.messageCard(item)
+            this.messageLine(item)
           }, (item: ChatMessage) => this.messageRenderKey(item))
         }
         .width('100%')

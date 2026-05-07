@@ -65,7 +65,7 @@ import {
 } from '../skills/SkillTypes';
 import { SkillError, SkillsBackendService } from '../skills/SkillsBackendService';
 
-export type CodexMessageRole = 'user' | 'assistant' | 'system' | 'reasoning' | 'command' | 'tool' | 'file' | 'search' | 'plan' | 'image';
+export type CodexMessageRole = 'user' | 'assistant' | 'system' | 'reasoning' | 'command' | 'tool' | 'file' | 'search' | 'plan' | 'image' | 'hook' | 'review';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
 export type CodexDiffKind = 'add' | 'delete' | 'context';
 export type CodexConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -262,6 +262,16 @@ export class ConfigManagerFacade {
       return configSuccess<ProviderRecord>(saved ?? next);
     } catch (err) {
       return this.configFailureFromError<ProviderRecord>(err as Object, 'SAVE_PROVIDER_FAILED', '保存 Provider 失败。');
+    }
+  }
+
+  reorderProviders(providers: ProviderRecord[]): ConfigActionResult<void> {
+    try {
+      apiManagementService.reorderProviders(providers);
+      this.reloadProviders();
+      return configSuccess<void>(undefined);
+    } catch (err) {
+      return this.configFailureFromError<void>(err as Object, 'REORDER_PROVIDERS_FAILED', '保存排序失败。');
     }
   }
 
@@ -1118,9 +1128,12 @@ class CodexThreadRecord {
 }
 
 function currentTimestamp(): string {
-  const now: Date = new Date();
-  const hours: string = now.getHours().toString().padStart(2, '0');
-  const minutes: string = now.getMinutes().toString().padStart(2, '0');
+  return formatShortTimestamp(new Date());
+}
+
+function formatShortTimestamp(date: Date): string {
+  const hours: string = date.getHours().toString().padStart(2, '0');
+  const minutes: string = date.getMinutes().toString().padStart(2, '0');
   return `${hours}:${minutes}`;
 }
 
@@ -2133,10 +2146,10 @@ export class CodexBackend {
       return new CodexChatMessage(
         typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
         index + 1,
-        typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'ArkPilot' : '系统'),
+        this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
         role,
         typeof message['content'] === 'string' ? (message['content'] as string) : '',
-        typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp(),
+        this.messageTimestampFromPayload(message['timestamp']),
         itemType,
         itemStatus,
         metadata
@@ -2174,6 +2187,30 @@ export class CodexBackend {
     return currentThreadTimestamp();
   }
 
+  private messageTimestampFromPayload(rawValue: Object): string {
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return formatShortTimestamp(new Date((rawValue as number) * 1000));
+    }
+    if (typeof rawValue === 'string') {
+      const trimmed: string = rawValue.trim();
+      if (trimmed.length === 0) {
+        return currentTimestamp();
+      }
+      const numericValue: number = Number(trimmed);
+      if (Number.isFinite(numericValue) && /^\d+(\.\d+)?$/.test(trimmed)) {
+        const millis: number = numericValue > 100000000000 ? numericValue : numericValue * 1000;
+        return formatShortTimestamp(new Date(millis));
+      }
+      const parsedDate: Date = new Date(trimmed);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        return formatShortTimestamp(parsedDate);
+      }
+      if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+        return trimmed;
+      }
+    }
+    return currentTimestamp();
+  }
   private beginLocalTurn(thread: CodexThreadRecord, prompt: string): CodexTurnResult {
     this.upsertMessage(thread, `user-${Date.now()}`, '你', 'user', prompt, currentTimestamp());
     thread.turnCount += 1;
@@ -2305,10 +2342,10 @@ export class CodexBackend {
         return new CodexChatMessage(
           typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
           index + 1,
-          typeof message['author'] === 'string' ? (message['author'] as string) : (role === 'assistant' ? 'ArkPilot' : '系统'),
+          this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
           role,
           typeof message['content'] === 'string' ? (message['content'] as string) : '',
-          typeof message['timestamp'] === 'string' ? (message['timestamp'] as string) : currentTimestamp(),
+          this.messageTimestampFromPayload(message['timestamp']),
           itemType,
           itemStatus,
           metadata
@@ -2553,12 +2590,21 @@ export class CodexBackend {
     if (role === 'user' || role === 'system') {
       return role;
     }
-    if (role === 'reasoning' || role === 'command' || role === 'tool' || role === 'file' || role === 'search' || role === 'plan' || role === 'image') {
+    if (role === 'reasoning' || role === 'command' || role === 'tool' || role === 'file' || role === 'search' || role === 'plan' || role === 'image' || role === 'hook' || role === 'review') {
       return role;
     }
     return 'assistant';
   }
 
+  private mapMessageAuthor(role: CodexMessageRole, author: string): string {
+    if (role === 'user') {
+      return author.trim().length > 0 ? author : '你';
+    }
+    if (role === 'system') {
+      return author.trim().length > 0 ? author : '系统';
+    }
+    return 'ArkPilot';
+  }
   private normalizeChangedFilesText(value: string, hasDiff: boolean): string {
     const trimmed: string = value.trim();
     if (trimmed.length === 0 || this.isMojibakeText(trimmed)) {
