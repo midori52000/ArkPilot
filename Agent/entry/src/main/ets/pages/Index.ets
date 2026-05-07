@@ -786,13 +786,12 @@ struct Index {
 
   private currentEffortValue(): string {
     const mode: CollaborationModeOption | null = this.selectedCollaborationMode();
-    if (mode?.reasoningEffort === null) {
-      return 'default';
+    const modeEffort: string | null | undefined = mode?.reasoningEffort;
+    // If the collaboration mode explicitly sets an effort (non-null string), use it.
+    if (typeof modeEffort === 'string' && modeEffort.trim().length > 0) {
+      return modeEffort.trim();
     }
-    const modeEffort: string = mode?.reasoningEffort?.trim() ?? '';
-    if (modeEffort.length > 0) {
-      return modeEffort;
-    }
+    // Otherwise fall back to the user-selected effort from the UI picker.
     return this.effortOptions[this.selectedEffortIndex].value;
   }
 

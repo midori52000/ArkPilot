@@ -853,7 +853,7 @@ struct SessionsPage {
 
       if (this.sessionSummaries.length === 0) {
         Column() {
-          this.panelTitle('暂无会话', '连接后会从 app-server 恢复历史线程')
+          this.panelTitle('暂无会话', '')
           this.summaryBullet('点击右下角"+"按钮可以立即创建一个新的线程。')
           this.summaryBullet('如果你刚删除了最后一个会话，这里会保持为空。')
         }

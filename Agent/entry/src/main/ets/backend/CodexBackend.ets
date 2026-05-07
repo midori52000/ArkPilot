@@ -2368,9 +2368,7 @@ export class CodexBackend {
     payload.name = mode.name;
     payload.mode = mode.mode;
     payload.model = mode.model !== undefined ? mode.model : fallbackModel;
-    if (mode.reasoningEffort === null) {
-      payload.reasoningEffort = null;
-    } else if (mode.reasoningEffort !== undefined) {
+    if (mode.reasoningEffort !== undefined && mode.reasoningEffort !== null) {
       payload.reasoningEffort = mode.reasoningEffort;
     } else if (fallbackEffort !== undefined) {
       payload.reasoningEffort = fallbackEffort;

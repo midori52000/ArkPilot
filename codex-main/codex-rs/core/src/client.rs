@@ -698,9 +698,22 @@ impl ModelClientSession {
             // OpenAI-compatible providers. Many of them either do not fully
             // support Responses reasoning fields or count reasoning tokens
             // against the visible assistant output budget, which results in
-            // responses ending mid-sentence. Prefer compatibility and完整输出
-            // over encrypted reasoning on this provider path.
-            None
+            // responses ending mid-sentence. Prefer compatibility over
+            // encrypted reasoning on this provider path by default.
+            //
+            // However, if the user explicitly set an effort level, honor it.
+            if effort.is_some() {
+                Some(Reasoning {
+                    effort,
+                    summary: if summary == ReasoningSummaryConfig::None {
+                        None
+                    } else {
+                        Some(summary)
+                    },
+                })
+            } else {
+                None
+            }
         } else if model_info.supports_reasoning_summaries {
             Some(Reasoning {
                 effort: effort.or(default_reasoning_effort),
