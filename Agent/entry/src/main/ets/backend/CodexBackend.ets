@@ -1617,16 +1617,20 @@ export class CodexBackend {
     turnInterruptNative(thread.remoteThreadId, activeTurn.turnId);
   }
 
-  compactActiveThread(): boolean {
+  private lastCompactError: string = '';
+
+  compactActiveThread(): string {
+    this.lastCompactError = '';
     let target: CodexThreadRecord | null = null;
     this.threads.forEach((t: CodexThreadRecord) => {
-      if (t.activeTurn !== null && target === null) {
+      if (t.remoteThreadId.trim().length > 0 && target === null) {
         target = t;
       }
     });
     if (target === null) {
-      this.logInfo('compact: no active thread found');
-      return false;
+      this.lastCompactError = '没有可用的线程';
+      this.logInfo('compact: no thread found');
+      return '';
     }
     const thread: CodexThreadRecord = target;
     const resp = parseJsonText(
@@ -1637,11 +1641,40 @@ export class CodexBackend {
     if (!ok) {
       const err = resp['error'] as Record<string, Object> | undefined;
       const msg = typeof err?.['message'] === 'string' ? (err!['message'] as string) : 'compact 失败';
+      this.lastCompactError = msg;
       this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
-    } else {
-      this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
+      return '';
     }
-    return ok;
+    this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
+    return thread.remoteThreadId;
+  }
+
+  getLastCompactError(): string {
+    return this.lastCompactError;
+  }
+
+  async pollUntilTokenChange(threadId: string, oldTotalTokens: number, onUpdate: (usage: TurnTokenUsage) => void, timeoutMs: number = 30000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const intervalMs = 2000;
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+      try {
+        const pollRaw = turnPollNative(threadId, '');
+        const pollObj = parseJsonText(pollRaw, new Object() as Object) as Record<string, Object>;
+        const tu = pollObj['tokenUsage'] as Record<string, Object> | null;
+        if (tu !== null && tu !== undefined) {
+          const total = tu['total'] as Record<string, Object> | null;
+          const newTotal = (typeof total?.['totalTokens'] === 'number') ? (total!['totalTokens'] as number) : 0;
+          if (newTotal !== oldTotalTokens) {
+            const usage = parseJsonText(JSON.stringify(tu), new Object() as Object) as TurnTokenUsage;
+            onUpdate(usage);
+            return;
+          }
+        }
+      } catch (_e) {
+        // ignore poll errors
+      }
+    }
   }
 
   async refreshMcpServers(): Promise<McpServerRecord[]> {
@@ -2649,6 +2682,14 @@ export class CodexBackend {
       this.pendingRequestUserInput = null;
     }
     this.notifyListeners();
+  }
+
+  hasActiveTurn(): boolean {
+    let found: boolean = false;
+    this.threads.forEach((t: CodexThreadRecord) => {
+      if (t.activeTurn !== null) found = true;
+    });
+    return found;
   }
 
   private notifyListeners(): void {

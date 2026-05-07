@@ -201,6 +201,7 @@ struct Index {
   @State private tokenTab: number = 0;
   @State private tokenTrendRange: number = 0;
   @State private compacting: boolean = false;
+  @State private compactError: string = '';
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -247,6 +248,19 @@ struct Index {
     }
     this.syncSelectedCollaborationMode();
     if (snapshot.tokenUsage !== null && snapshot.tokenUsage !== undefined) {
+      if (this.compacting && this.tokenUsage !== null && this.tokenUsage !== undefined) {
+        const oldTotal = this.tokenUsage.total.totalTokens;
+        const newTotal = snapshot.tokenUsage.total.totalTokens;
+        if (oldTotal !== newTotal) {
+          this.compacting = false;
+          const saved = oldTotal - newTotal;
+          if (saved > 0) {
+            promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
+          } else {
+            promptAction.showToast({ message: '压缩完成', duration: 2000 });
+          }
+        }
+      }
       this.tokenUsage = snapshot.tokenUsage;
     }
   }
@@ -992,6 +1006,19 @@ struct Index {
     this.changedFiles = result.changedFiles;
     this.diffStat = result.diffStat;
     if (result.tokenUsage !== null && result.tokenUsage !== undefined) {
+      if (this.compacting && this.tokenUsage !== null && this.tokenUsage !== undefined) {
+        const oldTotal = this.tokenUsage.total.totalTokens;
+        const newTotal = result.tokenUsage.total.totalTokens;
+        if (oldTotal !== newTotal) {
+          this.compacting = false;
+          const saved = oldTotal - newTotal;
+          if (saved > 0) {
+            promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
+          } else {
+            promptAction.showToast({ message: '压缩完成', duration: 2000 });
+          }
+        }
+      }
       this.tokenUsage = result.tokenUsage;
     }
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
@@ -1264,7 +1291,7 @@ struct Index {
       return '#DCFCE7';
     }
     if (this.connectionState === 'connecting') {
-      return '#FEF3C7';
+      return '#fffefbc7';
     }
     if (this.connectionState === 'error') {
       return '#FEE2E2';
@@ -1289,9 +1316,9 @@ struct Index {
     switch (role) {
       case 'assistant':
       case 'agent':
-        return '#FFFFFF';
+        return '#FAFAFA';
       case 'system':
-        return '#F8FAFC';
+        return '#F4F4F5';
       case 'reasoning':
         return '#FFFBEB';
       case 'command':
@@ -1299,7 +1326,7 @@ struct Index {
       case 'tool':
         return '#EFF6FF';
       case 'file':
-        return '#FDF4FF';
+        return '#FAF5FF';
       case 'search':
         return '#ECFDF5';
       case 'plan':
@@ -1309,41 +1336,10 @@ struct Index {
       case 'hook':
         return '#FEF3C7';
       case 'review':
-        return '#FEF08A';
+        return '#FEF9C3';
       case 'user':
       default:
-        return '#F6F3FF';
-    }
-  }
-
-  private messageBorder(role: string): string {
-    switch (role) {
-      case 'assistant':
-      case 'agent':
-        return '#DBEAFE';
-      case 'system':
-        return '#CBD5E1';
-      case 'reasoning':
-        return '#FEF3C7';
-      case 'command':
-        return '#BBF7D0';
-      case 'tool':
-        return '#BFDBFE';
-      case 'file':
-        return '#E9D5FF';
-      case 'search':
-        return '#A7F3D0';
-      case 'plan':
-        return '#FED7AA';
-      case 'image':
-        return '#FBCFE8';
-      case 'hook':
-        return '#FCD34D';
-      case 'review':
-        return '#FACC15';
-      case 'user':
-      default:
-        return '#DDD6FE';
+        return '#F5F3FF';
     }
   }
 
@@ -1351,9 +1347,9 @@ struct Index {
     switch (role) {
       case 'assistant':
       case 'agent':
-        return '#1D4ED8';
+        return '#3B82F6';
       case 'system':
-        return '#475569';
+        return '#71717A';
       case 'reasoning':
         return '#D97706';
       case 'command':
@@ -1543,7 +1539,7 @@ struct Index {
       .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
       .backgroundColor(background)
-      .borderRadius(10)
+      .borderRadius(6)
   }
 
   @Builder
@@ -1553,12 +1549,12 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
+        .fontColor('#18181B')
 
       Text(subtitle)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .margin({ top: 4 })
     }
     .alignItems(HorizontalAlign.Start)
@@ -1570,24 +1566,24 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor('#71717A')
 
       Text(value)
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#0F172A')
+        .fontColor('#18181B')
         .margin({ left: 6 })
 
       Text('▾')
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .margin({ left: 6 })
     }
     .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-    .backgroundColor(active ? '#EEF4FF' : '#FFFFFF')
-    .border({ width: 1, color: active ? '#BFDBFE' : '#D7DEE8' })
-    .borderRadius(12)
+    .backgroundColor(active ? '#F4F4F5' : '#FAFAFA')
+    .border({ width: 0.5, color: active ? '#D4D4D8' : '#E4E4E7' })
+    .borderRadius(8)
     .onClick(() => {
       onPress();
     })
@@ -1598,11 +1594,11 @@ struct Index {
     Text(option.label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor(selected ? '#1D4ED8' : '#475569')
-      .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-      .backgroundColor(selected ? '#DBEAFE' : '#FFFFFF')
-      .border({ width: 1, color: selected ? '#93C5FD' : '#E2E8F0' })
-      .borderRadius(10)
+      .fontColor(selected ? '#18181B' : '#71717A')
+      .fontWeight(selected ? FontWeight.Medium : FontWeight.Normal)
+      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+      .backgroundColor(selected ? '#E4E4E7' : '#FAFAFA')
+      .borderRadius(6)
       .margin({ right: 6, bottom: 6 })
       .onClick(() => {
         onPress();
@@ -1616,14 +1612,14 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
         .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor('#0F172A')
+        .fontColor('#18181B')
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(item.description)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor('#A1A1AA')
         .margin({ top: 4 })
         .lineHeight(16)
         .maxLines(2)
@@ -1632,12 +1628,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(10)
-    .backgroundColor(this.isWorkspaceActive(item) ? '#EEF4FF' : '#FFFFFF')
-    .border({
-      width: 1,
-      color: this.isWorkspaceActive(item) ? '#BFDBFE' : '#E5E7EB'
-    })
-    .borderRadius(14)
+    .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : '#FFFFFF')
+    .borderRadius(8)
     .onClick(() => {
       void this.selectWorkspace(item);
     })
@@ -1651,7 +1643,7 @@ struct Index {
           .copyOption(CopyOptions.None)
           .fontSize(12)
           .fontWeight(this.isSidebarActive(item.view) ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor('#0F172A')
+          .fontColor('#18181B')
 
         Blank()
           .layoutWeight(1)
@@ -1661,7 +1653,7 @@ struct Index {
       Text(item.description)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor('#A1A1AA')
         .margin({ top: 4 })
         .lineHeight(16)
         .maxLines(2)
@@ -1670,9 +1662,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(10)
-    .backgroundColor(this.isSidebarActive(item.view) ? '#EEF4FF' : '#FFFFFF')
-    .border({ width: 1, color: this.isSidebarActive(item.view) ? '#BFDBFE' : '#E5E7EB' })
-    .borderRadius(14)
+    .backgroundColor(this.isSidebarActive(item.view) ? '#F4F4F5' : '#FFFFFF')
+    .borderRadius(8)
     .margin({ bottom: 6 })
     .onClick(() => {
       if (item.view === 'sessions') {
@@ -1689,13 +1680,13 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .width(78)
 
       Text(value)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
-        .fontColor('#334155')
+        .fontColor('#27272A')
         .layoutWeight(1)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1711,13 +1702,13 @@ struct Index {
       Text('•')
         .copyOption(CopyOptions.None)
         .fontSize(12)
-        .fontColor('#475569')
+        .fontColor('#A1A1AA')
         .margin({ right: 6 })
 
       Text(text)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
-        .fontColor('#334155')
+        .fontColor('#27272A')
         .layoutWeight(1)
         .lineHeight(18)
     }
@@ -1742,7 +1733,7 @@ struct Index {
         Text(item.timestamp)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor('#A1A1AA')
           .margin({ left: 8 })
 
         if (item.status && item.status !== 'completed') {
@@ -1751,7 +1742,7 @@ struct Index {
             .fontColor(this.statusColor(item.status))
             .backgroundColor(this.statusBgColor(item.status))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(8)
+            .borderRadius(6)
             .margin({ left: 8 })
         }
       }
@@ -1766,13 +1757,9 @@ struct Index {
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(12)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-    .border({
-      width: 1,
-      color: this.messageBorder(item.itemType ?? item.role)
-    })
-    .borderRadius(16)
+    .borderRadius(10)
   }
 
   private messageIcon(itemType?: string): string {
@@ -1824,7 +1811,7 @@ struct Index {
       case 'declined':
         return '#D97706';
       default:
-        return '#64748B';
+        return '#71717A';
     }
   }
 
@@ -1837,19 +1824,19 @@ struct Index {
       case 'declined':
         return '#FEF3C7';
       default:
-        return '#F1F5F9';
+        return '#F4F4F5';
     }
   }
 
   private messageContentColor(itemType?: string): string {
     switch (itemType) {
       case 'reasoning':
-        return '#6B7280';
+        return '#71717A';
       case 'command':
       case 'tool':
         return '#1E40AF';
       default:
-        return '#334155';
+        return '#27272A';
     }
   }
 
@@ -1860,7 +1847,7 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .width(28)
         .fontSize(10)
-        .fontColor('#94A3B8')
+        .fontColor('#A1A1AA')
         .fontFamily('monospace')
 
       Text(line.sign)
@@ -1882,7 +1869,7 @@ struct Index {
     .width('100%')
     .padding({ left: 8, right: 8, top: 7, bottom: 7 })
     .backgroundColor(this.diffBackground(line.kind))
-    .borderRadius(10)
+    .borderRadius(8)
   }
 
   @Builder
@@ -1893,14 +1880,14 @@ struct Index {
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontWeight(this.isDiffFileSelected(file) ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor('#0F172A')
+          .fontColor('#18181B')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(file.path)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(9)
-          .fontColor('#64748B')
+          .fontColor('#A1A1AA')
           .margin({ top: 4 })
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1911,13 +1898,12 @@ struct Index {
       Text(file.diffStat)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor(this.isDiffFileSelected(file) ? '#1D4ED8' : '#15803D')
+        .fontColor(this.isDiffFileSelected(file) ? '#2563EB' : '#16A34A')
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor(this.isDiffFileSelected(file) ? '#EEF4FF' : '#FFFFFF')
-    .border({ width: 1, color: this.isDiffFileSelected(file) ? '#BFDBFE' : '#E2E8F0' })
-    .borderRadius(12)
+    .backgroundColor(this.isDiffFileSelected(file) ? '#F4F4F5' : '#FFFFFF')
+    .borderRadius(8)
     .onClick(() => {
       this.selectDiffFile(file.path);
     })
@@ -1928,11 +1914,10 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor('#475569')
-      .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(10)
+      .fontColor('#71717A')
+      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+      .backgroundColor('#FAFAFA')
+      .borderRadius(6)
       .margin({ right: 6, bottom: 6 })
       .onClick(() => {
         this.draft = label;
@@ -1955,7 +1940,7 @@ struct Index {
       Text(approval.detail)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
-        .fontColor('#334155')
+        .fontColor('#27272A')
         .lineHeight(19)
         .margin({ top: 10 })
 
@@ -1963,9 +1948,9 @@ struct Index {
         Button('允许')
           .height(34)
           .fontSize(12)
-          .backgroundColor('#111827')
+          .backgroundColor('#27272A')
           .fontColor('#FFFFFF')
-          .borderRadius(16)
+          .borderRadius(8)
           .onClick(() => {
             void this.approvePending();
           })
@@ -1974,10 +1959,10 @@ struct Index {
           .height(34)
           .margin({ left: 8 })
           .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(16)
-          .border({ width: 1, color: '#CBD5E1' })
+          .backgroundColor('#FAFAFA')
+          .fontColor('#27272A')
+          .borderRadius(8)
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             void this.declinePending();
           })
@@ -1989,9 +1974,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFF7ED')
-    .border({ width: 1, color: '#FED7AA' })
-    .borderRadius(18)
+    .backgroundColor('#FFFBEB')
+    .borderRadius(10)
     .margin({ top: 10 })
   }
 
@@ -2012,7 +1996,7 @@ struct Index {
         Text(request.detail)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(12)
-          .fontColor('#334155')
+          .fontColor('#27272A')
           .lineHeight(19)
           .margin({ top: 10 })
       }
@@ -2023,11 +2007,11 @@ struct Index {
             Text(question.header)
               .fontSize(11)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
+              .fontColor('#18181B')
 
             Text(question.question)
               .fontSize(11)
-              .fontColor('#475569')
+              .fontColor('#71717A')
               .lineHeight(18)
               .margin({ top: 4 })
 
@@ -2045,7 +2029,7 @@ struct Index {
                     if (option.description.trim().length > 0) {
                       Text(option.description)
                         .fontSize(10)
-                        .fontColor('#64748B')
+                        .fontColor('#A1A1AA')
                         .lineHeight(16)
                     }
                   }
@@ -2066,9 +2050,9 @@ struct Index {
                 .height(40)
                 .margin({ top: 8 })
                 .fontSize(11)
-                .backgroundColor('#FFFFFF')
-                .borderRadius(12)
-                .border({ width: 1, color: '#E2E8F0' })
+                .backgroundColor('#FAFAFA')
+                .borderRadius(8)
+                .border({ width: 0.5, color: '#E4E4E7' })
                 .padding({ left: 12, right: 12 })
                 .onChange((value: string) => {
                   this.setRequestUserInputAnswer(question.id, value);
@@ -2086,9 +2070,9 @@ struct Index {
         Button('继续')
           .height(34)
           .fontSize(12)
-          .backgroundColor('#111827')
+          .backgroundColor('#27272A')
           .fontColor('#FFFFFF')
-          .borderRadius(16)
+          .borderRadius(8)
           .onClick(() => {
             void this.submitRequestUserInput();
           })
@@ -2097,10 +2081,10 @@ struct Index {
           .height(34)
           .margin({ left: 8 })
           .fontSize(12)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
-          .borderRadius(16)
-          .border({ width: 1, color: '#CBD5E1' })
+          .backgroundColor('#FAFAFA')
+          .fontColor('#27272A')
+          .borderRadius(8)
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             void this.declineRequestUserInput();
           })
@@ -2112,9 +2096,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFFDF5')
-    .border({ width: 1, color: '#FCD34D' })
-    .borderRadius(18)
+    .backgroundColor('#FFFBEB')
+    .borderRadius(10)
     .margin({ top: 10 })
   }
 
@@ -2129,12 +2112,12 @@ struct Index {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
+            .fontColor('#18181B')
 
           Text('项目侧边栏控制台')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -2161,8 +2144,8 @@ struct Index {
       .padding(12)
       .margin({ top: 12 })
       .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(12)
 
       Column() {
         this.panelTitle('会话概况', '')
@@ -2188,7 +2171,7 @@ struct Index {
               .backgroundColor('#FFFFFF')
               .fontColor('#111827')
               .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
+              .border({ width: 0.5, color: '#E4E4E7' })
               .onClick(() => {
                 void this.pickWorkspaceDirectory();
               })
@@ -2201,7 +2184,7 @@ struct Index {
               .backgroundColor('#FFFFFF')
               .fontColor('#111827')
               .borderRadius(16)
-              .border({ width: 1, color: '#CBD5E1' })
+              .border({ width: 0.5, color: '#E4E4E7' })
               .onClick(() => {
                 const targetPath: string = this.directoryFilter.length > 0 ? this.directoryFilter : this.workspaceRoot;
                 if (targetPath.length === 0) {
@@ -2223,8 +2206,8 @@ struct Index {
         .width('100%')
         .padding(12)
         .margin({ top: 10 })
-        .backgroundColor('#F8FAFC')
-        .border({ width: 1, color: '#E2E8F0' })
+        .backgroundColor('#FAFAFA')
+        .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(16)
 
         Row() {
@@ -2245,10 +2228,10 @@ struct Index {
             .height(34)
             .margin({ left: 8 })
             .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .fontColor('#334155')
-            .borderRadius(16)
-            .border({ width: 1, color: '#CBD5E1' })
+            .backgroundColor('#FAFAFA')
+            .fontColor('#27272A')
+            .borderRadius(8)
+            .border({ width: 0.5, color: '#E4E4E7' })
             .onClick(() => {
               router.pushUrl({ url: 'pages/SessionsPage' });
             })
@@ -2260,13 +2243,13 @@ struct Index {
           Text('当前目录下暂无会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 12 })
         } else {
           Text('当前目录下的所有会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 12, bottom: 8 })
 
           List({ space: 6 }) {
@@ -2286,8 +2269,8 @@ struct Index {
       .padding(12)
       .margin({ top: 10 })
       .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(12)
 
     }
     }
@@ -2300,11 +2283,11 @@ struct Index {
       Row() {
         Text('⚙')
           .fontSize(14)
-          .fontColor('#64748B')
+          .fontColor('#71717A')
 
         Text('设置')
           .fontSize(12)
-          .fontColor('#64748B')
+          .fontColor('#71717A')
           .margin({ left: 6 })
       }
     }
@@ -2313,7 +2296,7 @@ struct Index {
     .margin({ top: 8 })
     .backgroundColor('#FFFFFF')
     .borderRadius(16)
-    .border({ width: 1, color: '#E2E8F0' })
+    .border({ width: 0.5, color: '#E4E4E7' })
     .onClick(() => {
       router.pushUrl({ url: 'pages/SettingsPage' });
     })
@@ -2321,8 +2304,8 @@ struct Index {
     .height('100%')
     .width(this.leftPanelWidth)
     .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
     .borderRadius(20)
   }
 
@@ -2336,12 +2319,12 @@ struct Index {
               .width(16)
               .height(12)
               .borderRadius(3)
-              .border({ width: 1.5, color: '#64748B' })
-              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+              .border({ width: 1.5, color: '#71717A' })
+              .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
             Column()
               .width(1.5)
               .height(8)
-              .backgroundColor('#64748B')
+              .backgroundColor('#71717A')
               .position({ x: 4, y: 2 })
           }
           .width(16)
@@ -2350,9 +2333,9 @@ struct Index {
         .type(ButtonType.Normal)
         .width(32)
         .height(28)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor('#FAFAFA')
         .borderRadius(8)
-        .border({ width: 1, color: '#E2E8F0' })
+        .border({ width: 0.5, color: '#E4E4E7' })
         .onClick(() => {
           this.toggleLeftDrawer();
         })
@@ -2365,12 +2348,12 @@ struct Index {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
+            .fontColor('#18181B')
 
           Text(this.currentWorkspaceDescription)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -2385,25 +2368,25 @@ struct Index {
             .fontColor('#C2410C')
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .backgroundColor('#FFF7ED')
-            .borderRadius(10)
+            .borderRadius(6)
           Blank()
             .width(6)
           Text(this.currentModelLabel())
             .copyOption(CopyOptions.None)
             .fontSize(10)
-            .fontColor('#1D4ED8')
+            .fontColor('#2563EB')
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#EEF4FF')
-            .borderRadius(10)
+            .backgroundColor('#EFF6FF')
+            .borderRadius(6)
           Blank()
             .width(6)
           Text(this.currentEffortLabel())
             .copyOption(CopyOptions.None)
             .fontSize(10)
-            .fontColor('#64748B')
+            .fontColor('#71717A')
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#F8FAFC')
-            .borderRadius(10)
+            .backgroundColor('#F4F4F5')
+            .borderRadius(6)
           Blank()
             .width(6)
           Button() {
@@ -2412,12 +2395,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#64748B' })
-                .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+                .border({ width: 1.5, color: '#71717A' })
+                .backgroundColor(this.showRightDrawer ? '#F4F4F5' : '#FFFFFF')
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#64748B')
+                .backgroundColor('#71717A')
                 .position({ x: 10.5, y: 2 })
             }
             .width(16)
@@ -2426,9 +2409,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor('#FAFAFA')
           .borderRadius(8)
-          .border({ width: 1, color: '#E2E8F0' })
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             this.toggleRightDrawer();
           })
@@ -2443,7 +2426,7 @@ struct Index {
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#0F172A')
+          .fontColor('#18181B')
 
         Column() {
           ForEach(this.summaryPoints, (item: string) => {
@@ -2457,7 +2440,7 @@ struct Index {
           Text(this.changedFiles)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(11)
-            .fontColor('#64748B')
+            .fontColor('#71717A')
             .layoutWeight(1)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2475,8 +2458,8 @@ struct Index {
       .padding(14)
       .margin({ top: 10 })
       .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E5E7EB' })
-      .borderRadius(18)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(12)
 
       if (this.pendingApproval !== null) {
         this.approvalCard(this.pendingApproval!)
@@ -2506,22 +2489,22 @@ struct Index {
             Text('模式')
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#64748B')
+              .fontColor('#71717A')
             Text(this.currentCollaborationModeLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#0F172A')
+              .fontColor('#18181B')
               .margin({ left: 6 })
             Text('▾')
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#94A3B8')
+              .fontColor('#A1A1AA')
               .margin({ left: 6 })
           }
           .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-          .backgroundColor(this.showCollaborationModeOptions ? '#EEF4FF' : '#FFFFFF')
-          .border({ width: 1, color: this.showCollaborationModeOptions ? '#BFDBFE' : '#D7DEE8' })
-          .borderRadius(12)
+          .backgroundColor(this.showCollaborationModeOptions ? '#F4F4F5' : '#FAFAFA')
+          .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#D4D4D8' : '#E4E4E7' })
+          .borderRadius(8)
           .onClick(() => {
             this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
             if (this.showCollaborationModeOptions) {
@@ -2578,14 +2561,15 @@ struct Index {
         .margin({ top: 8 })
 
         Row() {
-          TextInput({ text: this.draft, placeholder: '输入要发送给真实 ArkPilot 的指令...' })
+          TextInput({ text: this.draft, placeholder: '输入要发送给 ArkPilot 的指令...' })
             .layoutWeight(1)
             .height(40)
             .fontSize(12)
-            .fontColor('#0F172A')
-            .placeholderColor('#94A3B8')
-            .backgroundColor('#FFFFFF')
-            .borderRadius(19)
+            .fontColor('#18181B')
+            .placeholderColor('#A1A1AA')
+            .backgroundColor('#FAFAFA')
+            .borderRadius(10)
+            .border({ width: 0.5, color: '#E4E4E7' })
             .padding({ left: 12, right: 12 })
             .enterKeyType(EnterKeyType.Send)
             .onChange((value: string) => {
@@ -2610,8 +2594,8 @@ struct Index {
             .width(64)
             .height(36)
             .margin({ left: 8 })
-            .backgroundColor('#111827')
-            .borderRadius(18)
+            .backgroundColor('#27272A')
+            .borderRadius(10)
             .opacity(1)
             .onClick(() => {
               if (this.isRunning) {
@@ -2628,12 +2612,12 @@ struct Index {
           Text(this.connectionText)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
 
           Text(this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
             .margin({ left: 10 })
             .layoutWeight(1)
             .maxLines(1)
@@ -2645,9 +2629,9 @@ struct Index {
       .width('100%')
       .padding(12)
       .margin({ top: 10 })
-      .backgroundColor('#F8FAFC')
-      .border({ width: 1, color: '#E2E8F0' })
-      .borderRadius(18)
+      .backgroundColor('#FAFAFA')
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .borderRadius(10)
     }
     .height('100%')
     .width('100%')
@@ -2664,12 +2648,12 @@ struct Index {
               .width(16)
               .height(12)
               .borderRadius(3)
-              .border({ width: 1.5, color: '#64748B' })
-              .backgroundColor(this.showLeftDrawer ? '#EEF4FF' : '#FFFFFF')
+              .border({ width: 1.5, color: '#71717A' })
+              .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
             Column()
               .width(1.5)
               .height(8)
-              .backgroundColor('#64748B')
+              .backgroundColor('#71717A')
               .position({ x: 4, y: 2 })
           }
           .width(16)
@@ -2678,9 +2662,9 @@ struct Index {
         .type(ButtonType.Normal)
         .width(32)
         .height(28)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor('#FAFAFA')
         .borderRadius(8)
-        .border({ width: 1, color: '#E2E8F0' })
+        .border({ width: 0.5, color: '#E4E4E7' })
         .onClick(() => {
           this.toggleLeftDrawer();
         })
@@ -2692,12 +2676,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#64748B' })
-                .backgroundColor(this.showRightDrawer ? '#EEF4FF' : '#FFFFFF')
+                .border({ width: 1.5, color: '#71717A' })
+                .backgroundColor(this.showRightDrawer ? '#F4F4F5' : '#FFFFFF')
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#64748B')
+                .backgroundColor('#71717A')
                 .position({ x: 10.5, y: 2 })
             }
             .width(16)
@@ -2706,9 +2690,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor('#FAFAFA')
           .borderRadius(8)
-          .border({ width: 1, color: '#E2E8F0' })
+          .border({ width: 0.5, color: '#E4E4E7' })
           .onClick(() => {
             this.toggleRightDrawer();
           })
@@ -2720,11 +2704,11 @@ struct Index {
           Text('当前目录下暂无会话')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
           Text(this.directoryFilterText)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
-            .fontColor('#CBD5E1')
+            .fontColor('#D4D4D8')
             .margin({ top: 8 })
         }
         .layoutWeight(1)
@@ -2736,9 +2720,9 @@ struct Index {
     .height('100%')
     .layoutWeight(1)
     .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
-    .borderRadius(20)
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
+    .borderRadius(12)
   }
 
   @Builder
@@ -2753,17 +2737,17 @@ struct Index {
         Text(this.diffFiles.length > 0 ? this.currentDiffFileStat() : this.diffStat)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#15803D')
+          .fontColor('#16A34A')
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('#ECFDF3')
-          .borderRadius(10)
+          .backgroundColor('#F0FDF4')
+          .borderRadius(6)
       }
       .width('100%')
 
       Text(this.changedFiles)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
-        .fontColor('#64748B')
+        .fontColor('#71717A')
         .margin({ top: 8 })
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2772,7 +2756,7 @@ struct Index {
         Text('\u53d8\u66f4\u6587\u4ef6')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor('#A1A1AA')
           .margin({ top: 10 })
 
         List({ space: 6 }) {
@@ -2791,12 +2775,12 @@ struct Index {
           Text('\u5f53\u524d')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#94A3B8')
+            .fontColor('#A1A1AA')
 
           Text(this.currentDiffFilePath())
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#334155')
+            .fontColor('#27272A')
             .layoutWeight(1)
             .margin({ left: 8 })
             .maxLines(1)
@@ -2843,8 +2827,8 @@ struct Index {
     .height('100%')
     .width(this.rightPanelWidth)
     .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
     .borderRadius(20)
   }
 
@@ -2879,25 +2863,45 @@ struct Index {
     return v;
   }
 
+  private usedPct(): number {
+    const rem = this.contextRemainingPct();
+    if (rem < 0) return -1;
+    return (100 - rem);
+  }
+
   private contextBarWidth(): string {
-    const pct = this.contextRemainingPct();
+    const pct = this.usedPct();
     if (pct < 0) return '0%';
-    return pct.toString() + '%';
+    const clamped: number = pct > 100 ? 100 : (pct < 0 ? 0 : pct);
+    return clamped.toString() + '%';
   }
 
   private contextBarColor(): ResourceColor {
-    const pct = this.contextRemainingPct();
+    const pct = this.usedPct();
     if (pct < 0) return '#3B82F6';
-    if (pct <= 10) return '#EF4444';
-    if (pct <= 30) return '#F59E0B';
+    if (pct >= 90) return '#EF4444';
+    if (pct >= 70) return '#F59E0B';
     return '#3B82F6';
   }
 
+  // total.total_tokens — 和 Rust 计算 remaining% 用的是同一个字段
+  private totalTokensUsed(): number {
+    if (this.tokenUsage === null || this.tokenUsage === undefined) return 0;
+    const v = this.tokenUsage.total.totalTokens;
+    if (typeof v !== 'number' || v !== v) return 0;
+    return v < 0 ? 0 : v;
+  }
+
   private contextText(): string {
-    const used = this.blendedTotal();
+    const used = this.totalTokensUsed();
     const win = this.contextWindow();
-    if (win <= 0) return this.formatTokenCount(used);
-    return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win);
+    const rem = this.contextRemainingPct();
+    let suffix: string = '';
+    if (win > 0 && rem >= 0) {
+      suffix = rem <= 0 ? ' (已溢出)' : ' (' + rem.toString() + '% 剩余)';
+    }
+    if (win <= 0) return this.formatTokenCount(used) + suffix;
+    return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win) + suffix;
   }
 
   private safePct(part: number, whole: number): string {
@@ -2908,11 +2912,14 @@ struct Index {
   }
 
   private tokenMiniText(): string {
-    const total = this.blendedTotal();
+    const total = this.totalTokensUsed();
     const win = this.contextWindow();
     const pct = this.contextRemainingPct();
-    const pctStr = win > 0 && pct >= 0 ? ' · 剩余 ' + pct.toString() + '%' : '';
-    return '总 ' + this.formatTokenCount(total) + pctStr;
+    let suffix: string = '';
+    if (win > 0 && pct >= 0) {
+      suffix = pct <= 0 ? ' · 已溢出' : ' · 剩余 ' + pct.toString() + '%';
+    }
+    return '总 ' + this.formatTokenCount(total) + suffix;
   }
 
   private tokenTrendLinePath(data: DailyTokenSnapshot[], maxVal: number, w: number, h: number): string {
@@ -2972,35 +2979,36 @@ struct Index {
 
   @Builder tokenUsageCard() {
     Column() {
-      // 箭头指示器（可拖拽调整高度）
-      Row() {
-        Text(this.tokenCardExpanded ? '▼' : '▲')
-          .fontSize(10)
-          .fontColor('#94A3B8')
-      }
-      .width('100%')
-      .height(16)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-      .backgroundColor(this.tokenCardExpanded ? '#FFFFFF' : '#F1F5F9')
-      .borderRadius({ topLeft: 8, topRight: 8 })
-      .border({ width: 1, color: '#E2E8F0' })
-      .margin({ bottom: -1 })
-      .hitTestBehavior(HitTestMode.Block)
-      .gesture(
-        TapGesture()
-          .onAction(() => {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-              this.tokenCardExpanded = !this.tokenCardExpanded;
-            });
-          })
-      )
-      .gesture(
-        PanGesture({ direction: PanDirection.Vertical })
-          .onActionStart(() => {
-            this.tokenCardDragStartY = 0;
-            this.tokenCardDragStartH = this.tokenCardHeight;
-          })
+      // 箭头指示器（展开时显示，可拖拽调整高度）
+      if (this.tokenCardExpanded) {
+        Row() {
+          Text('▼')
+            .fontSize(10)
+            .fontColor('#A1A1AA')
+        }
+        .width('100%')
+        .height(16)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor('#FFFFFF')
+        .borderRadius({ topLeft: 10, topRight: 10 })
+        .border({ width: 0.5, color: '#E4E4E7' })
+        .margin({ bottom: -1 })
+        .hitTestBehavior(HitTestMode.Block)
+        .gesture(
+          TapGesture()
+            .onAction(() => {
+              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                this.tokenCardExpanded = false;
+              });
+            })
+        )
+        .gesture(
+          PanGesture({ direction: PanDirection.Vertical })
+            .onActionStart(() => {
+              this.tokenCardDragStartY = 0;
+              this.tokenCardDragStartH = this.tokenCardHeight;
+            })
           .onActionUpdate((event: GestureEvent) => {
             const newH = this.tokenCardDragStartH - event.offsetY;
             if (newH >= 120 && newH <= 600) {
@@ -3008,6 +3016,7 @@ struct Index {
             }
           })
       )
+      }
 
       // 卡片内容
       Column() {
@@ -3016,11 +3025,27 @@ struct Index {
           Row() {
             Text(this.tokenMiniText())
               .fontSize(11)
-              .fontColor('#64748B')
+              .fontColor('#71717A')
               .maxLines(1)
+            Blank()
+            Text('▲')
+              .fontSize(10)
+              .fontColor('#A1A1AA')
           }
           .width('100%')
-          .padding({ top: 8, bottom: 8, left: 12 })
+          .padding({ top: 8, bottom: 8, left: 12, right: 12 })
+          .borderRadius({ topLeft: 10, topRight: 10 })
+          .backgroundColor('#FAFAFA')
+          .border({ width: 0.5, color: '#E4E4E7' })
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            TapGesture()
+              .onAction(() => {
+                animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                  this.tokenCardExpanded = true;
+                });
+              })
+          )
         } else {
           // 展开状态：固定高度 + 滚动
           Scroll() {
@@ -3028,63 +3053,59 @@ struct Index {
               // 标题行
               Row() {
                 Text('Token 用量')
-                  .fontSize(13)
+                  .fontSize(14)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#1E293B')
+                  .fontColor('#18181B')
                 Blank()
                 Text(this.providerName)
                   .fontSize(11)
-                  .fontColor('#94A3B8')
+                  .fontColor('#A1A1AA')
               }
               .width('100%')
+              .padding({ bottom: 2 })
 
-          // 上下文占用
-          if (this.contextWindow() > 0) {
+          // 上下文占用 — 仅在主视图显示
+          if (this.contextWindow() > 0 && this.blendedTotal() > 0) {
             Column() {
               Row() {
                 Text(this.contextText())
-                  .fontSize(11)
-                  .fontColor('#1E293B')
+                  .fontSize(12)
+                  .fontColor('#18181B')
               }
               .width('100%')
-
-              if (this.blendedTotal() > 0) {
-                Stack({ alignContent: Alignment.Start }) {
-                  Row().width('100%').height(6).backgroundColor('#E2E8F0').borderRadius(3)
-                  Row()
-                    .width(this.contextBarWidth())
-                    .height(6)
-                    .backgroundColor(this.contextBarColor())
-                    .borderRadius(3)
-                }
+              Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
                 .width('100%')
                 .height(6)
+                .style({ strokeWidth: 6, enableSmoothEffect: true })
+                .color(this.contextBarColor())
                 .margin({ top: 4 })
-              }
             }
             .margin({ top: 8 })
           }
 
-          // 标签页
+          // 标签页 — 分段式选择器
           Row() {
             Text('当前轮')
               .fontSize(12)
-              .fontColor(this.tokenTab === 0 ? '#3B82F6' : '#94A3B8')
+              .fontColor(this.tokenTab === 0 ? '#FFFFFF' : '#71717A')
               .fontWeight(this.tokenTab === 0 ? FontWeight.Medium : FontWeight.Normal)
-              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+              .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 0 ? '#EFF6FF' : 'transparent')
+              .backgroundColor(this.tokenTab === 0 ? '#27272A' : 'transparent')
               .onClick(() => { this.tokenTab = 0; })
             Text('趋势')
               .fontSize(12)
-              .fontColor(this.tokenTab === 1 ? '#3B82F6' : '#94A3B8')
+              .fontColor(this.tokenTab === 1 ? '#FFFFFF' : '#71717A')
               .fontWeight(this.tokenTab === 1 ? FontWeight.Medium : FontWeight.Normal)
-              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+              .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 1 ? '#EFF6FF' : 'transparent')
+              .backgroundColor(this.tokenTab === 1 ? '#27272A' : 'transparent')
               .onClick(() => { this.tokenTab = 1; })
           }
           .margin({ top: 10 })
+          .padding(2)
+          .borderRadius(8)
+          .backgroundColor('#F4F4F5')
           .width('100%')
 
           // 当前轮 tab
@@ -3095,24 +3116,40 @@ struct Index {
                 Row() {
                   Text('上下文窗口')
                     .fontSize(11)
-                    .fontColor('#64748B')
+                    .fontColor('#A1A1AA')
                   Blank()
                   Text(this.contextText())
                     .fontSize(11)
-                    .fontColor('#1E293B')
+                    .fontColor('#18181B')
                   if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
-                    Text(this.compacting ? '压缩中...' : '压缩')
+                    Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '压缩'))
                       .fontSize(10)
-                      .fontColor(this.contextBarColor())
-                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .border({ width: 1, color: this.contextBarColor() })
-                      .borderRadius(4)
+                      .fontColor(this.compactError.length > 0 ? '#EF4444' : '#27272A')
+                      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                      .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : '#E4E4E7' })
+                      .borderRadius(6)
+                      .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
                       .margin({ left: 6 })
                       .onClick(() => {
-                        if (!this.compacting) {
-                          this.compacting = true;
-                          const ok = codexBackend.compactActiveThread();
-                          setTimeout(() => { this.compacting = false; }, 2000);
+                        this.compactError = '';
+                        this.compacting = true;
+                        const oldTotal = this.totalTokensUsed();
+                        const threadId = codexBackend.compactActiveThread();
+                        if (threadId.length === 0) {
+                          this.compacting = false;
+                          this.compactError = codexBackend.getLastCompactError();
+                          setTimeout(() => { this.compactError = ''; }, 3000);
+                        } else {
+                          codexBackend.pollUntilTokenChange(threadId, oldTotal, (usage: TurnTokenUsage) => {
+                            this.tokenUsage = usage;
+                            this.compacting = false;
+                            const saved = oldTotal - usage.total.totalTokens;
+                            if (saved > 0) {
+                              promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
+                            } else {
+                              promptAction.showToast({ message: '压缩完成', duration: 2000 });
+                            }
+                          });
                         }
                       })
                   }
@@ -3120,35 +3157,29 @@ struct Index {
                 .width('100%')
 
                 if (this.contextRemainingPct() >= 0) {
-                  Stack({ alignContent: Alignment.Start }) {
-                    Row()
-                      .width('100%')
-                      .height(4)
-                      .backgroundColor('#E2E8F0')
-                      .borderRadius(2)
-                    Row()
-                      .width(this.contextBarWidth())
-                      .height(4)
-                      .backgroundColor(this.contextBarColor())
-                      .borderRadius(2)
-                  }
-                  .width('100%')
-                  .height(4)
-                  .margin({ top: 2 })
+                  Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
+                    .width('100%')
+                    .height(4)
+                    .style({ strokeWidth: 4, enableSmoothEffect: true })
+                    .color(this.contextBarColor())
+                    .margin({ top: 4 })
                 }
               }
               .width('100%')
-              .margin({ top: 2, bottom: 2 })
+              .padding({ top: 8, bottom: 8 })
+
+              // 分隔线
+              Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
 
               if (this.tokenUsage === null) {
                 Text('等待数据...')
                   .fontSize(11)
-                  .fontColor('#94A3B8')
-                  .margin({ top: 8 })
+                  .fontColor('#A1A1AA')
+                  .margin({ top: 12 })
               } else {
                 // 堆叠条
                 if (this.tokenUsage!.last.totalTokens <= 0) {
-                  Row().width('100%').height(8).backgroundColor('#F1F5F9').borderRadius(4)
+                  Row().width('100%').height(8).backgroundColor('#F4F4F5').borderRadius(4)
                 } else {
                   Row() {
                     if (this.tokenUsage!.last.inputTokens > 0) {
@@ -3161,19 +3192,19 @@ struct Index {
                       Row()
                         .width(this.safePct(this.tokenUsage!.last.cachedInputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
-                        .backgroundColor('#94A3B8')
+                        .backgroundColor('#A1A1AA')
                     }
                     if (this.tokenUsage!.last.outputTokens > 0) {
                       Row()
                         .width(this.safePct(this.tokenUsage!.last.outputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
-                        .backgroundColor('#10B981')
+                        .backgroundColor('#22C55E')
                     }
                     if (this.tokenUsage!.last.reasoningOutputTokens > 0) {
                       Row()
                         .width(this.safePct(this.tokenUsage!.last.reasoningOutputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
-                        .backgroundColor('#8B5CF6')
+                        .backgroundColor('#A855F7')
                     }
                   }
                   .width('100%')
@@ -3185,30 +3216,30 @@ struct Index {
                 Column() {
                   Row() {
                     Circle({ width: 6, height: 6 }).fill('#3B82F6')
-                    Text('输入').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Text('输入').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                   Row() {
-                    Circle({ width: 6, height: 6 }).fill('#94A3B8')
-                    Text('缓存').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Circle({ width: 6, height: 6 }).fill('#A1A1AA')
+                    Text('缓存').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                   Row() {
-                    Circle({ width: 6, height: 6 }).fill('#10B981')
-                    Text('输出').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Circle({ width: 6, height: 6 }).fill('#22C55E')
+                    Text('输出').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                   Row() {
-                    Circle({ width: 6, height: 6 }).fill('#8B5CF6')
-                    Text('推理').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Circle({ width: 6, height: 6 }).fill('#A855F7')
+                    Text('推理').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                 }
-                .margin({ top: 8 })
+                .margin({ top: 10 })
               }
             }
             .margin({ top: 8 })
@@ -3221,37 +3252,40 @@ struct Index {
               if (this.tokenAggregate === null) {
                 Text('加载中...')
                   .fontSize(11)
-                  .fontColor('#94A3B8')
-                  .margin({ top: 8 })
+                  .fontColor('#A1A1AA')
+                  .margin({ top: 12 })
               } else {
                 // 范围切换按钮
                 Row() {
                   Text('今日')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 0 ? '#3B82F6' : '#94A3B8')
+                    .fontColor(this.tokenTrendRange === 0 ? '#FFFFFF' : '#71717A')
                     .fontWeight(this.tokenTrendRange === 0 ? FontWeight.Medium : FontWeight.Normal)
-                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                    .borderRadius(4)
-                    .backgroundColor(this.tokenTrendRange === 0 ? '#EFF6FF' : 'transparent')
+                    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                    .borderRadius(6)
+                    .backgroundColor(this.tokenTrendRange === 0 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 0; })
                   Text('近7天')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 1 ? '#3B82F6' : '#94A3B8')
+                    .fontColor(this.tokenTrendRange === 1 ? '#FFFFFF' : '#71717A')
                     .fontWeight(this.tokenTrendRange === 1 ? FontWeight.Medium : FontWeight.Normal)
-                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                    .borderRadius(4)
-                    .backgroundColor(this.tokenTrendRange === 1 ? '#EFF6FF' : 'transparent')
+                    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                    .borderRadius(6)
+                    .backgroundColor(this.tokenTrendRange === 1 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 1; })
                   Text('近30天')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 2 ? '#3B82F6' : '#94A3B8')
+                    .fontColor(this.tokenTrendRange === 2 ? '#FFFFFF' : '#71717A')
                     .fontWeight(this.tokenTrendRange === 2 ? FontWeight.Medium : FontWeight.Normal)
-                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                    .borderRadius(4)
-                    .backgroundColor(this.tokenTrendRange === 2 ? '#EFF6FF' : 'transparent')
+                    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                    .borderRadius(6)
+                    .backgroundColor(this.tokenTrendRange === 2 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 2; })
                 }
                 .margin({ top: 8 })
+                .padding(2)
+                .borderRadius(7)
+                .backgroundColor('#F4F4F5')
                 .width('100%')
 
                 // 今日视图：柱状图
@@ -3259,8 +3293,8 @@ struct Index {
                   Column() {
                     Row() {
                       Text(`共 ${this.formatTokenCount(this.tokenAggregate!.today.totalTokens)} tokens · ${this.tokenAggregate!.today.requestCount} 次请求`)
-                        .fontSize(10).fontColor('#64748B')
-                    }.width('100%').margin({ top: 8 })
+                        .fontSize(10).fontColor('#A1A1AA')
+                    }.width('100%').margin({ top: 10 })
 
                     // 柱状图
                     Row({ space: 8 }) {
@@ -3270,43 +3304,43 @@ struct Index {
                           .height(this.tokenAggregate!.today.inputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.inputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
                           .backgroundColor('#3B82F6').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('输入').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('输入').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
 
                       Column() {
                         Column()
                           .width(28)
                           .height(this.tokenAggregate!.today.outputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.outputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#10B981').borderRadius({ topLeft: 4, topRight: 4 })
+                          .backgroundColor('#22C55E').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('输出').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('输出').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
 
                       Column() {
                         Column()
                           .width(28)
                           .height(this.tokenAggregate!.today.cachedInputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.cachedInputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#94A3B8').borderRadius({ topLeft: 4, topRight: 4 })
+                          .backgroundColor('#A1A1AA').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('缓存').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('缓存').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
 
                       Column() {
                         Column()
                           .width(28)
                           .height(this.tokenAggregate!.today.reasoningOutputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.reasoningOutputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#8B5CF6').borderRadius({ topLeft: 4, topRight: 4 })
+                          .backgroundColor('#A855F7').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('推理').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('推理').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
                     }
                     .width('100%')
                     .alignItems(VerticalAlign.Bottom)
-                    .margin({ top: 8 })
+                    .margin({ top: 10 })
                   }
                 }
 
@@ -3316,16 +3350,16 @@ struct Index {
                     // 总计
                     Row() {
                       Text(`共 ${this.formatTokenCount(this.getTrendSumTokens())} tokens · ${this.getTrendSumRequests()} 次请求`)
-                        .fontSize(10).fontColor('#64748B')
-                    }.width('100%').margin({ top: 8 })
+                        .fontSize(10).fontColor('#A1A1AA')
+                    }.width('100%').margin({ top: 10 })
 
                     // 曲线图区域
                     Stack({ alignContent: Alignment.BottomStart }) {
                       // 网格线
                       Column() {
-                        Row().width('100%').height(1).backgroundColor('#F1F5F9')
-                        Row().width('100%').height(1).backgroundColor('#F1F5F9').margin({ top: 19 })
-                        Row().width('100%').height(1).backgroundColor('#F1F5F9').margin({ top: 19 })
+                        Row().width('100%').height(1).backgroundColor('#F4F4F5')
+                        Row().width('100%').height(1).backgroundColor('#F4F4F5').margin({ top: 19 })
+                        Row().width('100%').height(1).backgroundColor('#F4F4F5').margin({ top: 19 })
                       }.width(220).height(60)
 
                       // Token 曲线
@@ -3341,7 +3375,7 @@ struct Index {
                       Shape() {
                         Path()
                           .commands(this.getTrendRequestPath())
-                          .stroke('#10B981')
+                          .stroke('#22C55E')
                           .strokeWidth(1.5)
                           .fill('none')
                           .strokeDashArray([4, 2])
@@ -3349,25 +3383,25 @@ struct Index {
                     }
                     .width(220)
                     .height(60)
-                    .margin({ top: 8 })
+                    .margin({ top: 10 })
 
                     // 图例
                     Row({ space: 16 }) {
                       Row({ space: 4 }) {
                         Row().width(12).height(2).backgroundColor('#3B82F6')
-                        Text('Tokens').fontSize(9).fontColor('#64748B')
+                        Text('Tokens').fontSize(9).fontColor('#A1A1AA')
                       }
                       Row({ space: 4 }) {
-                        Row().width(12).height(2).backgroundColor('#10B981')
-                        Text('请求').fontSize(9).fontColor('#64748B')
+                        Row().width(12).height(2).backgroundColor('#22C55E')
+                        Text('请求').fontSize(9).fontColor('#A1A1AA')
                       }
                     }.margin({ top: 6 })
 
                     // X轴日期
                     Row() {
-                      Text(this.getTrendFirstDate()).fontSize(8).fontColor('#94A3B8')
+                      Text(this.getTrendFirstDate()).fontSize(8).fontColor('#A1A1AA')
                       Blank()
-                      Text(this.getTrendLastDate()).fontSize(8).fontColor('#94A3B8')
+                      Text(this.getTrendLastDate()).fontSize(8).fontColor('#A1A1AA')
                     }.width(220).margin({ top: 2 })
                   }
                 }
@@ -3386,9 +3420,9 @@ struct Index {
       .padding(this.tokenCardExpanded ? 12 : 0)
       .width('100%')
       .backgroundColor('#FFFFFF')
-      .borderRadius({ bottomLeft: 12, bottomRight: 12 })
-      .border({ width: 1, color: '#E2E8F0' })
-      .shadow(this.tokenCardExpanded ? { radius: 8, color: '#0D000000', offsetY: 2 } : undefined)
+      .borderRadius({ bottomLeft: 10, bottomRight: 10 })
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .shadow(this.tokenCardExpanded ? { radius: 12, color: '#0A000000', offsetY: 4 } : undefined)
       .animation({ duration: 250, curve: Curve.EaseInOut })
     }
     .width('100%')
@@ -3420,7 +3454,7 @@ struct Index {
             .width(8)
             .height('100%')
             .justifyContent(FlexAlign.Center)
-            .backgroundColor('#F1F5F9')
+            .backgroundColor('#F4F4F5')
             .borderRadius(4)
             .hitTestBehavior(HitTestMode.Block)
             .gesture(
@@ -3464,7 +3498,7 @@ struct Index {
             .width(8)
             .height('100%')
             .justifyContent(FlexAlign.Center)
-            .backgroundColor('#F1F5F9')
+            .backgroundColor('#F4F4F5')
             .borderRadius(4)
             .hitTestBehavior(HitTestMode.Block)
             .gesture(
