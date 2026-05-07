@@ -201,6 +201,7 @@ struct Index {
   @State private tokenTab: number = 0;
   @State private tokenTrendRange: number = 0;
   @State private compacting: boolean = false;
+  @State private compactError: string = '';
 
   aboutToAppear(): void {
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
@@ -247,6 +248,19 @@ struct Index {
     }
     this.syncSelectedCollaborationMode();
     if (snapshot.tokenUsage !== null && snapshot.tokenUsage !== undefined) {
+      if (this.compacting && this.tokenUsage !== null && this.tokenUsage !== undefined) {
+        const oldTotal = this.tokenUsage.total.totalTokens;
+        const newTotal = snapshot.tokenUsage.total.totalTokens;
+        if (oldTotal !== newTotal) {
+          this.compacting = false;
+          const saved = oldTotal - newTotal;
+          if (saved > 0) {
+            promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
+          } else {
+            promptAction.showToast({ message: '压缩完成', duration: 2000 });
+          }
+        }
+      }
       this.tokenUsage = snapshot.tokenUsage;
     }
   }
@@ -993,6 +1007,19 @@ struct Index {
     this.changedFiles = result.changedFiles;
     this.diffStat = result.diffStat;
     if (result.tokenUsage !== null && result.tokenUsage !== undefined) {
+      if (this.compacting && this.tokenUsage !== null && this.tokenUsage !== undefined) {
+        const oldTotal = this.tokenUsage.total.totalTokens;
+        const newTotal = result.tokenUsage.total.totalTokens;
+        if (oldTotal !== newTotal) {
+          this.compacting = false;
+          const saved = oldTotal - newTotal;
+          if (saved > 0) {
+            promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
+          } else {
+            promptAction.showToast({ message: '压缩完成', duration: 2000 });
+          }
+        }
+      }
       this.tokenUsage = result.tokenUsage;
     }
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
@@ -1265,7 +1292,7 @@ struct Index {
       return '#DCFCE7';
     }
     if (this.connectionState === 'connecting') {
-      return '#FEF3C7';
+      return '#fffefbc7';
     }
     if (this.connectionState === 'error') {
       return '#FEE2E2';
@@ -2880,25 +2907,45 @@ struct Index {
     return v;
   }
 
+  private usedPct(): number {
+    const rem = this.contextRemainingPct();
+    if (rem < 0) return -1;
+    return (100 - rem);
+  }
+
   private contextBarWidth(): string {
-    const pct = this.contextRemainingPct();
+    const pct = this.usedPct();
     if (pct < 0) return '0%';
-    return pct.toString() + '%';
+    const clamped: number = pct > 100 ? 100 : (pct < 0 ? 0 : pct);
+    return clamped.toString() + '%';
   }
 
   private contextBarColor(): ResourceColor {
-    const pct = this.contextRemainingPct();
+    const pct = this.usedPct();
     if (pct < 0) return '#3B82F6';
-    if (pct <= 10) return '#EF4444';
-    if (pct <= 30) return '#F59E0B';
+    if (pct >= 90) return '#EF4444';
+    if (pct >= 70) return '#F59E0B';
     return '#3B82F6';
   }
 
+  // total.total_tokens — 和 Rust 计算 remaining% 用的是同一个字段
+  private totalTokensUsed(): number {
+    if (this.tokenUsage === null || this.tokenUsage === undefined) return 0;
+    const v = this.tokenUsage.total.totalTokens;
+    if (typeof v !== 'number' || v !== v) return 0;
+    return v < 0 ? 0 : v;
+  }
+
   private contextText(): string {
-    const used = this.blendedTotal();
+    const used = this.totalTokensUsed();
     const win = this.contextWindow();
-    if (win <= 0) return this.formatTokenCount(used);
-    return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win);
+    const rem = this.contextRemainingPct();
+    let suffix: string = '';
+    if (win > 0 && rem >= 0) {
+      suffix = rem <= 0 ? ' (已溢出)' : ' (' + rem.toString() + '% 剩余)';
+    }
+    if (win <= 0) return this.formatTokenCount(used) + suffix;
+    return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win) + suffix;
   }
 
   private safePct(part: number, whole: number): string {
@@ -2909,11 +2956,14 @@ struct Index {
   }
 
   private tokenMiniText(): string {
-    const total = this.blendedTotal();
+    const total = this.totalTokensUsed();
     const win = this.contextWindow();
     const pct = this.contextRemainingPct();
-    const pctStr = win > 0 && pct >= 0 ? ' · 剩余 ' + pct.toString() + '%' : '';
-    return '总 ' + this.formatTokenCount(total) + pctStr;
+    let suffix: string = '';
+    if (win > 0 && pct >= 0) {
+      suffix = pct <= 0 ? ' · 已溢出' : ' · 剩余 ' + pct.toString() + '%';
+    }
+    return '总 ' + this.formatTokenCount(total) + suffix;
   }
 
   private tokenTrendLinePath(data: DailyTokenSnapshot[], maxVal: number, w: number, h: number): string {
@@ -2977,15 +3027,15 @@ struct Index {
       Row() {
         Text(this.tokenCardExpanded ? '▼' : '▲')
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor('#A1A1AA')
       }
       .width('100%')
       .height(16)
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
-      .backgroundColor(this.tokenCardExpanded ? '#FFFFFF' : '#F1F5F9')
-      .borderRadius({ topLeft: 8, topRight: 8 })
-      .border({ width: 1, color: '#E2E8F0' })
+      .backgroundColor(this.tokenCardExpanded ? '#FFFFFF' : '#FAFAFA')
+      .borderRadius({ topLeft: 10, topRight: 10 })
+      .border({ width: 0.5, color: '#E4E4E7' })
       .margin({ bottom: -1 })
       .hitTestBehavior(HitTestMode.Block)
       .gesture(
@@ -3017,7 +3067,7 @@ struct Index {
           Row() {
             Text(this.tokenMiniText())
               .fontSize(11)
-              .fontColor('#64748B')
+              .fontColor('#71717A')
               .maxLines(1)
           }
           .width('100%')
@@ -3029,63 +3079,59 @@ struct Index {
               // 标题行
               Row() {
                 Text('Token 用量')
-                  .fontSize(13)
+                  .fontSize(14)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#1E293B')
+                  .fontColor('#18181B')
                 Blank()
                 Text(this.providerName)
                   .fontSize(11)
-                  .fontColor('#94A3B8')
+                  .fontColor('#A1A1AA')
               }
               .width('100%')
+              .padding({ bottom: 2 })
 
-          // 上下文占用
-          if (this.contextWindow() > 0) {
+          // 上下文占用 — 仅在主视图显示
+          if (this.contextWindow() > 0 && this.blendedTotal() > 0) {
             Column() {
               Row() {
                 Text(this.contextText())
-                  .fontSize(11)
-                  .fontColor('#1E293B')
+                  .fontSize(12)
+                  .fontColor('#18181B')
               }
               .width('100%')
-
-              if (this.blendedTotal() > 0) {
-                Stack({ alignContent: Alignment.Start }) {
-                  Row().width('100%').height(6).backgroundColor('#E2E8F0').borderRadius(3)
-                  Row()
-                    .width(this.contextBarWidth())
-                    .height(6)
-                    .backgroundColor(this.contextBarColor())
-                    .borderRadius(3)
-                }
+              Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
                 .width('100%')
                 .height(6)
+                .style({ strokeWidth: 6, enableSmoothEffect: true })
+                .color(this.contextBarColor())
                 .margin({ top: 4 })
-              }
             }
             .margin({ top: 8 })
           }
 
-          // 标签页
+          // 标签页 — 分段式选择器
           Row() {
             Text('当前轮')
               .fontSize(12)
-              .fontColor(this.tokenTab === 0 ? '#3B82F6' : '#94A3B8')
+              .fontColor(this.tokenTab === 0 ? '#FFFFFF' : '#71717A')
               .fontWeight(this.tokenTab === 0 ? FontWeight.Medium : FontWeight.Normal)
-              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+              .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 0 ? '#EFF6FF' : 'transparent')
+              .backgroundColor(this.tokenTab === 0 ? '#27272A' : 'transparent')
               .onClick(() => { this.tokenTab = 0; })
             Text('趋势')
               .fontSize(12)
-              .fontColor(this.tokenTab === 1 ? '#3B82F6' : '#94A3B8')
+              .fontColor(this.tokenTab === 1 ? '#FFFFFF' : '#71717A')
               .fontWeight(this.tokenTab === 1 ? FontWeight.Medium : FontWeight.Normal)
-              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+              .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 1 ? '#EFF6FF' : 'transparent')
+              .backgroundColor(this.tokenTab === 1 ? '#27272A' : 'transparent')
               .onClick(() => { this.tokenTab = 1; })
           }
           .margin({ top: 10 })
+          .padding(2)
+          .borderRadius(8)
+          .backgroundColor('#F4F4F5')
           .width('100%')
 
           // 当前轮 tab
@@ -3096,24 +3142,40 @@ struct Index {
                 Row() {
                   Text('上下文窗口')
                     .fontSize(11)
-                    .fontColor('#64748B')
+                    .fontColor('#A1A1AA')
                   Blank()
                   Text(this.contextText())
                     .fontSize(11)
-                    .fontColor('#1E293B')
+                    .fontColor('#18181B')
                   if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
-                    Text(this.compacting ? '压缩中...' : '压缩')
+                    Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '压缩'))
                       .fontSize(10)
-                      .fontColor(this.contextBarColor())
-                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .border({ width: 1, color: this.contextBarColor() })
-                      .borderRadius(4)
+                      .fontColor(this.compactError.length > 0 ? '#EF4444' : '#27272A')
+                      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                      .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : '#E4E4E7' })
+                      .borderRadius(6)
+                      .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
                       .margin({ left: 6 })
                       .onClick(() => {
-                        if (!this.compacting) {
-                          this.compacting = true;
-                          const ok = codexBackend.compactActiveThread();
-                          setTimeout(() => { this.compacting = false; }, 2000);
+                        this.compactError = '';
+                        this.compacting = true;
+                        const oldTotal = this.totalTokensUsed();
+                        const threadId = codexBackend.compactActiveThread();
+                        if (threadId.length === 0) {
+                          this.compacting = false;
+                          this.compactError = codexBackend.getLastCompactError();
+                          setTimeout(() => { this.compactError = ''; }, 3000);
+                        } else {
+                          codexBackend.pollUntilTokenChange(threadId, oldTotal, (usage: TurnTokenUsage) => {
+                            this.tokenUsage = usage;
+                            this.compacting = false;
+                            const saved = oldTotal - usage.total.totalTokens;
+                            if (saved > 0) {
+                              promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
+                            } else {
+                              promptAction.showToast({ message: '压缩完成', duration: 2000 });
+                            }
+                          });
                         }
                       })
                   }
@@ -3121,35 +3183,29 @@ struct Index {
                 .width('100%')
 
                 if (this.contextRemainingPct() >= 0) {
-                  Stack({ alignContent: Alignment.Start }) {
-                    Row()
-                      .width('100%')
-                      .height(4)
-                      .backgroundColor('#E2E8F0')
-                      .borderRadius(2)
-                    Row()
-                      .width(this.contextBarWidth())
-                      .height(4)
-                      .backgroundColor(this.contextBarColor())
-                      .borderRadius(2)
-                  }
-                  .width('100%')
-                  .height(4)
-                  .margin({ top: 2 })
+                  Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
+                    .width('100%')
+                    .height(4)
+                    .style({ strokeWidth: 4, enableSmoothEffect: true })
+                    .color(this.contextBarColor())
+                    .margin({ top: 4 })
                 }
               }
               .width('100%')
-              .margin({ top: 2, bottom: 2 })
+              .padding({ top: 8, bottom: 8 })
+
+              // 分隔线
+              Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
 
               if (this.tokenUsage === null) {
                 Text('等待数据...')
                   .fontSize(11)
-                  .fontColor('#94A3B8')
-                  .margin({ top: 8 })
+                  .fontColor('#A1A1AA')
+                  .margin({ top: 12 })
               } else {
                 // 堆叠条
                 if (this.tokenUsage!.last.totalTokens <= 0) {
-                  Row().width('100%').height(8).backgroundColor('#F1F5F9').borderRadius(4)
+                  Row().width('100%').height(8).backgroundColor('#F4F4F5').borderRadius(4)
                 } else {
                   Row() {
                     if (this.tokenUsage!.last.inputTokens > 0) {
@@ -3162,19 +3218,19 @@ struct Index {
                       Row()
                         .width(this.safePct(this.tokenUsage!.last.cachedInputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
-                        .backgroundColor('#94A3B8')
+                        .backgroundColor('#A1A1AA')
                     }
                     if (this.tokenUsage!.last.outputTokens > 0) {
                       Row()
                         .width(this.safePct(this.tokenUsage!.last.outputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
-                        .backgroundColor('#10B981')
+                        .backgroundColor('#22C55E')
                     }
                     if (this.tokenUsage!.last.reasoningOutputTokens > 0) {
                       Row()
                         .width(this.safePct(this.tokenUsage!.last.reasoningOutputTokens, this.tokenUsage!.last.totalTokens))
                         .height(8)
-                        .backgroundColor('#8B5CF6')
+                        .backgroundColor('#A855F7')
                     }
                   }
                   .width('100%')
@@ -3186,30 +3242,30 @@ struct Index {
                 Column() {
                   Row() {
                     Circle({ width: 6, height: 6 }).fill('#3B82F6')
-                    Text('输入').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Text('输入').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                   Row() {
-                    Circle({ width: 6, height: 6 }).fill('#94A3B8')
-                    Text('缓存').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Circle({ width: 6, height: 6 }).fill('#A1A1AA')
+                    Text('缓存').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                   Row() {
-                    Circle({ width: 6, height: 6 }).fill('#10B981')
-                    Text('输出').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Circle({ width: 6, height: 6 }).fill('#22C55E')
+                    Text('输出').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                   Row() {
-                    Circle({ width: 6, height: 6 }).fill('#8B5CF6')
-                    Text('推理').fontSize(11).fontColor('#64748B').margin({ left: 6 })
+                    Circle({ width: 6, height: 6 }).fill('#A855F7')
+                    Text('推理').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#1E293B').fontWeight(FontWeight.Medium)
-                  }.width('100%').margin({ top: 4 })
+                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                  }.width('100%').padding({ top: 6 })
                 }
-                .margin({ top: 8 })
+                .margin({ top: 10 })
               }
             }
             .margin({ top: 8 })
@@ -3222,37 +3278,40 @@ struct Index {
               if (this.tokenAggregate === null) {
                 Text('加载中...')
                   .fontSize(11)
-                  .fontColor('#94A3B8')
-                  .margin({ top: 8 })
+                  .fontColor('#A1A1AA')
+                  .margin({ top: 12 })
               } else {
                 // 范围切换按钮
                 Row() {
                   Text('今日')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 0 ? '#3B82F6' : '#94A3B8')
+                    .fontColor(this.tokenTrendRange === 0 ? '#FFFFFF' : '#71717A')
                     .fontWeight(this.tokenTrendRange === 0 ? FontWeight.Medium : FontWeight.Normal)
-                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                    .borderRadius(4)
-                    .backgroundColor(this.tokenTrendRange === 0 ? '#EFF6FF' : 'transparent')
+                    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                    .borderRadius(6)
+                    .backgroundColor(this.tokenTrendRange === 0 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 0; })
                   Text('近7天')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 1 ? '#3B82F6' : '#94A3B8')
+                    .fontColor(this.tokenTrendRange === 1 ? '#FFFFFF' : '#71717A')
                     .fontWeight(this.tokenTrendRange === 1 ? FontWeight.Medium : FontWeight.Normal)
-                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                    .borderRadius(4)
-                    .backgroundColor(this.tokenTrendRange === 1 ? '#EFF6FF' : 'transparent')
+                    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                    .borderRadius(6)
+                    .backgroundColor(this.tokenTrendRange === 1 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 1; })
                   Text('近30天')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 2 ? '#3B82F6' : '#94A3B8')
+                    .fontColor(this.tokenTrendRange === 2 ? '#FFFFFF' : '#71717A')
                     .fontWeight(this.tokenTrendRange === 2 ? FontWeight.Medium : FontWeight.Normal)
-                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
-                    .borderRadius(4)
-                    .backgroundColor(this.tokenTrendRange === 2 ? '#EFF6FF' : 'transparent')
+                    .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                    .borderRadius(6)
+                    .backgroundColor(this.tokenTrendRange === 2 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 2; })
                 }
                 .margin({ top: 8 })
+                .padding(2)
+                .borderRadius(7)
+                .backgroundColor('#F4F4F5')
                 .width('100%')
 
                 // 今日视图：柱状图
@@ -3260,8 +3319,8 @@ struct Index {
                   Column() {
                     Row() {
                       Text(`共 ${this.formatTokenCount(this.tokenAggregate!.today.totalTokens)} tokens · ${this.tokenAggregate!.today.requestCount} 次请求`)
-                        .fontSize(10).fontColor('#64748B')
-                    }.width('100%').margin({ top: 8 })
+                        .fontSize(10).fontColor('#A1A1AA')
+                    }.width('100%').margin({ top: 10 })
 
                     // 柱状图
                     Row({ space: 8 }) {
@@ -3271,43 +3330,43 @@ struct Index {
                           .height(this.tokenAggregate!.today.inputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.inputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
                           .backgroundColor('#3B82F6').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('输入').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('输入').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
 
                       Column() {
                         Column()
                           .width(28)
                           .height(this.tokenAggregate!.today.outputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.outputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#10B981').borderRadius({ topLeft: 4, topRight: 4 })
+                          .backgroundColor('#22C55E').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('输出').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('输出').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
 
                       Column() {
                         Column()
                           .width(28)
                           .height(this.tokenAggregate!.today.cachedInputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.cachedInputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#94A3B8').borderRadius({ topLeft: 4, topRight: 4 })
+                          .backgroundColor('#A1A1AA').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('缓存').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('缓存').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
 
                       Column() {
                         Column()
                           .width(28)
                           .height(this.tokenAggregate!.today.reasoningOutputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.reasoningOutputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#8B5CF6').borderRadius({ topLeft: 4, topRight: 4 })
+                          .backgroundColor('#A855F7').borderRadius({ topLeft: 4, topRight: 4 })
                         Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens))
-                          .fontSize(9).fontColor('#64748B').margin({ top: 2 })
-                        Text('推理').fontSize(9).fontColor('#94A3B8')
+                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
+                        Text('推理').fontSize(9).fontColor('#A1A1AA')
                       }.alignItems(HorizontalAlign.Center).layoutWeight(1)
                     }
                     .width('100%')
                     .alignItems(VerticalAlign.Bottom)
-                    .margin({ top: 8 })
+                    .margin({ top: 10 })
                   }
                 }
 
@@ -3317,16 +3376,16 @@ struct Index {
                     // 总计
                     Row() {
                       Text(`共 ${this.formatTokenCount(this.getTrendSumTokens())} tokens · ${this.getTrendSumRequests()} 次请求`)
-                        .fontSize(10).fontColor('#64748B')
-                    }.width('100%').margin({ top: 8 })
+                        .fontSize(10).fontColor('#A1A1AA')
+                    }.width('100%').margin({ top: 10 })
 
                     // 曲线图区域
                     Stack({ alignContent: Alignment.BottomStart }) {
                       // 网格线
                       Column() {
-                        Row().width('100%').height(1).backgroundColor('#F1F5F9')
-                        Row().width('100%').height(1).backgroundColor('#F1F5F9').margin({ top: 19 })
-                        Row().width('100%').height(1).backgroundColor('#F1F5F9').margin({ top: 19 })
+                        Row().width('100%').height(1).backgroundColor('#F4F4F5')
+                        Row().width('100%').height(1).backgroundColor('#F4F4F5').margin({ top: 19 })
+                        Row().width('100%').height(1).backgroundColor('#F4F4F5').margin({ top: 19 })
                       }.width(220).height(60)
 
                       // Token 曲线
@@ -3342,7 +3401,7 @@ struct Index {
                       Shape() {
                         Path()
                           .commands(this.getTrendRequestPath())
-                          .stroke('#10B981')
+                          .stroke('#22C55E')
                           .strokeWidth(1.5)
                           .fill('none')
                           .strokeDashArray([4, 2])
@@ -3350,25 +3409,25 @@ struct Index {
                     }
                     .width(220)
                     .height(60)
-                    .margin({ top: 8 })
+                    .margin({ top: 10 })
 
                     // 图例
                     Row({ space: 16 }) {
                       Row({ space: 4 }) {
                         Row().width(12).height(2).backgroundColor('#3B82F6')
-                        Text('Tokens').fontSize(9).fontColor('#64748B')
+                        Text('Tokens').fontSize(9).fontColor('#A1A1AA')
                       }
                       Row({ space: 4 }) {
-                        Row().width(12).height(2).backgroundColor('#10B981')
-                        Text('请求').fontSize(9).fontColor('#64748B')
+                        Row().width(12).height(2).backgroundColor('#22C55E')
+                        Text('请求').fontSize(9).fontColor('#A1A1AA')
                       }
                     }.margin({ top: 6 })
 
                     // X轴日期
                     Row() {
-                      Text(this.getTrendFirstDate()).fontSize(8).fontColor('#94A3B8')
+                      Text(this.getTrendFirstDate()).fontSize(8).fontColor('#A1A1AA')
                       Blank()
-                      Text(this.getTrendLastDate()).fontSize(8).fontColor('#94A3B8')
+                      Text(this.getTrendLastDate()).fontSize(8).fontColor('#A1A1AA')
                     }.width(220).margin({ top: 2 })
                   }
                 }
@@ -3387,9 +3446,9 @@ struct Index {
       .padding(this.tokenCardExpanded ? 12 : 0)
       .width('100%')
       .backgroundColor('#FFFFFF')
-      .borderRadius({ bottomLeft: 12, bottomRight: 12 })
-      .border({ width: 1, color: '#E2E8F0' })
-      .shadow(this.tokenCardExpanded ? { radius: 8, color: '#0D000000', offsetY: 2 } : undefined)
+      .borderRadius({ bottomLeft: 10, bottomRight: 10 })
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .shadow(this.tokenCardExpanded ? { radius: 12, color: '#0A000000', offsetY: 4 } : undefined)
       .animation({ duration: 250, curve: Curve.EaseInOut })
     }
     .width('100%')

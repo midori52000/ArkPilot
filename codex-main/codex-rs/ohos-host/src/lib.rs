@@ -3510,32 +3510,30 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             });
         }
         ServerNotification::ThreadTokenUsageUpdated(payload) => {
+            let usage = NativeTokenUsage {
+                total: NativeTokenUsageBreakdown {
+                    input_tokens: payload.token_usage.total.input_tokens,
+                    output_tokens: payload.token_usage.total.output_tokens,
+                    cached_input_tokens: payload.token_usage.total.cached_input_tokens,
+                    reasoning_output_tokens: payload.token_usage.total.reasoning_output_tokens,
+                    total_tokens: payload.token_usage.total.total_tokens,
+                },
+                last: NativeTokenUsageBreakdown {
+                    input_tokens: payload.token_usage.last.input_tokens,
+                    output_tokens: payload.token_usage.last.output_tokens,
+                    cached_input_tokens: payload.token_usage.last.cached_input_tokens,
+                    reasoning_output_tokens: payload.token_usage.last.reasoning_output_tokens,
+                    total_tokens: payload.token_usage.last.total_tokens,
+                },
+                model_context_window: payload.token_usage.model_context_window,
+            };
             with_native_state(|state| {
-                let entry = state
-                    .turns
-                    .entry(payload.turn_id.clone())
-                    .or_insert_with(|| NativeTurnState {
-                        thread_id: payload.thread_id.clone(),
-                        status: "inProgress".to_string(),
-                        ..Default::default()
-                    });
-                entry.token_usage = Some(NativeTokenUsage {
-                    total: NativeTokenUsageBreakdown {
-                        input_tokens: payload.token_usage.total.input_tokens,
-                        output_tokens: payload.token_usage.total.output_tokens,
-                        cached_input_tokens: payload.token_usage.total.cached_input_tokens,
-                        reasoning_output_tokens: payload.token_usage.total.reasoning_output_tokens,
-                        total_tokens: payload.token_usage.total.total_tokens,
-                    },
-                    last: NativeTokenUsageBreakdown {
-                        input_tokens: payload.token_usage.last.input_tokens,
-                        output_tokens: payload.token_usage.last.output_tokens,
-                        cached_input_tokens: payload.token_usage.last.cached_input_tokens,
-                        reasoning_output_tokens: payload.token_usage.last.reasoning_output_tokens,
-                        total_tokens: payload.token_usage.last.total_tokens,
-                    },
-                    model_context_window: payload.token_usage.model_context_window,
-                });
+                let thread_id = payload.thread_id.clone();
+                for (_, turn) in state.turns.iter_mut() {
+                    if turn.thread_id == thread_id {
+                        turn.token_usage = Some(usage.clone());
+                    }
+                }
             });
             // 更新 token 用量聚合
             let codex_home = resolve_codex_home(None);
