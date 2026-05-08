@@ -1,8 +1,8 @@
 import router from '@ohos.router';
-import { McpServerRecord, SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat } from '../backend/ConsoleModels';
-import { codexBackend } from '../backend/CodexBackend';
+import { SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat, McpServerRecord } from '../backend/ConsoleModels';
 import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult, ChatProbeResult, ApiValidationResult } from '../apim/ApiTypes';
 import { apiManagementVM } from '../apim/ApiManagementViewModel';
+import { codexBackend } from '../backend/CodexBackend';
 import { InstalledSkill, SkillRepo, SkillBackupEntry } from '../skills/SkillTypes';
 import { skillsVM } from '../skills/SkillsViewModel';
 import { PromptsViewModel } from '../prompts/PromptsViewModel';
@@ -10,8 +10,8 @@ import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { PromptRecord } from '../prompts/PromptTypes';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
-type SkillsSubTab = 'installed' | 'repos' | 'backups';
 type ApiSubTab = 'providers' | 'presets';
+type SkillsSubTab = 'installed' | 'repos' | 'backups';
 
 class SettingsNavItem {
   tab: SettingsTab;
@@ -98,6 +98,24 @@ struct SettingsPage {
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
 
+  @State private showValidationDialog: boolean = false;
+  @State private validationResult: ApiValidationResult | null = null;
+
+  @State private installedSkills: InstalledSkill[] = [];
+  @State private skillRepos: SkillRepo[] = [];
+  @State private skillBackups: SkillBackupEntry[] = [];
+  @State private skillsActiveSubTabIndex: number = 0;
+  @State private newRepoOwner: string = 'anthropics';
+  @State private newRepoName: string = 'skills';
+  @State private newRepoBranch: string = 'main';
+  @State private skillsStatusText: string = '';
+  @State private pendingDeleteSkillId: string = '';
+  @State private pendingDeleteSkillName: string = '';
+  @State private showSkillDeleteDialog: boolean = false;
+  @State private showSkillDetailDialog: boolean = false;
+  @State private selectedSkillId: string = '';
+  @State private selectedSkillDetail: InstalledSkill | null = null;
+
   @State private mcpServers: McpServerRecord[] = [];
   @State private selectedMcpServerId: string = '';
   @State private mcpTransportTypeDraft: string = 'stdio';
@@ -113,22 +131,6 @@ struct SettingsPage {
   @State private showMcpDeleteDialog: boolean = false;
   @State private pendingDeleteMcpName: string = '';
   @State private mcpJsonPasteInput: string = '';
-
-  @State private installedSkills: InstalledSkill[] = [];
-  @State private skillRepos: SkillRepo[] = [];
-  @State private skillBackups: SkillBackupEntry[] = [];
-  @State private skillsActiveSubTabIndex: number = 0;
-  @State private newRepoOwner: string = 'anthropics';
-  @State private newRepoName: string = 'skills';
-  @State private newRepoBranch: string = 'main';
-  @State private skillsStatusText: string = '';
-  @State private pendingDeleteSkillId: string = '';
-  @State private pendingDeleteSkillName: string = '';
-  @State private showSkillDeleteDialog: boolean = false;
-  @State private showSkillDetailDialog: boolean = false;
-  @State private selectedSkillDetail: InstalledSkill | null = null;
-  @State private showValidationDialog: boolean = false;
-  @State private validationResult: ApiValidationResult | null = null;
 
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private prompts: PromptRecord[] = [];
@@ -161,18 +163,19 @@ struct SettingsPage {
     if (codexHome.length > 0) {
       this.promptsViewModel = new PromptsViewModel(new PromptsBackendService(codexHome));
     }
-    this.syncMcpStateFromBackend();
     this.syncApiStateFromViewModel();
-    this.syncSkillsStateFromViewModel();
     this.syncPromptsStateFromViewModel();
+    this.syncSkillsStateFromViewModel();
+    this.syncMcpStateFromBackend();
     this.loadSettingsFacadeState();
   }
 
   onPageShow(): void {
     apiManagementVM.loadProviders();
     this.syncApiStateFromViewModel();
-    this.syncSkillsStateFromViewModel();
     this.syncPromptsStateFromViewModel();
+    this.syncSkillsStateFromViewModel();
+    this.syncMcpStateFromBackend();
   }
 
   private loadMockData(): void {
@@ -191,37 +194,6 @@ struct SettingsPage {
       ));
     }
     this.apiPresets = presets;
-  }
-
-  private loadMcpDraft(serverId: string): void {
-    for (let index = 0; index < this.mcpServers.length; index += 1) {
-      const server = this.mcpServers[index];
-      if (server.id !== serverId) {
-        continue;
-      }
-      this.applyMcpDraft(server);
-      return;
-    }
-  }
-
-  private applyMcpDraft(server: McpServerRecord): void {
-    this.selectedMcpServerId = server.id;
-    this.mcpTransportTypeDraft = server.transportType;
-    this.mcpCommandDraft = server.command;
-    this.mcpArgsDraft = server.argsText.trim().length > 0 ? server.argsText : '[]';
-    this.mcpUrlDraft = server.url;
-    this.mcpEnvDraft = server.envText.trim().length > 0 ? server.envText : '{}';
-    this.mcpHttpHeadersDraft = server.httpHeadersText.trim().length > 0 ? server.httpHeadersText : '{}';
-    this.mcpEnabledDraft = server.enabled;
-  }
-
-  private selectedMcpServer(): McpServerRecord | null {
-    for (let index = 0; index < this.mcpServers.length; index += 1) {
-      if (this.mcpServers[index].id === this.selectedMcpServerId) {
-        return this.mcpServers[index];
-      }
-    }
-    return null;
   }
 
   private selectedPrompt(): PromptRecord | null {
@@ -263,42 +235,6 @@ struct SettingsPage {
     }
   }
 
-  private syncSkillsStateFromViewModel(): void {
-    this.installedSkills = [...skillsVM.state.installed];
-    this.skillRepos = [...skillsVM.state.repos];
-    this.skillBackups = [...skillsVM.state.backups];
-    if (skillsVM.state.statusText.trim().length > 0) {
-      this.skillsStatusText = skillsVM.state.statusText;
-    } else if (skillsVM.state.errorText.trim().length > 0) {
-      this.skillsStatusText = skillsVM.state.errorText;
-    }
-  }
-
-  private syncMcpStateFromBackend(): void {
-    this.mcpServers = codexBackend.mcpServers();
-    const snapshot = codexBackend.snapshot();
-    this.mcpStatusText = snapshot.mcpErrorText.trim().length > 0
-      ? snapshot.mcpErrorText
-      : snapshot.mcpStatusText;
-    if (this.mcpServers.length === 0) {
-      this.selectedMcpServerId = '';
-      this.mcpTransportTypeDraft = 'stdio';
-      this.mcpCommandDraft = '';
-      this.mcpArgsDraft = '[]';
-      this.mcpUrlDraft = '';
-      this.mcpEnvDraft = '{}';
-      this.mcpEnabledDraft = true;
-      return;
-    }
-    const hasCurrent = this.selectedMcpServerId.length > 0
-      && this.mcpServers.some((server: McpServerRecord) => server.id === this.selectedMcpServerId);
-    const nextId = hasCurrent ? this.selectedMcpServerId : this.mcpServers[0].id;
-    const nextServer = this.mcpServers.find((server: McpServerRecord) => server.id === nextId);
-    if (nextServer !== undefined) {
-      this.applyMcpDraft(nextServer);
-    }
-  }
-
   private syncPromptsStateFromViewModel(): void {
     this.prompts = [...this.promptsViewModel.state.prompts];
     this.promptLiveContent = this.promptsViewModel.state.liveContent;
@@ -329,40 +265,8 @@ struct SettingsPage {
   }
 
   private loadSettingsFacadeState(): void {
-    codexBackend.refreshMcpServers()
-      .then(() => {
-        this.syncMcpStateFromBackend();
-      })
-      .catch((err: Object) => {
-        this.mcpStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.mcpStatusText, 'error');
-      });
     apiManagementVM.loadProviders();
     this.syncApiStateFromViewModel();
-    skillsVM.loadInstalled(true)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-    skillsVM.loadRepos()
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-    skillsVM.loadBackups()
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
     this.promptsViewModel.loadAll()
       .then(() => {
         this.syncPromptsStateFromViewModel();
@@ -371,6 +275,425 @@ struct SettingsPage {
         this.promptsStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.promptsStatusText, 'error');
       });
+    skillsVM.loadInstalled(true)
+      .then(() => { this.syncSkillsStateFromViewModel(); })
+      .catch((err: Object) => { this.skillsStatusText = this.describeRuntimeError(err); this.triggerFeedback(this.skillsStatusText, 'error'); });
+    skillsVM.loadRepos()
+      .then(() => { this.syncSkillsStateFromViewModel(); })
+      .catch((err: Object) => { this.skillsStatusText = this.describeRuntimeError(err); this.triggerFeedback(this.skillsStatusText, 'error'); });
+    skillsVM.loadBackups()
+      .then(() => { this.syncSkillsStateFromViewModel(); })
+      .catch((err: Object) => { this.skillsStatusText = this.describeRuntimeError(err); this.triggerFeedback(this.skillsStatusText, 'error'); });
+    codexBackend.refreshMcpServers()
+      .then(() => { this.syncMcpStateFromBackend(); })
+      .catch((err: Object) => { this.mcpStatusText = this.describeRuntimeError(err); this.triggerFeedback(this.mcpStatusText, 'error'); });
+  }
+
+  private selectedSkill(): InstalledSkill | null {
+    if (this.selectedSkillId.length === 0) {
+      return null;
+    }
+    for (let index = 0; index < this.installedSkills.length; index += 1) {
+      if (this.installedSkills[index].id === this.selectedSkillId) {
+        return this.installedSkills[index];
+      }
+    }
+    return null;
+  }
+
+  private syncSkillsStateFromViewModel(): void {
+    this.installedSkills = [...skillsVM.state.installed];
+    this.skillRepos = [...skillsVM.state.repos];
+    this.skillBackups = [...skillsVM.state.backups];
+    if (skillsVM.state.statusText.trim().length > 0) {
+      this.skillsStatusText = skillsVM.state.statusText;
+    } else if (skillsVM.state.errorText.trim().length > 0) {
+      this.skillsStatusText = skillsVM.state.errorText;
+    }
+    const selectedSkill = this.selectedSkill();
+    if (selectedSkill !== null) {
+      this.selectedSkillDetail = selectedSkill;
+    } else if (this.selectedSkillId.length > 0) {
+      this.selectedSkillId = '';
+      this.selectedSkillDetail = null;
+    }
+  }
+
+  private toggleSkillEnabled(skillId: string): void {
+    let currentSkill: InstalledSkill | null = null;
+    for (let index = 0; index < this.installedSkills.length; index += 1) {
+      if (this.installedSkills[index].id !== skillId) {
+        continue;
+      }
+      currentSkill = this.installedSkills[index];
+      break;
+    }
+    if (currentSkill === null) {
+      return;
+    }
+    const previousSkill: InstalledSkill = currentSkill;
+    const enabled = !previousSkill.enabled;
+    const optimisticSkill = new InstalledSkill(
+      previousSkill.id, previousSkill.name, previousSkill.description, previousSkill.directory, previousSkill.source,
+      previousSkill.repoOwner, previousSkill.repoName, previousSkill.repoBranch, previousSkill.readmeUrl,
+      enabled, previousSkill.installedAt, previousSkill.contentHash, previousSkill.updatedAt
+    );
+    skillsVM.state.installed = skillsVM.state.installed.map((s: InstalledSkill): InstalledSkill =>
+      s.id === skillId ? optimisticSkill : s
+    );
+    this.syncSkillsStateFromViewModel();
+    skillsVM.toggleEnabled(skillId, enabled)
+      .then(() => {
+        if (skillsVM.state.errorText.trim().length > 0) {
+          skillsVM.state.installed = skillsVM.state.installed.map((s: InstalledSkill): InstalledSkill =>
+            s.id === skillId ? previousSkill : s
+          );
+        }
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        skillsVM.state.installed = skillsVM.state.installed.map((s: InstalledSkill): InstalledSkill =>
+          s.id === skillId ? previousSkill : s
+        );
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private requestUninstallSkill(skillId: string): void {
+    for (let index = 0; index < this.installedSkills.length; index += 1) {
+      if (this.installedSkills[index].id !== skillId) {
+        continue;
+      }
+      this.pendingDeleteSkillId = skillId;
+      this.pendingDeleteSkillName = this.installedSkills[index].name;
+      this.showSkillDeleteDialog = true;
+      return;
+    }
+  }
+
+  private cancelUninstallSkill(): void {
+    this.showSkillDeleteDialog = false;
+    this.pendingDeleteSkillId = '';
+    this.pendingDeleteSkillName = '';
+  }
+
+  private confirmUninstallSkill(): void {
+    const skillId = this.pendingDeleteSkillId;
+    this.cancelUninstallSkill();
+    if (skillId.length === 0) {
+      return;
+    }
+    skillsVM.uninstall(skillId)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private showSkillDetail(skill: InstalledSkill): void {
+    this.selectedSkillId = skill.id;
+    this.selectedSkillDetail = skill;
+    this.showSkillDetailDialog = true;
+  }
+
+  private closeSkillDetail(): void {
+    this.showSkillDetailDialog = false;
+    const selectedSkill = this.selectedSkill();
+    this.selectedSkillDetail = selectedSkill;
+  }
+
+  private addSkillRepo(): void {
+    const owner = this.newRepoOwner.trim();
+    const name = this.newRepoName.trim();
+    const branch = this.newRepoBranch.trim().length > 0 ? this.newRepoBranch.trim() : 'main';
+    if (owner.length === 0 || name.length === 0) {
+      this.triggerFeedback('仓库所有者与名称不能为空。', 'error');
+      return;
+    }
+    skillsVM.addRepo(new SkillRepo(owner, name, branch, true))
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private toggleRepoEnabled(owner: string, name: string): void {
+    let nextEnabled: boolean | null = null;
+    for (let index = 0; index < this.skillRepos.length; index += 1) {
+      const repo = this.skillRepos[index];
+      if (repo.owner !== owner || repo.name !== name) {
+        continue;
+      }
+      nextEnabled = !repo.enabled;
+      break;
+    }
+    if (nextEnabled === null) {
+      return;
+    }
+    skillsVM.toggleRepoEnabled(owner, name, nextEnabled)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private removeSkillRepo(owner: string, name: string): void {
+    skillsVM.removeRepo(owner, name)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private removeSkillBackup(backupId: string): void {
+    skillsVM.deleteBackup(backupId)
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private skillsSubTabIndex(tab: SkillsSubTab): number {
+    if (tab === 'repos') return 1;
+    if (tab === 'backups') return 2;
+    return 0;
+  }
+
+  private skillsSubTabByIndex(index: number): SkillsSubTab {
+    if (index === 1) return 'repos';
+    if (index === 2) return 'backups';
+    return 'installed';
+  }
+
+  private refreshActiveSkillsSubTab(): void {
+    this.loadSkillsSubTab(this.skillsSubTabByIndex(this.skillsActiveSubTabIndex));
+  }
+
+  private switchSkillsSubTab(tab: SkillsSubTab): void {
+    this.skillsActiveSubTabIndex = this.skillsSubTabIndex(tab);
+    this.loadSkillsSubTab(tab);
+  }
+
+  private loadSkillsSubTab(tab: SkillsSubTab): void {
+    this.syncSkillsStateFromViewModel();
+    this.skillsStatusText = tab === 'installed'
+      ? '正在刷新已安装 Skills...'
+      : (tab === 'repos' ? '正在刷新来源...' : '正在刷新备份...');
+    const action = tab === 'installed'
+      ? skillsVM.loadInstalled(true)
+      : (tab === 'repos' ? skillsVM.loadRepos() : skillsVM.loadBackups());
+    action
+      .then(() => {
+        this.syncSkillsStateFromViewModel();
+        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : skillsVM.state.statusText;
+      })
+      .catch((err: Object) => {
+        this.skillsStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.skillsStatusText, 'error');
+      });
+  }
+
+  private selectSkillForPreview(skill: InstalledSkill): void {
+    this.selectedSkillId = skill.id;
+    this.selectedSkillDetail = skill;
+  }
+
+  private skillSourceText(skill: InstalledSkill): string {
+    return skill.source === 'github' ? 'GitHub' : '本地';
+  }
+
+  private skillMetaText(skill: InstalledSkill): string {
+    if (skill.repoOwner.length > 0 && skill.repoName.length > 0) {
+      return `${skill.repoOwner}/${skill.repoName}`;
+    }
+    return skill.directory;
+  }
+
+  private skillDetailSourceLabel(): string {
+    if (this.selectedSkillDetail === null) return '';
+    const src: string = this.selectedSkillDetail.source;
+    if (src === 'github') return 'GitHub';
+    if (src === 'zip') return 'ZIP 导入';
+    return '本地';
+  }
+
+  private skillDetailInstalledDate(): string {
+    if (this.selectedSkillDetail === null || this.selectedSkillDetail.installedAt <= 0) return '未知';
+    return new Date(this.selectedSkillDetail.installedAt).toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+  private skillDetailUpdatedDate(): string {
+    if (this.selectedSkillDetail === null || this.selectedSkillDetail.updatedAt <= 0) return '从未更新';
+    return new Date(this.selectedSkillDetail.updatedAt).toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+  private loadMcpDraft(serverId: string): void {
+    for (let index = 0; index < this.mcpServers.length; index += 1) {
+      const server = this.mcpServers[index];
+      if (server.id !== serverId) continue;
+      this.applyMcpDraft(server);
+      return;
+    }
+  }
+
+  private applyMcpDraft(server: McpServerRecord): void {
+    this.selectedMcpServerId = server.id;
+    this.mcpTransportTypeDraft = server.transportType;
+    this.mcpCommandDraft = server.command;
+    this.mcpArgsDraft = server.argsText.trim().length > 0 ? server.argsText : '[]';
+    this.mcpUrlDraft = server.url;
+    this.mcpEnvDraft = server.envText.trim().length > 0 ? server.envText : '{}';
+    this.mcpHttpHeadersDraft = server.httpHeadersText.trim().length > 0 ? server.httpHeadersText : '{}';
+    this.mcpEnabledDraft = server.enabled;
+  }
+
+  private selectedMcpServer(): McpServerRecord | null {
+    for (let index = 0; index < this.mcpServers.length; index += 1) {
+      if (this.mcpServers[index].id === this.selectedMcpServerId) {
+        return this.mcpServers[index];
+      }
+    }
+    return null;
+  }
+
+  private syncMcpStateFromBackend(): void {
+    this.mcpServers = codexBackend.mcpServers();
+    const snapshot = codexBackend.snapshot();
+    this.mcpStatusText = snapshot.mcpErrorText.trim().length > 0
+      ? snapshot.mcpErrorText
+      : snapshot.mcpStatusText;
+    if (this.mcpServers.length === 0) {
+      this.selectedMcpServerId = '';
+      this.mcpTransportTypeDraft = 'stdio';
+      this.mcpCommandDraft = '';
+      this.mcpArgsDraft = '[]';
+      this.mcpUrlDraft = '';
+      this.mcpEnvDraft = '{}';
+      this.mcpEnabledDraft = true;
+      return;
+    }
+    const hasCurrent = this.selectedMcpServerId.length > 0
+      && this.mcpServers.some((server: McpServerRecord) => server.id === this.selectedMcpServerId);
+    const nextId = hasCurrent ? this.selectedMcpServerId : this.mcpServers[0].id;
+    const nextServer = this.mcpServers.find((server: McpServerRecord) => server.id === nextId);
+    if (nextServer !== undefined) {
+      this.applyMcpDraft(nextServer);
+    }
+  }
+
+  private saveMcpDraft(): void {
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可保存的 MCP 服务。', 'warning');
+      return;
+    }
+    codexBackend.saveMcpServerConfig(
+      server.name, this.mcpEnabledDraft, this.mcpTransportTypeDraft,
+      this.mcpCommandDraft, this.mcpArgsDraft, this.mcpUrlDraft,
+      this.mcpEnvDraft, this.mcpHttpHeadersDraft
+    )
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已保存 ${server.name} 的 MCP 配置。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private revertMcpDraft(): void {
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可还原的 MCP 服务。', 'warning');
+      return;
+    }
+    this.loadMcpDraft(server.id);
+    this.triggerFeedback(`已还原 ${server.name} 的草稿。`, 'info');
+  }
+
+  private reloadMcpDraft(): void {
+    codexBackend.reloadMcpServers()
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        const server = this.selectedMcpServer();
+        this.triggerFeedback(server !== null ? `${server.name} 已完成 MCP 重载。` : 'MCP 配置已重载。', 'info');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private startSelectedMcpOauth(): void {
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可登录的 MCP 服务。', 'warning');
+      return;
+    }
+    codexBackend.startMcpOAuthLogin(server.name)
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已为 ${server.name} 发起 OAuth 登录。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private openMcpAddDialog(): void {
+    this.mcpNewServerName = '';
+    this.showMcpAddDialog = true;
+  }
+
+  private cancelMcpAdd(): void {
+    this.showMcpAddDialog = false;
+    this.mcpNewServerName = '';
+    this.mcpJsonPasteInput = '';
   }
 
   private copyConfigObject(source: Record<string, Object>): Record<string, Object> {
@@ -380,6 +703,157 @@ struct SettingsPage {
       result[keys[i]] = source[keys[i]];
     }
     return result;
+  }
+
+  private parseMcpJsonInput(raw: string): Record<string, Object> | null {
+    const trimmed: string = raw.trim();
+    if (trimmed.length === 0) return null;
+    let root: Record<string, Object>;
+    try {
+      root = JSON.parse(trimmed) as Record<string, Object>;
+    } catch (_err) {
+      return null;
+    }
+    const mcpServersObj: Object | undefined = root['mcpServers'];
+    if (typeof mcpServersObj === 'object' && mcpServersObj !== null) {
+      const keys: string[] = Object.keys(mcpServersObj as Record<string, Object>);
+      if (keys.length > 0) {
+        const firstName: string = keys[0];
+        const serverConfig: Object = (mcpServersObj as Record<string, Object>)[firstName];
+        if (typeof serverConfig === 'object' && serverConfig !== null) {
+          const result: Record<string, Object> = this.copyConfigObject(serverConfig as Record<string, Object>);
+          if (result['name'] === undefined) {
+            result['name'] = firstName;
+          }
+          return result;
+        }
+      }
+    }
+    return root;
+  }
+
+  private mcpAddPreviewText(): string {
+    const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
+    if (parsed === null) {
+      if (this.mcpJsonPasteInput.trim().length === 0) return '粘贴 JSON 后自动解析预览';
+      return 'JSON 格式不正确';
+    }
+    const name: string = this.mcpNewServerName.trim().length > 0
+      ? this.mcpNewServerName.trim()
+      : (typeof parsed['name'] === 'string' ? (parsed['name'] as string) : '');
+    const url: string = typeof parsed['url'] === 'string' ? (parsed['url'] as string) : '';
+    const command: string = typeof parsed['command'] === 'string' ? (parsed['command'] as string) : '';
+    const transport: string = url.length > 0 ? 'HTTP' : (command.length > 0 ? 'stdio' : '?');
+    const headers: Object | undefined = parsed['headers'];
+    const hasHeaders: boolean = typeof headers === 'object' && headers !== null && Object.keys(headers as Record<string, Object>).length > 0;
+    let preview: string = `名称: ${name.length > 0 ? name : '(未指定)'}\n传输: ${transport}`;
+    if (url.length > 0) preview += `\nURL: ${url}`;
+    if (command.length > 0) preview += `\n命令: ${command}`;
+    if (hasHeaders) preview += `\n请求头: 已配置`;
+    return preview;
+  }
+
+  private confirmMcpAdd(): void {
+    this.confirmMcpAddFromJson();
+  }
+
+  private confirmMcpAddFromJson(): void {
+    const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
+    if (parsed === null) {
+      this.triggerFeedback('JSON 格式不正确，请检查后重试。', 'error');
+      return;
+    }
+    let name: string = this.mcpNewServerName.trim();
+    if (name.length === 0) {
+      if (typeof parsed['name'] === 'string' && (parsed['name'] as string).trim().length > 0) {
+        name = (parsed['name'] as string).trim();
+      } else {
+        this.triggerFeedback('请输入名称，或在 JSON 中包含 "name" 字段。', 'warning');
+        return;
+      }
+    }
+    for (let i: number = 0; i < this.mcpServers.length; i += 1) {
+      if (this.mcpServers[i].name === name) {
+        this.triggerFeedback('已存在同名 MCP 服务。', 'warning');
+        return;
+      }
+    }
+    const url: string = typeof parsed['url'] === 'string' ? (parsed['url'] as string).trim() : '';
+    const command: string = typeof parsed['command'] === 'string' ? (parsed['command'] as string).trim() : '';
+    if (url.length === 0 && command.length === 0) {
+      this.triggerFeedback('JSON 中必须包含 "url"（HTTP）或 "command"（stdio）。', 'warning');
+      return;
+    }
+    const transportType: string = url.length > 0 ? 'http' : 'stdio';
+    const argsObj: Object | undefined = parsed['args'];
+    const argsText: string = argsObj !== undefined ? JSON.stringify(argsObj) : '[]';
+    const envObj: Object | undefined = parsed['env'];
+    const envText: string = envObj !== undefined ? JSON.stringify(envObj) : '{}';
+    const headersObj: Object | undefined = parsed['headers'];
+    const httpHeadersText: string = headersObj !== undefined ? JSON.stringify(headersObj) : '{}';
+    codexBackend.addMcpServer(name, transportType, command, argsText, url, envText, httpHeadersText)
+      .then(() => {
+        this.showMcpAddDialog = false;
+        this.mcpNewServerName = '';
+        this.mcpJsonPasteInput = '';
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已添加 MCP 服务：${name}`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private openMcpDeleteDialog(): void {
+    const server = this.selectedMcpServer();
+    if (server === null) {
+      this.triggerFeedback('当前没有可删除的 MCP 服务。', 'warning');
+      return;
+    }
+    this.pendingDeleteMcpName = server.name;
+    this.showMcpDeleteDialog = true;
+  }
+
+  private cancelMcpDelete(): void {
+    this.showMcpDeleteDialog = false;
+    this.pendingDeleteMcpName = '';
+  }
+
+  private confirmMcpDelete(): void {
+    const name: string = this.pendingDeleteMcpName;
+    this.cancelMcpDelete();
+    if (name.length === 0) return;
+    codexBackend.removeMcpServer(name)
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已删除 MCP 服务：${name}`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private authLabel(status: string): string {
+    switch (status) {
+      case 'notRequired': return '无需认证';
+      case 'required': return '需要 OAuth';
+      case 'pending': return 'OAuth 等待中';
+      case 'authenticated': return '已认证';
+      case 'failed': return '失败';
+      default: return status;
+    }
+  }
+
+  private healthLabel(status: string): string {
+    switch (status) {
+      case 'ok': return '正常';
+      case 'warning': return '无工具';
+      case 'degraded': return '需关注';
+      case 'error': return '错误';
+      default: return '草稿';
+    }
   }
 
   private describeRuntimeError(err: Object): string {
@@ -505,38 +979,6 @@ struct SettingsPage {
     }
   }
 
-  private authLabel(status: string): string {
-    switch (status) {
-      case 'notRequired':
-        return '无需认证';
-      case 'required':
-        return '需要 OAuth';
-      case 'pending':
-        return 'OAuth 等待中';
-      case 'authenticated':
-        return '已认证';
-      case 'failed':
-        return '失败';
-      default:
-        return status;
-    }
-  }
-
-  private healthLabel(status: string): string {
-    switch (status) {
-      case 'ok':
-        return '正常';
-      case 'warning':
-        return '无工具';
-      case 'degraded':
-        return '需关注';
-      case 'error':
-        return '错误';
-      default:
-        return '草稿';
-    }
-  }
-
   private formatTimestamp(ts: number): string {
     if (ts <= 0) {
       return '-';
@@ -560,434 +1002,6 @@ struct SettingsPage {
       default:
         return 'API';
     }
-  }
-
-  private saveMcpDraft(): void {
-    const server = this.selectedMcpServer();
-    if (server === null) {
-      this.triggerFeedback('当前没有可保存的 MCP 服务。', 'warning');
-      return;
-    }
-    codexBackend.saveMcpServerConfig(
-      server.name,
-      this.mcpEnabledDraft,
-      this.mcpTransportTypeDraft,
-      this.mcpCommandDraft,
-      this.mcpArgsDraft,
-      this.mcpUrlDraft,
-      this.mcpEnvDraft,
-      this.mcpHttpHeadersDraft
-    )
-      .then(() => {
-        this.syncMcpStateFromBackend();
-        this.triggerFeedback(`已保存 ${server.name} 的 MCP 配置。`, 'success');
-      })
-      .catch((err: Object) => {
-        this.mcpStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.mcpStatusText, 'error');
-      });
-  }
-
-  private revertMcpDraft(): void {
-    const server = this.selectedMcpServer();
-    if (server === null) {
-      this.triggerFeedback('当前没有可还原的 MCP 服务。', 'warning');
-      return;
-    }
-    this.loadMcpDraft(server.id);
-    this.triggerFeedback(`已还原 ${server.name} 的草稿。`, 'info');
-  }
-
-  private reloadMcpDraft(): void {
-    codexBackend.reloadMcpServers()
-      .then(() => {
-        this.syncMcpStateFromBackend();
-        const server = this.selectedMcpServer();
-        this.triggerFeedback(server !== null ? `${server.name} 已完成 MCP 重载。` : 'MCP 配置已重载。', 'info');
-      })
-      .catch((err: Object) => {
-        this.mcpStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.mcpStatusText, 'error');
-      });
-  }
-
-  private startSelectedMcpOauth(): void {
-    const server = this.selectedMcpServer();
-    if (server === null) {
-      this.triggerFeedback('当前没有可登录的 MCP 服务。', 'warning');
-      return;
-    }
-    codexBackend.startMcpOAuthLogin(server.name)
-      .then(() => {
-        this.syncMcpStateFromBackend();
-        this.triggerFeedback(`已为 ${server.name} 发起 OAuth 登录。`, 'success');
-      })
-      .catch((err: Object) => {
-        this.mcpStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.mcpStatusText, 'error');
-      });
-  }
-
-  private openMcpAddDialog(): void {
-    this.mcpNewServerName = '';
-    this.showMcpAddDialog = true;
-  }
-
-  private cancelMcpAdd(): void {
-    this.showMcpAddDialog = false;
-    this.mcpNewServerName = '';
-    this.mcpJsonPasteInput = '';
-  }
-
-  private parseMcpJsonInput(raw: string): Record<string, Object> | null {
-    const trimmed: string = raw.trim();
-    if (trimmed.length === 0) {
-      return null;
-    }
-    let root: Record<string, Object>;
-    try {
-      root = JSON.parse(trimmed) as Record<string, Object>;
-    } catch (_err) {
-      return null;
-    }
-    // 支持 Claude Desktop 格式: { "mcpServers": { "name": { ... } } }
-    const mcpServers: Object | undefined = root['mcpServers'];
-    if (typeof mcpServers === 'object' && mcpServers !== null) {
-      const keys: string[] = Object.keys(mcpServers as Record<string, Object>);
-      if (keys.length > 0) {
-        const firstName: string = keys[0];
-        const serverConfig: Object = (mcpServers as Record<string, Object>)[firstName];
-        if (typeof serverConfig === 'object' && serverConfig !== null) {
-          const result: Record<string, Object> = this.copyConfigObject(serverConfig as Record<string, Object>);
-          if (result['name'] === undefined) {
-            result['name'] = firstName;
-          }
-          return result;
-        }
-      }
-    }
-    return root;
-  }
-
-  private mcpAddPreviewText(): string {
-    const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
-    if (parsed === null) {
-      if (this.mcpJsonPasteInput.trim().length === 0) {
-        return '粘贴 JSON 后自动解析预览';
-      }
-      return 'JSON 格式不正确';
-    }
-    const name: string = this.mcpNewServerName.trim().length > 0
-      ? this.mcpNewServerName.trim()
-      : (typeof parsed['name'] === 'string' ? (parsed['name'] as string) : '');
-    const url: string = typeof parsed['url'] === 'string' ? (parsed['url'] as string) : '';
-    const command: string = typeof parsed['command'] === 'string' ? (parsed['command'] as string) : '';
-    const transport: string = url.length > 0 ? 'HTTP' : (command.length > 0 ? 'stdio' : '?');
-    const headers: Object | undefined = parsed['headers'];
-    const hasHeaders: boolean = typeof headers === 'object' && headers !== null && Object.keys(headers as Record<string, Object>).length > 0;
-    let preview: string = `名称: ${name.length > 0 ? name : '(未指定)'}\n传输: ${transport}`;
-    if (url.length > 0) {
-      preview += `\nURL: ${url}`;
-    }
-    if (command.length > 0) {
-      preview += `\n命令: ${command}`;
-    }
-    if (hasHeaders) {
-      preview += `\n请求头: 已配置`;
-    }
-    return preview;
-  }
-
-  private confirmMcpAdd(): void {
-    this.confirmMcpAddFromJson();
-  }
-
-  private confirmMcpAddFromJson(): void {
-    const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
-    if (parsed === null) {
-      this.triggerFeedback('JSON 格式不正确，请检查后重试。', 'error');
-      return;
-    }
-    let name: string = this.mcpNewServerName.trim();
-    if (name.length === 0) {
-      if (typeof parsed['name'] === 'string' && (parsed['name'] as string).trim().length > 0) {
-        name = (parsed['name'] as string).trim();
-      } else {
-        this.triggerFeedback('请输入名称，或在 JSON 中包含 "name" 字段。', 'warning');
-        return;
-      }
-    }
-    for (let i: number = 0; i < this.mcpServers.length; i += 1) {
-      if (this.mcpServers[i].name === name) {
-        this.triggerFeedback('已存在同名 MCP 服务。', 'warning');
-        return;
-      }
-    }
-    const url: string = typeof parsed['url'] === 'string' ? (parsed['url'] as string).trim() : '';
-    const command: string = typeof parsed['command'] === 'string' ? (parsed['command'] as string).trim() : '';
-    if (url.length === 0 && command.length === 0) {
-      this.triggerFeedback('JSON 中必须包含 "url"（HTTP）或 "command"（stdio）。', 'warning');
-      return;
-    }
-    const transportType: string = url.length > 0 ? 'http' : 'stdio';
-    const argsObj: Object | undefined = parsed['args'];
-    const argsText: string = argsObj !== undefined ? JSON.stringify(argsObj) : '[]';
-    const envObj: Object | undefined = parsed['env'];
-    const envText: string = envObj !== undefined ? JSON.stringify(envObj) : '{}';
-    const headersObj: Object | undefined = parsed['headers'];
-    const httpHeadersText: string = headersObj !== undefined ? JSON.stringify(headersObj) : '{}';
-    codexBackend.addMcpServer(name, transportType, command, argsText, url, envText, httpHeadersText)
-      .then(() => {
-        this.showMcpAddDialog = false;
-        this.mcpNewServerName = '';
-        this.mcpJsonPasteInput = '';
-        this.syncMcpStateFromBackend();
-        this.triggerFeedback(`已添加 MCP 服务：${name}`, 'success');
-      })
-      .catch((err: Object) => {
-        this.mcpStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.mcpStatusText, 'error');
-      });
-  }
-
-  private openMcpDeleteDialog(): void {
-    const server = this.selectedMcpServer();
-    if (server === null) {
-      this.triggerFeedback('当前没有可删除的 MCP 服务。', 'warning');
-      return;
-    }
-    this.pendingDeleteMcpName = server.name;
-    this.showMcpDeleteDialog = true;
-  }
-
-  private cancelMcpDelete(): void {
-    this.showMcpDeleteDialog = false;
-    this.pendingDeleteMcpName = '';
-  }
-
-  private confirmMcpDelete(): void {
-    const name: string = this.pendingDeleteMcpName;
-    this.cancelMcpDelete();
-    if (name.length === 0) {
-      return;
-    }
-    codexBackend.removeMcpServer(name)
-      .then(() => {
-        this.syncMcpStateFromBackend();
-        this.triggerFeedback(`已删除 MCP 服务：${name}`, 'success');
-      })
-      .catch((err: Object) => {
-        this.mcpStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.mcpStatusText, 'error');
-      });
-  }
-
-  private toggleSkillEnabled(skillId: string): void {
-    let nextEnabled: boolean | null = null;
-    for (let index = 0; index < this.installedSkills.length; index += 1) {
-      if (this.installedSkills[index].id !== skillId) {
-        continue;
-      }
-      nextEnabled = !this.installedSkills[index].enabled;
-      break;
-    }
-    if (nextEnabled === null) {
-      return;
-    }
-    skillsVM.toggleEnabled(skillId, nextEnabled)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private requestUninstallSkill(skillId: string): void {
-    for (let index = 0; index < this.installedSkills.length; index += 1) {
-      if (this.installedSkills[index].id !== skillId) {
-        continue;
-      }
-      this.pendingDeleteSkillId = skillId;
-      this.pendingDeleteSkillName = this.installedSkills[index].name;
-      this.showSkillDeleteDialog = true;
-      return;
-    }
-  }
-
-  private cancelUninstallSkill(): void {
-    this.showSkillDeleteDialog = false;
-    this.pendingDeleteSkillId = '';
-    this.pendingDeleteSkillName = '';
-  }
-
-  private confirmUninstallSkill(): void {
-    const skillId = this.pendingDeleteSkillId;
-    this.cancelUninstallSkill();
-    if (skillId.length === 0) {
-      return;
-    }
-    skillsVM.uninstall(skillId)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private showSkillDetail(skill: InstalledSkill): void {
-    this.selectedSkillDetail = skill;
-    this.showSkillDetailDialog = true;
-  }
-
-  private closeSkillDetail(): void {
-    this.showSkillDetailDialog = false;
-    this.selectedSkillDetail = null;
-  }
-
-  private addSkillRepo(): void {
-    const owner = this.newRepoOwner.trim();
-    const name = this.newRepoName.trim();
-    const branch = this.newRepoBranch.trim().length > 0 ? this.newRepoBranch.trim() : 'main';
-    if (owner.length === 0 || name.length === 0) {
-      this.triggerFeedback('仓库所有者与名称不能为空。', 'error');
-      return;
-    }
-    skillsVM.addRepo(new SkillRepo(owner, name, branch, true))
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private toggleRepoEnabled(owner: string, name: string): void {
-    let nextEnabled: boolean | null = null;
-    for (let index = 0; index < this.skillRepos.length; index += 1) {
-      const repo = this.skillRepos[index];
-      if (repo.owner !== owner || repo.name !== name) {
-        continue;
-      }
-      nextEnabled = !repo.enabled;
-      break;
-    }
-    if (nextEnabled === null) {
-      return;
-    }
-    skillsVM.toggleRepoEnabled(owner, name, nextEnabled)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private removeSkillRepo(owner: string, name: string): void {
-    skillsVM.removeRepo(owner, name)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private removeSkillBackup(backupId: string): void {
-    skillsVM.deleteBackup(backupId)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private skillsSubTabIndex(tab: SkillsSubTab): number {
-    if (tab === 'repos') {
-      return 1;
-    }
-    if (tab === 'backups') {
-      return 2;
-    }
-    return 0;
-  }
-
-  private skillsSubTabByIndex(index: number): SkillsSubTab {
-    if (index === 1) {
-      return 'repos';
-    }
-    if (index === 2) {
-      return 'backups';
-    }
-    return 'installed';
-  }
-
-  private refreshActiveSkillsSubTab(): void {
-    this.loadSkillsSubTab(this.skillsSubTabByIndex(this.skillsActiveSubTabIndex));
-  }
-
-  private switchSkillsSubTab(tab: SkillsSubTab): void {
-    const nextIndex = this.skillsSubTabIndex(tab);
-    if (this.skillsActiveSubTabIndex !== nextIndex) {
-      this.skillsActiveSubTabIndex = nextIndex;
-    } else {
-      this.skillsActiveSubTabIndex = nextIndex;
-    }
-    this.loadSkillsSubTab(tab);
-  }
-
-  private loadSkillsSubTab(tab: SkillsSubTab): void {
-    this.syncSkillsStateFromViewModel();
-    this.skillsStatusText = tab === 'installed'
-      ? '正在刷新已安装 Skills...'
-      : (tab === 'repos' ? '正在刷新来源...' : '正在刷新备份...');
-    const action = tab === 'installed'
-      ? skillsVM.loadInstalled(true)
-      : (tab === 'repos' ? skillsVM.loadRepos() : skillsVM.loadBackups());
-    action
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
   }
 
   private selectPrompt(promptId: string): void {
@@ -1774,7 +1788,9 @@ struct SettingsPage {
     .scale({ x: this.pressScale(`nav-${item.tab}`), y: this.pressScale(`nav-${item.tab}`) })
     .animation({ duration: 120, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => { this.updatePressed(`nav-${item.tab}`, event); })
-    .onClick(() => { this.selectTab(item.tab); })
+    .onClick(() => {
+      this.selectTab(item.tab);
+    })
   }
 
   @Builder
@@ -1790,10 +1806,10 @@ struct SettingsPage {
       Column() {
         this.contentHero()
 
-        if (this.activeTab === 'mcp') {
-          this.mcpPanel()
-        } else if (this.activeTab === 'skills') {
+        if (this.activeTab === 'skills') {
           this.skillsPanel()
+        } else if (this.activeTab === 'mcp') {
+          this.mcpPanel()
         } else if (this.activeTab === 'prompts') {
           this.promptsPanel()
         } else {
@@ -1860,72 +1876,6 @@ struct SettingsPage {
   }
 
   @Builder
-  private skillsSummaryCard(
-    title: string,
-    value: string,
-    color: string,
-    background: string,
-    tab: SkillsSubTab
-  ) {
-    Column() {
-      Text(title)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#64748B')
-      Text(value)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-        .margin({ top: 6 })
-      Row() {
-        Column()
-          .width(8)
-          .height(8)
-          .backgroundColor(color)
-          .borderRadius(10)
-        Text(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '当前' : '就绪')
-          .copyOption(CopyOptions.None)
-          .fontSize(10)
-          .fontColor(color)
-          .margin({ left: 6 })
-      }
-      .margin({ top: 10 })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .layoutWeight(1)
-    .height(112)
-    .padding(16)
-    .backgroundColor(background)
-    .border({
-      width: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? 1.6 : 1,
-      color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? color : '#DCE7F3'
-    })
-    .borderRadius(20)
-    .margin({ right: 12 })
-    .scale({ x: this.pressScale(`skill-summary-${tab}`), y: this.pressScale(`skill-summary-${tab}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(`skill-summary-${tab}`, event); })
-    .onClick(() => { this.switchSkillsSubTab(tab); })
-  }
-
-  @Builder
-  private skillsSubTabButton(label: string, tab: SkillsSubTab) {
-    Button(label)
-      .height(32)
-      .fontSize(11)
-      .fontWeight(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#0A84FF' : '#475569')
-      .backgroundColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#EAF3FF' : '#F8FAFC')
-      .border({ width: 1, color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#BFDBFE' : '#DCE5EF' })
-      .borderRadius(12)
-      .padding({ left: 12, right: 12 })
-      .margin({ right: 8 })
-      .scale({ x: this.pressScale(`skill-tab-${tab}`), y: this.pressScale(`skill-tab-${tab}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(`skill-tab-${tab}`, event); })
-      .onClick(() => { this.switchSkillsSubTab(tab); })
-  }
 
   @Builder
   private sectionCard(title: string, subtitle: string) {
@@ -2009,293 +1959,65 @@ struct SettingsPage {
   }
 
   @Builder
-  private mcpPanel() {
+  private skillsSummaryCard(title: string, value: string, color: string, background: string, tab: SkillsSubTab) {
     Column() {
-      Row() {
-        Column() {
-          this.sectionCard('服务器', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
-          if (this.mcpServers.length === 0) {
-            Column() {
-              Text('暂无 MCP 服务')
-                .fontSize(14)
-                .fontColor('#94A3B8')
-                .margin({ top: 24 })
-              Text('点击下方按钮添加第一个 MCP 服务')
-                .fontSize(12)
-                .fontColor('#CBD5E1')
-                .margin({ top: 8 })
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Center)
-          }
-          Column() {
-            ForEach(this.mcpServers, (server: McpServerRecord) => {
-              this.mcpServerCard(server)
-            }, (server: McpServerRecord) => server.id)
-          }
-          .width('100%')
-          .margin({ top: 12 })
-
-          Button('+ 添加服务')
-            .width('100%')
-            .height(40)
-            .margin({ top: 10 })
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0A84FF')
-            .backgroundColor('#F0F7FF')
-            .borderRadius(16)
-            .border({ width: 1, color: '#BDD7FF' })
-            .scale({ x: this.pressScale('mcp-add'), y: this.pressScale('mcp-add') })
-            .animation({ duration: 120, curve: Curve.EaseOut })
-            .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
-            .onClick(() => { this.openMcpAddDialog(); })
-        }
-        .width('34%')
-
-        Column() {
-          this.mcpEditorCard()
-        }
-        .layoutWeight(1)
-        .margin({ left: 16 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-    }
-    .width('100%')
-    .margin({ top: 18 })
-  }
-
-  @Builder
-  private mcpServerCard(server: McpServerRecord) {
-    Button() {
-      Column() {
-        Row() {
-          Column() {
-            Text(server.name)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
-            Text(server.id)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(10)
-              .fontColor('#64748B')
-              .margin({ top: 4 })
-          }
-          .alignItems(HorizontalAlign.Start)
-
-          Blank()
-            .layoutWeight(1)
-
-          this.pill(this.healthLabel(server.healthStatus), this.statusChipBackground(server.healthStatus), this.statusChipColor(server.healthStatus))
-        }
-        .width('100%')
-
-        Row() {
-          this.pill(server.enabled ? '已启用' : '已停用', server.enabled ? '#DCFCE7' : '#F1F5F9', server.enabled ? '#166534' : '#64748B')
-          this.pill(this.authLabel(server.authStatus), this.statusChipBackground(server.authStatus), this.statusChipColor(server.authStatus))
-        }
-        .width('100%')
-        .margin({ top: 10 })
-
-        Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
-          .fontColor('#64748B')
-          .margin({ top: 10 })
-      }
-      .width('100%')
-      .padding(16)
-    }
-    .width('100%')
-    .margin({ top: 10 })
-    .backgroundColor(this.selectedMcpServerId === server.id ? '#F8FBFF' : '#FFFFFF')
-    .border({ width: 1.3, color: this.selectedMcpServerId === server.id ? '#0A84FF' : '#E2EAF3' })
-    .borderRadius(22)
-    .scale({ x: this.pressScale(`mcp-${server.id}`), y: this.pressScale(`mcp-${server.id}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(`mcp-${server.id}`, event); })
-    .onClick(() => {
-      this.loadMcpDraft(server.id);
-      this.triggerFeedback(`已切换到 ${server.name} 草稿。`, 'info');
-    })
-  }
-
-  @Builder
-  private mcpEditorCard() {
-    Column() {
-      this.sectionCard('编辑器', '配置 MCP 服务器连接参数')
-
-      Column() {
-        Row() {
-          this.pill(this.selectedMcpServer() !== null && this.selectedMcpServer()!.enabled ? '已启用' : '草稿', '#EAF3FF', '#0A84FF')
-          this.pill('已连接', '#DCFCE7', '#166534')
-        }
-        .width('100%')
-
-        Text(this.mcpStatusText)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(12)
-          .fontColor('#334155')
-          .margin({ top: 14 })
-
-        this.formLabel('传输方式')
-        Row() {
-          this.optionChip('stdio', this.mcpTransportTypeDraft === 'stdio', 'transport-stdio', () => { this.mcpTransportTypeDraft = 'stdio'; })
-          this.optionChip('http', this.mcpTransportTypeDraft === 'http', 'transport-http', () => { this.mcpTransportTypeDraft = 'http'; })
-        }
-
-        this.formLabel('启用状态')
-        Row() {
-          this.optionChip('是', this.mcpEnabledDraft, 'mcp-enabled-true', () => { this.mcpEnabledDraft = true; })
-          this.optionChip('否', !this.mcpEnabledDraft, 'mcp-enabled-false', () => { this.mcpEnabledDraft = false; })
-        }
-
-        if (this.mcpTransportTypeDraft === 'stdio') {
-          this.formLabel('命令')
-          TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / 可执行文件路径' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.mcpCommandDraft = value; })
-
-          this.formLabel('参数 JSON')
-          TextInput({ text: this.mcpArgsDraft, placeholder: '["--flag"]' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.mcpArgsDraft = value; })
-        }
-
-        if (this.mcpTransportTypeDraft === 'http') {
-          this.formLabel('URL')
-          TextInput({ text: this.mcpUrlDraft, placeholder: 'https://example.com/mcp' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.mcpUrlDraft = value; })
-
-          this.formLabel('HTTP 请求头')
-          TextArea({ text: this.mcpHttpHeadersDraft, placeholder: '{"Authorization":"Bearer your-token"}' })
-            .width('100%')
-            .height(94)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(16)
-            .padding(12)
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.mcpHttpHeadersDraft = value; })
-        }
-
-        this.formLabel('环境变量')
-        TextArea({ text: this.mcpEnvDraft, placeholder: '{"KEY":"VALUE"}' })
-          .width('100%')
-          .height(94)
-          .backgroundColor('#F8FAFC')
-          .borderRadius(16)
-          .padding(12)
-          .margin({ top: 6 })
-          .onChange((value: string) => { this.mcpEnvDraft = value; })
-
-        Row() {
-          this.actionButton('删除服务', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
-          this.actionButton('还原', 'mcp-revert', false, () => { this.revertMcpDraft(); })
-          this.actionButton('OAuth 登录', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
-          this.actionButton('重载 MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
-          this.actionButton('保存配置', 'mcp-save', true, () => { this.saveMcpDraft(); })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.End)
-        .margin({ top: 18 })
-      }
-      .width('100%')
-      .margin({ top: 12 })
-      .padding(18)
-      .backgroundColor('#FFFFFF')
-      .border({ width: 1, color: '#E2EAF3' })
-      .borderRadius(22)
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private skillsPanel() {
-    Column() {
-      Row() {
-        this.skillsSummaryCard('已安装', `${this.installedSkills.length} 个 Skills`, '#14B8A6', '#ECFDF5', 'installed')
-        this.skillsSummaryCard('来源', `${this.skillRepos.length} 个来源`, '#0A84FF', '#EAF3FF', 'repos')
-        this.skillsSummaryCard('备份', `${this.skillBackups.length} 个归档`, '#F59E0B', '#FFFBEB', 'backups')
-      }
-      .width('100%')
-
-      Row() {
-        this.skillsSubTabButton('已安装', 'installed')
-        this.skillsSubTabButton('来源', 'repos')
-        this.skillsSubTabButton('备份', 'backups')
-
-        Blank()
-          .layoutWeight(1)
-
-        this.actionButton('刷新当前', 'skill-refresh-current', false, () => { this.refreshActiveSkillsSubTab(); })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .margin({ top: 4 })
-
-      Text(this.skillsStatusText)
+      Text(title)
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#334155')
-        .margin({ top: 8 })
-
-      Column() {
-        Column() {
-          this.installedSkillsPanel()
-        }
-        .width('100%')
-        .visibility(this.skillsActiveSubTabIndex === 0 ? Visibility.Visible : Visibility.None)
-
-        Column() {
-          this.skillReposPanel()
-        }
-        .width('100%')
-        .visibility(this.skillsActiveSubTabIndex === 1 ? Visibility.Visible : Visibility.None)
-
-        Column() {
-          this.skillBackupsPanel()
-        }
-        .width('100%')
-        .visibility(this.skillsActiveSubTabIndex === 2 ? Visibility.Visible : Visibility.None)
+        .fontSize(10)
+        .fontColor('#64748B')
+      Text(value)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#0F172A')
+        .margin({ top: 6 })
+      Row() {
+        Column()
+          .width(8)
+          .height(8)
+          .backgroundColor(color)
+          .borderRadius(10)
+        Text(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '当前' : '就绪')
+          .copyOption(CopyOptions.None)
+          .fontSize(10)
+          .fontColor(color)
+          .margin({ left: 6 })
       }
-      .width('100%')
-      .margin({ top: 4 })
+      .margin({ top: 10 })
     }
-    .width('100%')
-    .margin({ top: 18 })
+    .alignItems(HorizontalAlign.Start)
+    .layoutWeight(1)
+    .height(112)
+    .padding(16)
+    .backgroundColor(background)
+    .border({
+      width: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? 1.6 : 1,
+      color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? color : '#DCE7F3'
+    })
+    .borderRadius(20)
+    .margin({ right: 12 })
+    .scale({ x: this.pressScale(`skill-summary-${tab}`), y: this.pressScale(`skill-summary-${tab}`) })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => { this.updatePressed(`skill-summary-${tab}`, event); })
+    .onClick(() => { this.switchSkillsSubTab(tab); })
   }
 
-  private skillSourceText(skill: InstalledSkill): string {
-    return skill.source === 'github' ? 'GitHub' : '本地';
-  }
-
-  private skillMetaText(skill: InstalledSkill): string {
-    if (skill.repoOwner.length > 0 && skill.repoName.length > 0) {
-      return `${skill.repoOwner}/${skill.repoName}`;
-    }
-    return skill.directory;
-  }
-
-  private skillUpdatedText(skill: InstalledSkill): string {
-    return skill.updatedAt > 0 ? `更新于 ${this.formatTimestamp(skill.updatedAt)}` : '刚刚安装';
+  @Builder
+  private skillsSubTabButton(label: string, tab: SkillsSubTab) {
+    Button(label)
+      .height(32)
+      .fontSize(11)
+      .fontWeight(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#0A84FF' : '#475569')
+      .backgroundColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#EAF3FF' : '#F8FAFC')
+      .border({ width: 1, color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#BFDBFE' : '#DCE5EF' })
+      .borderRadius(12)
+      .padding({ left: 12, right: 12 })
+      .margin({ right: 8 })
+      .scale({ x: this.pressScale(`skill-tab-${tab}`), y: this.pressScale(`skill-tab-${tab}`) })
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .onTouch((event: TouchEvent) => { this.updatePressed(`skill-tab-${tab}`, event); })
+      .onClick(() => { this.switchSkillsSubTab(tab); })
   }
 
   @Builder
@@ -2366,7 +2088,6 @@ struct SettingsPage {
                   .fontColor('#111827')
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
-
                 if (skill.enabled) {
                   Text('启用')
                     .copyOption(CopyOptions.None)
@@ -2380,7 +2101,6 @@ struct SettingsPage {
               }
               .width('100%')
               .alignItems(VerticalAlign.Center)
-
               Text(skill.description)
                 .copyOption(CopyOptions.LocalDevice)
                 .fontSize(11)
@@ -2389,7 +2109,6 @@ struct SettingsPage {
                 .maxLines(2)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ top: 6 })
-
               Row() {
                 Text(this.skillSourceText(skill))
                   .copyOption(CopyOptions.LocalDevice)
@@ -2407,30 +2126,18 @@ struct SettingsPage {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
             .padding({ right: 12 })
-
             Row() {
               this.skillActionButton(
-                skill.enabled ? '启用中' : '禁用中',
-                `skill-toggle-${skill.id}`,
-                skill.enabled ? '#16A34A' : '#94A3B8',
-                skill.enabled ? '#DCFCE7' : '#F5F7FA',
-                skill.enabled ? '#BBF7D0' : '#E5EAF1',
-                () => { this.toggleSkillEnabled(skill.id); }
+                skill.enabled ? '启用中' : '禁用中', `skill-toggle-${skill.id}`,
+                skill.enabled ? '#16A34A' : '#94A3B8', skill.enabled ? '#DCFCE7' : '#F5F7FA',
+                skill.enabled ? '#BBF7D0' : '#E5EAF1', () => { this.toggleSkillEnabled(skill.id); }
               )
               this.skillActionButton(
-                '打开',
-                `skill-open-${skill.id}`,
-                '#6366F1',
-                '#EEF2FF',
-                '#C7D2FE',
+                '打开', `skill-open-${skill.id}`, '#6366F1', '#EEF2FF', '#C7D2FE',
                 () => { this.showSkillDetail(skill); }
               )
               this.skillActionButton(
-                '删除',
-                `skill-delete-${skill.id}`,
-                '#EF4444',
-                '#FEF2F2',
-                '#FECACA',
+                '删除', `skill-delete-${skill.id}`, '#EF4444', '#FEF2F2', '#FECACA',
                 () => { this.requestUninstallSkill(skill.id); }
               )
             }
@@ -2442,7 +2149,6 @@ struct SettingsPage {
           .backgroundColor('#FFFFFF')
           .borderRadius(14)
           .border({ width: 1, color: skill.enabled ? '#D1FAE5' : '#E7ECF3' })
-          .margin({ top: 0 })
         }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
       }
     }
@@ -2454,38 +2160,189 @@ struct SettingsPage {
   }
 
   @Builder
+  private installedSkillsList() {
+    Column() {
+      if (this.installedSkills.length === 0) {
+        this.skillsEmptyState('暂无已安装 Skills', '点击刷新重新扫描本机 Skills 目录。')
+      } else {
+        ForEach(this.installedSkills, (skill: InstalledSkill) => {
+          Button() {
+            Column() {
+              Row() {
+                Column() {
+                  Text(skill.name)
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#0F172A')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(skill.description)
+                    .copyOption(CopyOptions.LocalDevice)
+                    .fontSize(11)
+                    .fontColor('#64748B')
+                    .lineHeight(17)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ top: 4 })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                this.pill(skill.enabled ? '启用中' : '禁用中', skill.enabled ? '#DCFCE7' : '#F1F5F9', skill.enabled ? '#166534' : '#64748B')
+              }
+              .width('100%')
+              Row() {
+                Text(this.skillSourceText(skill))
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#94A3B8')
+                Text(this.skillMetaText(skill))
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#94A3B8')
+                  .margin({ left: 10 })
+              }
+              .width('100%')
+              .margin({ top: 8 })
+            }
+            .width('100%')
+            .padding(14)
+          }
+          .width('100%')
+          .margin({ top: 8 })
+          .backgroundColor(this.selectedSkillId === skill.id ? '#F0F9FF' : '#FFFFFF')
+          .border({ width: 1, color: this.selectedSkillId === skill.id ? '#93C5FD' : '#E5E7EB' })
+          .borderRadius(12)
+          .onClick(() => { this.selectSkillForPreview(skill); })
+        }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private skillPreview() {
+    Column() {
+      if (this.selectedSkill() === null) {
+        Column() {
+          Text('选择一个 Skill 查看详情')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(14)
+            .fontColor('#9CA3AF')
+        }
+        .width('100%')
+        .height(200)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Column() {
+          Row() {
+            Text(this.selectedSkill()!.name)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
+              .layoutWeight(1)
+            this.pill(this.selectedSkill()!.enabled ? '启用中' : '禁用中', this.selectedSkill()!.enabled ? '#DCFCE7' : '#F1F5F9', this.selectedSkill()!.enabled ? '#166534' : '#64748B')
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          Text(this.selectedSkill()!.description)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(12)
+            .fontColor('#475569')
+            .lineHeight(20)
+            .margin({ top: 12 })
+            .width('100%')
+          Column() {
+            this.skillDetailRow('来源', this.skillSourceText(this.selectedSkill()!))
+            this.skillDetailRow('目录', this.selectedSkill()!.directory)
+            this.skillDetailRow('ID', this.selectedSkill()!.id)
+            if (this.selectedSkill()!.source === 'github') {
+              this.skillDetailRow('仓库', this.selectedSkill()!.repoOwner + '/' + this.selectedSkill()!.repoName)
+              this.skillDetailRow('分支', this.selectedSkill()!.repoBranch)
+            }
+            if (this.selectedSkill()!.readmeUrl.length > 0) {
+              this.skillDetailRow('README', this.selectedSkill()!.readmeUrl)
+            }
+            if (this.selectedSkill()!.installedAt > 0) {
+              this.skillDetailRow('安装时间', new Date(this.selectedSkill()!.installedAt).toISOString().replace('T', ' ').substring(0, 19))
+            }
+            if (this.selectedSkill()!.updatedAt > 0) {
+              this.skillDetailRow('更新时间', new Date(this.selectedSkill()!.updatedAt).toISOString().replace('T', ' ').substring(0, 19))
+            }
+            if (this.selectedSkill()!.contentHash.length > 0) {
+              this.skillDetailRow('哈希', this.selectedSkill()!.contentHash.substring(0, 16) + '...')
+            }
+          }
+          .width('100%')
+          .margin({ top: 16 })
+          .padding(14)
+          .backgroundColor('#F8FAFC')
+          .borderRadius(12)
+          Row() {
+            this.skillActionButton(
+              this.selectedSkill()!.enabled ? '启用中' : '禁用中', `skill-preview-toggle-${this.selectedSkill()!.id}`,
+              this.selectedSkill()!.enabled ? '#16A34A' : '#94A3B8', this.selectedSkill()!.enabled ? '#DCFCE7' : '#F5F7FA',
+              this.selectedSkill()!.enabled ? '#BBF7D0' : '#E5EAF1', () => { this.toggleSkillEnabled(this.selectedSkill()!.id); }
+            )
+            this.skillActionButton(
+              '删除', `skill-preview-delete-${this.selectedSkill()!.id}`, '#EF4444', '#FEF2F2', '#FECACA',
+              () => { this.requestUninstallSkill(this.selectedSkill()!.id); }
+            )
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.End)
+          .margin({ top: 16 })
+        }
+        .width('100%')
+        .padding(18)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E5E7EB' })
+        .borderRadius(14)
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private skillDetailRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor('#94A3B8')
+        .width(70)
+      Text(value)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor('#334155')
+        .layoutWeight(1)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ top: 8 })
+  }
+
+  @Builder
   private skillReposPanel() {
     Column() {
       Column() {
         this.sectionCard('仓库源', '添加新的 Skill 仓库源')
-
         Row() {
           TextInput({ text: this.newRepoOwner, placeholder: '所有者' })
-            .layoutWeight(1)
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
+            .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
             .padding({ left: 12, right: 12 })
             .onChange((value: string) => { this.newRepoOwner = value; })
-
           TextInput({ text: this.newRepoName, placeholder: '仓库' })
-            .layoutWeight(1)
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ left: 10 })
+            .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 }).margin({ left: 10 })
             .onChange((value: string) => { this.newRepoName = value; })
-
           TextInput({ text: this.newRepoBranch, placeholder: '分支' })
-            .width(120)
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ left: 10 })
+            .width(120).height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 }).margin({ left: 10 })
             .onChange((value: string) => { this.newRepoBranch = value; })
-
           Column() {
             this.actionButton('添加仓库', 'repo-add', true, () => { this.addSkillRepo(); })
           }
@@ -2495,7 +2352,6 @@ struct SettingsPage {
         .margin({ top: 12 })
       }
       .width('100%')
-
       Column() {
         if (this.skillRepos.length === 0) {
           this.skillsEmptyState('暂无来源', '添加仓库源后会显示在这里。')
@@ -2504,23 +2360,13 @@ struct SettingsPage {
             Row() {
               Column() {
                 Text(`${repo.owner}/${repo.name}`)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#0F172A')
+                  .copyOption(CopyOptions.LocalDevice).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
                 Text(`分支: ${repo.branch}`)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#64748B')
-                  .margin({ top: 5 })
+                  .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 5 })
               }
               .alignItems(HorizontalAlign.Start)
-
-              Blank()
-                .layoutWeight(1)
-
+              Blank().layoutWeight(1)
               this.pill(repo.enabled ? '已启用' : '已停用', repo.enabled ? '#DCFCE7' : '#F1F5F9', repo.enabled ? '#166534' : '#64748B')
-
               Column() {
                 this.actionButton(repo.enabled ? '停用' : '启用', `repo-toggle-${repo.owner}-${repo.name}`, false, () => { this.toggleRepoEnabled(repo.owner, repo.name); })
               }
@@ -2530,12 +2376,8 @@ struct SettingsPage {
               }
               .margin({ left: 10 })
             }
-            .width('100%')
-            .padding(18)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 1, color: '#E2EAF3' })
-            .borderRadius(22)
-            .margin({ top: 12 })
+            .width('100%').padding(18).backgroundColor('#FFFFFF')
+            .border({ width: 1, color: '#E2EAF3' }).borderRadius(22).margin({ top: 12 })
           }, (repo: SkillRepo) => `${repo.owner}/${repo.name}`)
         }
       }
@@ -2551,68 +2393,408 @@ struct SettingsPage {
       if (this.skillBackups.length === 0) {
         Column() {
           Text('暂无备份')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
+            .copyOption(CopyOptions.LocalDevice).fontSize(16).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Text('这里将用于展示原生卸载动作留下的历史快照。')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .margin({ top: 6 })
+            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 6 })
         }
-        .width('100%')
-        .padding(28)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(22)
-        .margin({ top: 12 })
+        .width('100%').padding(28).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(22).margin({ top: 12 })
       } else {
         ForEach(this.skillBackups, (backup: SkillBackupEntry) => {
           Column() {
             Row() {
               Column() {
                 Text(backup.skill.name)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#0F172A')
+                  .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
                 Text(backup.backupPath)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(11)
-                  .fontColor('#64748B')
-                  .margin({ top: 6 })
+                  .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 6 })
               }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-
+              .alignItems(HorizontalAlign.Start).layoutWeight(1)
               this.pill('归档', '#FFFBEB', '#B45309')
             }
             .width('100%')
-
             Text(`创建时间 ${this.formatTimestamp(backup.createdAt)}`)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(10)
-              .fontColor('#64748B')
-              .margin({ top: 12 })
-
+              .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 12 })
             Row() {
               this.actionButton('删除备份', `backup-remove-${backup.backupId}`, true, () => { this.removeSkillBackup(backup.backupId); })
             }
-            .width('100%')
-            .justifyContent(FlexAlign.End)
-            .margin({ top: 16 })
+            .width('100%').justifyContent(FlexAlign.End).margin({ top: 16 })
           }
-          .width('100%')
-          .padding(18)
-          .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E2EAF3' })
-          .borderRadius(22)
-          .margin({ top: 12 })
+          .width('100%').padding(18).backgroundColor('#FFFFFF')
+          .border({ width: 1, color: '#E2EAF3' }).borderRadius(22).margin({ top: 12 })
         }, (backup: SkillBackupEntry) => backup.backupId)
       }
     }
     .width('100%')
+  }
+
+  @Builder
+  private skillsPanel() {
+    Column() {
+      Row() {
+        Column() {
+          Row() {
+            this.skillsSubTabButton('已安装', 'installed')
+            this.skillsSubTabButton('来源', 'repos')
+            this.skillsSubTabButton('备份', 'backups')
+            Blank().layoutWeight(1)
+            this.actionButton('刷新', 'skill-refresh-current', false, () => { this.refreshActiveSkillsSubTab(); })
+          }
+          .width('100%').alignItems(VerticalAlign.Center).margin({ bottom: 12 })
+          Text(this.skillsStatusText)
+            .copyOption(CopyOptions.LocalDevice).fontSize(11)
+            .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
+            .margin({ bottom: 8 })
+            .visibility(this.skillsStatusText.length > 0 ? Visibility.Visible : Visibility.None)
+          Column() {
+            Column() { this.installedSkillsList() }
+              .width('100%').visibility(this.skillsActiveSubTabIndex === 0 ? Visibility.Visible : Visibility.None)
+            Column() { this.skillReposPanel() }
+              .width('100%').visibility(this.skillsActiveSubTabIndex === 1 ? Visibility.Visible : Visibility.None)
+            Column() { this.skillBackupsPanel() }
+              .width('100%').visibility(this.skillsActiveSubTabIndex === 2 ? Visibility.Visible : Visibility.None)
+          }
+          .width('100%')
+        }
+        .width('38%')
+        Column() { this.skillPreview() }
+          .layoutWeight(1).margin({ left: 16 })
+      }
+      .width('100%').alignItems(VerticalAlign.Top).margin({ top: 18 })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private skillDeleteDialog() {
+    if (this.showSkillDeleteDialog) {
+      Stack() {
+        Column()
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .onClick(() => { this.cancelUninstallSkill(); })
+        Column() {
+          Text('确认删除 Skill')
+            .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Text(`删除后将从当前前端列表中移除 "${this.pendingDeleteSkillName}"。`)
+            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+          Text('当前仍为前端模拟，但危险操作需要确认。')
+            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#B45309').margin({ top: 8 })
+          Row() {
+            Button('取消')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('skill-delete-cancel'), y: this.pressScale('skill-delete-cancel') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-cancel', event); })
+              .onClick(() => { this.cancelUninstallSkill(); })
+            Button('确认删除')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
+              .scale({ x: this.pressScale('skill-delete-confirm'), y: this.pressScale('skill-delete-confirm') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-confirm', event); })
+              .onClick(() => { this.confirmUninstallSkill(); })
+          }
+          .width('100%').margin({ top: 20 })
+        }
+        .width(420).padding(22).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
+      }
+      .width('100%').height('100%')
+    }
+  }
+
+  @Builder
+  private skillDetailDialog() {
+    if (this.showSkillDetailDialog && this.selectedSkillDetail !== null) {
+      Stack() {
+        Column()
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .onClick(() => { this.closeSkillDetail(); })
+        Column() {
+          Row() {
+            Text(this.selectedSkillDetail.name)
+              .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A').layoutWeight(1)
+            Text(this.selectedSkillDetail.enabled ? '启用' : '禁用')
+              .copyOption(CopyOptions.None).fontSize(11)
+              .fontColor(this.selectedSkillDetail.enabled ? '#16A34A' : '#94A3B8')
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .backgroundColor(this.selectedSkillDetail.enabled ? '#DCFCE7' : '#F5F7FA').borderRadius(8)
+          }
+          .width('100%').alignItems(VerticalAlign.Center)
+          Text(this.selectedSkillDetail.description)
+            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B')
+            .lineHeight(20).margin({ top: 10 }).width('100%')
+          Column() {
+            this.skillDetailRow('来源', this.skillDetailSourceLabel())
+            this.skillDetailRow('目录', this.selectedSkillDetail.directory)
+            this.skillDetailRow('ID', this.selectedSkillDetail.id)
+            if (this.selectedSkillDetail.source === 'github') {
+              this.skillDetailRow('仓库', this.selectedSkillDetail.repoOwner + '/' + this.selectedSkillDetail.repoName)
+              this.skillDetailRow('分支', this.selectedSkillDetail.repoBranch)
+            }
+            if (this.selectedSkillDetail.readmeUrl.length > 0) {
+              this.skillDetailRow('README', this.selectedSkillDetail.readmeUrl)
+            }
+            this.skillDetailRow('安装时间', this.skillDetailInstalledDate())
+            this.skillDetailRow('更新时间', this.skillDetailUpdatedDate())
+            if (this.selectedSkillDetail.contentHash.length > 0) {
+              this.skillDetailRow('内容哈希', this.selectedSkillDetail.contentHash.substring(0, 16) + '...')
+            }
+          }
+          .width('100%').margin({ top: 16 })
+          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
+          .backgroundColor('#F8FAFC').borderRadius(12)
+          Row() {
+            Button('关闭')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('skill-detail-close'), y: this.pressScale('skill-detail-close') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('skill-detail-close', event); })
+              .onClick(() => { this.closeSkillDetail(); })
+          }
+          .width('100%').margin({ top: 20 })
+        }
+        .width(420).padding(22).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
+      }
+      .width('100%').height('100%')
+    }
+  }
+
+  @Builder
+  private mcpServerCard(server: McpServerRecord) {
+    Button() {
+      Column() {
+        Row() {
+          Column() {
+            Text(server.name)
+              .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            Text(server.id)
+              .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          Blank().layoutWeight(1)
+          this.pill(this.healthLabel(server.healthStatus), this.statusChipBackground(server.healthStatus), this.statusChipColor(server.healthStatus))
+        }
+        .width('100%')
+        Row() {
+          this.pill(server.enabled ? '已启用' : '已停用', server.enabled ? '#DCFCE7' : '#F1F5F9', server.enabled ? '#166534' : '#64748B')
+          this.pill(this.authLabel(server.authStatus), this.statusChipBackground(server.authStatus), this.statusChipColor(server.authStatus))
+        }
+        .width('100%').margin({ top: 10 })
+        Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
+          .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 10 })
+      }
+      .width('100%').padding(16)
+    }
+    .width('100%').margin({ top: 10 })
+    .backgroundColor(this.selectedMcpServerId === server.id ? '#F8FBFF' : '#FFFFFF')
+    .border({ width: 1.3, color: this.selectedMcpServerId === server.id ? '#0A84FF' : '#E2EAF3' })
+    .borderRadius(22)
+    .scale({ x: this.pressScale(`mcp-${server.id}`), y: this.pressScale(`mcp-${server.id}`) })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => { this.updatePressed(`mcp-${server.id}`, event); })
+    .onClick(() => {
+      this.loadMcpDraft(server.id);
+      this.triggerFeedback(`已切换到 ${server.name} 草稿。`, 'info');
+    })
+  }
+
+  @Builder
+  private mcpEditorCard() {
+    Column() {
+      this.sectionCard('编辑器', '配置 MCP 服务器连接参数')
+      Column() {
+        Row() {
+          this.pill(this.selectedMcpServer() !== null && this.selectedMcpServer()!.enabled ? '已启用' : '草稿', '#EAF3FF', '#0A84FF')
+          this.pill('已连接', '#DCFCE7', '#166534')
+        }
+        .width('100%')
+        Text(this.mcpStatusText)
+          .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#334155').margin({ top: 14 })
+        this.formLabel('传输方式')
+        Row() {
+          this.optionChip('stdio', this.mcpTransportTypeDraft === 'stdio', 'transport-stdio', () => { this.mcpTransportTypeDraft = 'stdio'; })
+          this.optionChip('http', this.mcpTransportTypeDraft === 'http', 'transport-http', () => { this.mcpTransportTypeDraft = 'http'; })
+        }
+        this.formLabel('启用状态')
+        Row() {
+          this.optionChip('是', this.mcpEnabledDraft, 'mcp-enabled-true', () => { this.mcpEnabledDraft = true; })
+          this.optionChip('否', !this.mcpEnabledDraft, 'mcp-enabled-false', () => { this.mcpEnabledDraft = false; })
+        }
+        if (this.mcpTransportTypeDraft === 'stdio') {
+          this.formLabel('命令')
+          TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / 可执行文件路径' })
+            .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 }).margin({ top: 6 })
+            .onChange((value: string) => { this.mcpCommandDraft = value; })
+          this.formLabel('参数 JSON')
+          TextInput({ text: this.mcpArgsDraft, placeholder: '["--flag"]' })
+            .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 }).margin({ top: 6 })
+            .onChange((value: string) => { this.mcpArgsDraft = value; })
+        }
+        if (this.mcpTransportTypeDraft === 'http') {
+          this.formLabel('URL')
+          TextInput({ text: this.mcpUrlDraft, placeholder: 'https://example.com/mcp' })
+            .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 }).margin({ top: 6 })
+            .onChange((value: string) => { this.mcpUrlDraft = value; })
+          this.formLabel('HTTP 请求头')
+          TextArea({ text: this.mcpHttpHeadersDraft, placeholder: '{"Authorization":"Bearer your-token"}' })
+            .width('100%').height(94).backgroundColor('#F8FAFC').borderRadius(16)
+            .padding(12).margin({ top: 6 })
+            .onChange((value: string) => { this.mcpHttpHeadersDraft = value; })
+        }
+        this.formLabel('环境变量')
+        TextArea({ text: this.mcpEnvDraft, placeholder: '{"KEY":"VALUE"}' })
+          .width('100%').height(94).backgroundColor('#F8FAFC').borderRadius(16)
+          .padding(12).margin({ top: 6 })
+          .onChange((value: string) => { this.mcpEnvDraft = value; })
+        Row() {
+          this.actionButton('删除服务', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
+          this.actionButton('还原', 'mcp-revert', false, () => { this.revertMcpDraft(); })
+          this.actionButton('OAuth 登录', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
+          this.actionButton('重载 MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
+          this.actionButton('保存配置', 'mcp-save', true, () => { this.saveMcpDraft(); })
+        }
+        .width('100%').justifyContent(FlexAlign.End).margin({ top: 18 })
+      }
+      .width('100%').margin({ top: 12 }).padding(18)
+      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(22)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private mcpPanel() {
+    Column() {
+      Row() {
+        Column() {
+          this.sectionCard('服务器', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
+          if (this.mcpServers.length === 0) {
+            Column() {
+              Text('暂无 MCP 服务').fontSize(14).fontColor('#94A3B8').margin({ top: 24 })
+              Text('点击下方按钮添加第一个 MCP 服务').fontSize(12).fontColor('#CBD5E1').margin({ top: 8 })
+            }
+            .width('100%').alignItems(HorizontalAlign.Center)
+          }
+          Column() {
+            ForEach(this.mcpServers, (server: McpServerRecord) => {
+              this.mcpServerCard(server)
+            }, (server: McpServerRecord) => server.id)
+          }
+          .width('100%').margin({ top: 12 })
+          Button('+ 添加服务')
+            .width('100%').height(40).margin({ top: 10 }).fontSize(13).fontWeight(FontWeight.Medium)
+            .fontColor('#0A84FF').backgroundColor('#F0F7FF').borderRadius(16)
+            .border({ width: 1, color: '#BDD7FF' })
+            .scale({ x: this.pressScale('mcp-add'), y: this.pressScale('mcp-add') })
+            .animation({ duration: 120, curve: Curve.EaseOut })
+            .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
+            .onClick(() => { this.openMcpAddDialog(); })
+        }
+        .width('34%')
+        Column() { this.mcpEditorCard() }
+          .layoutWeight(1).margin({ left: 16 })
+      }
+      .width('100%').alignItems(VerticalAlign.Top)
+    }
+    .width('100%').margin({ top: 18 })
+  }
+
+  @Builder
+  private mcpAddDialog() {
+    if (this.showMcpAddDialog) {
+      Stack() {
+        Column()
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .onClick(() => { this.cancelMcpAdd(); })
+        Column() {
+          Text('新增 MCP 服务')
+            .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Text('粘贴 JSON 配置即可添加，兼容 Claude Desktop / Cursor 格式。')
+            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+          TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 字段时自动识别）' })
+            .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 }).margin({ top: 12 })
+            .onChange((value: string) => { this.mcpNewServerName = value; })
+          TextArea({ text: this.mcpJsonPasteInput, placeholder: '{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer xxx"}}' })
+            .width('100%').height(150).backgroundColor('#F8FAFC').borderRadius(16)
+            .padding(12).margin({ top: 10 })
+            .onChange((value: string) => { this.mcpJsonPasteInput = value; })
+          Column() {
+            Text(this.mcpAddPreviewText())
+              .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#475569').lineHeight(18)
+          }
+          .width('100%').padding(10).margin({ top: 8 })
+          .backgroundColor('#F1F5F9').borderRadius(12)
+          Row() {
+            Button('取消')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('mcp-add-cancel'), y: this.pressScale('mcp-add-cancel') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-cancel', event); })
+              .onClick(() => { this.cancelMcpAdd(); })
+            Button('添加')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF').backgroundColor('#0A84FF').borderRadius(14).margin({ left: 12 })
+              .scale({ x: this.pressScale('mcp-add-confirm'), y: this.pressScale('mcp-add-confirm') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-confirm', event); })
+              .onClick(() => { this.confirmMcpAdd(); })
+          }
+          .width('100%').margin({ top: 14 })
+        }
+        .width(460).padding(22).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
+      }
+      .width('100%').height('100%')
+    }
+  }
+
+  @Builder
+  private mcpDeleteDialog() {
+    if (this.showMcpDeleteDialog) {
+      Stack() {
+        Column()
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .onClick(() => { this.cancelMcpDelete(); })
+        Column() {
+          Text('确认删除 MCP 服务')
+            .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Text(`将从配置中移除 "${this.pendingDeleteMcpName}"，此操作不可撤销。`)
+            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+          Row() {
+            Button('取消')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('mcp-delete-cancel'), y: this.pressScale('mcp-delete-cancel') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-cancel', event); })
+              .onClick(() => { this.cancelMcpDelete(); })
+            Button('确认删除')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
+              .scale({ x: this.pressScale('mcp-delete-confirm'), y: this.pressScale('mcp-delete-confirm') })
+              .animation({ duration: 120, curve: Curve.EaseOut })
+              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-confirm', event); })
+              .onClick(() => { this.confirmMcpDelete(); })
+          }
+          .width('100%').margin({ top: 20 })
+        }
+        .width(420).padding(22).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
+      }
+      .width('100%').height('100%')
+    }
   }
 
   @Builder
@@ -3494,247 +3676,6 @@ struct SettingsPage {
     .position({ x: 700, y: 28 })
   }
 
-  @Builder
-  private skillDeleteDialog() {
-    if (this.showSkillDeleteDialog) {
-      Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#0F172A')
-          .opacity(0.18)
-          .onClick(() => { this.cancelUninstallSkill(); })
-
-        Column() {
-          Text('确认删除 Skill')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
-
-          Text(`删除后将从当前前端列表中移除 “${this.pendingDeleteSkillName}”。`)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontColor('#64748B')
-            .lineHeight(20)
-            .margin({ top: 10 })
-
-          Text('当前仍为前端模拟，但危险操作需要确认。')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#B45309')
-            .margin({ top: 8 })
-
-          Row() {
-            Button('取消')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#475569')
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .border({ width: 1, color: '#D5E0ED' })
-              .scale({ x: this.pressScale('skill-delete-cancel'), y: this.pressScale('skill-delete-cancel') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-cancel', event); })
-              .onClick(() => { this.cancelUninstallSkill(); })
-
-            Button('确认删除')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#F97373')
-              .borderRadius(14)
-              .margin({ left: 12 })
-              .scale({ x: this.pressScale('skill-delete-confirm'), y: this.pressScale('skill-delete-confirm') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-confirm', event); })
-              .onClick(() => { this.confirmUninstallSkill(); })
-          }
-          .width('100%')
-          .margin({ top: 20 })
-        }
-        .width(420)
-        .padding(22)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(24)
-      }
-      .width('100%')
-      .height('100%')
-    }
-  }
-
-  @Builder
-  private mcpAddDialog() {
-    if (this.showMcpAddDialog) {
-      Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#0F172A')
-          .opacity(0.18)
-          .onClick(() => { this.cancelMcpAdd(); })
-
-        Column() {
-          Text('新增 MCP 服务')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
-
-          Text('粘贴 JSON 配置即可添加，兼容 Claude Desktop / Cursor 格式。')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontColor('#64748B')
-            .lineHeight(20)
-            .margin({ top: 10 })
-
-          TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 字段时自动识别）' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 12 })
-            .onChange((value: string) => { this.mcpNewServerName = value; })
-
-          TextArea({ text: this.mcpJsonPasteInput, placeholder: '{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer xxx"}}' })
-            .width('100%')
-            .height(150)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(16)
-            .padding(12)
-            .margin({ top: 10 })
-            .onChange((value: string) => { this.mcpJsonPasteInput = value; })
-
-          Column() {
-            Text(this.mcpAddPreviewText())
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(11)
-              .fontColor('#475569')
-              .lineHeight(18)
-          }
-          .width('100%')
-          .padding(10)
-          .margin({ top: 8 })
-          .backgroundColor('#F1F5F9')
-          .borderRadius(12)
-
-          Row() {
-            Button('取消')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#475569')
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .border({ width: 1, color: '#D5E0ED' })
-              .scale({ x: this.pressScale('mcp-add-cancel'), y: this.pressScale('mcp-add-cancel') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-cancel', event); })
-              .onClick(() => { this.cancelMcpAdd(); })
-
-            Button('添加')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#0A84FF')
-              .borderRadius(14)
-              .margin({ left: 12 })
-              .scale({ x: this.pressScale('mcp-add-confirm'), y: this.pressScale('mcp-add-confirm') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-confirm', event); })
-              .onClick(() => { this.confirmMcpAdd(); })
-          }
-          .width('100%')
-          .margin({ top: 14 })
-        }
-        .width(460)
-        .padding(22)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(24)
-      }
-      .width('100%')
-      .height('100%')
-    }
-  }
-
-  @Builder
-  private mcpDeleteDialog() {
-    if (this.showMcpDeleteDialog) {
-      Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#0F172A')
-          .opacity(0.18)
-          .onClick(() => { this.cancelMcpDelete(); })
-
-        Column() {
-          Text('确认删除 MCP 服务')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
-
-          Text(`将从配置中移除 "${this.pendingDeleteMcpName}"，此操作不可撤销。`)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontColor('#64748B')
-            .lineHeight(20)
-            .margin({ top: 10 })
-
-          Row() {
-            Button('取消')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#475569')
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .border({ width: 1, color: '#D5E0ED' })
-              .scale({ x: this.pressScale('mcp-delete-cancel'), y: this.pressScale('mcp-delete-cancel') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-cancel', event); })
-              .onClick(() => { this.cancelMcpDelete(); })
-
-            Button('确认删除')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#F97373')
-              .borderRadius(14)
-              .margin({ left: 12 })
-              .scale({ x: this.pressScale('mcp-delete-confirm'), y: this.pressScale('mcp-delete-confirm') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-confirm', event); })
-              .onClick(() => { this.confirmMcpDelete(); })
-          }
-          .width('100%')
-          .margin({ top: 20 })
-        }
-        .width(420)
-        .padding(22)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(24)
-      }
-      .width('100%')
-      .height('100%')
-    }
-  }
-
   private validationStatusCodeText(): string {
     if (this.validationResult === null) return '—';
     return this.validationResult.statusCode > 0 ? `${this.validationResult.statusCode}` : '—';
@@ -3889,147 +3830,6 @@ struct SettingsPage {
     .width('100%')
     .height('100%')
     }
-  }
-
-  private skillDetailSourceLabel(): string {
-    if (this.selectedSkillDetail === null) {
-      return '';
-    }
-    const src: string = this.selectedSkillDetail.source;
-    if (src === 'github') {
-      return 'GitHub';
-    }
-    if (src === 'zip') {
-      return 'ZIP 导入';
-    }
-    return '本地';
-  }
-
-  private skillDetailInstalledDate(): string {
-    if (this.selectedSkillDetail === null || this.selectedSkillDetail.installedAt <= 0) {
-      return '未知';
-    }
-    return new Date(this.selectedSkillDetail.installedAt).toISOString().replace('T', ' ').substring(0, 19);
-  }
-
-  private skillDetailUpdatedDate(): string {
-    if (this.selectedSkillDetail === null || this.selectedSkillDetail.updatedAt <= 0) {
-      return '从未更新';
-    }
-    return new Date(this.selectedSkillDetail.updatedAt).toISOString().replace('T', ' ').substring(0, 19);
-  }
-
-  @Builder
-  private skillDetailDialog() {
-    if (this.showSkillDetailDialog && this.selectedSkillDetail !== null) {
-      Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#0F172A')
-          .opacity(0.18)
-          .onClick(() => { this.closeSkillDetail(); })
-
-        Column() {
-          Row() {
-            Text(this.selectedSkillDetail.name)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#0F172A')
-              .layoutWeight(1)
-
-            Text(this.selectedSkillDetail.enabled ? '启用' : '禁用')
-              .copyOption(CopyOptions.None)
-              .fontSize(11)
-              .fontColor(this.selectedSkillDetail.enabled ? '#16A34A' : '#94A3B8')
-              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-              .backgroundColor(this.selectedSkillDetail.enabled ? '#DCFCE7' : '#F5F7FA')
-              .borderRadius(8)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          Text(this.selectedSkillDetail.description)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontColor('#64748B')
-            .lineHeight(20)
-            .margin({ top: 10 })
-            .width('100%')
-
-          Column() {
-            this.skillDetailRow('来源', this.skillDetailSourceLabel())
-            this.skillDetailRow('目录', this.selectedSkillDetail.directory)
-            this.skillDetailRow('ID', this.selectedSkillDetail.id)
-            if (this.selectedSkillDetail.source === 'github') {
-              this.skillDetailRow('仓库', this.selectedSkillDetail.repoOwner + '/' + this.selectedSkillDetail.repoName)
-              this.skillDetailRow('分支', this.selectedSkillDetail.repoBranch)
-            }
-            if (this.selectedSkillDetail.readmeUrl.length > 0) {
-              this.skillDetailRow('README', this.selectedSkillDetail.readmeUrl)
-            }
-            this.skillDetailRow('安装时间', this.skillDetailInstalledDate())
-            this.skillDetailRow('更新时间', this.skillDetailUpdatedDate())
-            if (this.selectedSkillDetail.contentHash.length > 0) {
-              this.skillDetailRow('内容哈希', this.selectedSkillDetail.contentHash.substring(0, 16) + '...')
-            }
-          }
-          .width('100%')
-          .margin({ top: 16 })
-          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
-          .backgroundColor('#F8FAFC')
-          .borderRadius(12)
-
-          Row() {
-            Button('关闭')
-              .height(40)
-              .layoutWeight(1)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#475569')
-              .backgroundColor('#FFFFFF')
-              .borderRadius(14)
-              .border({ width: 1, color: '#D5E0ED' })
-              .scale({ x: this.pressScale('skill-detail-close'), y: this.pressScale('skill-detail-close') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
-              .onTouch((event: TouchEvent) => { this.updatePressed('skill-detail-close', event); })
-              .onClick(() => { this.closeSkillDetail(); })
-          }
-          .width('100%')
-          .margin({ top: 20 })
-        }
-        .width(420)
-        .padding(22)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(24)
-      }
-      .width('100%')
-      .height('100%')
-    }
-  }
-
-  @Builder
-  private skillDetailRow(label: string, value: string) {
-    Row() {
-      Text(label)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#94A3B8')
-        .width(70)
-
-      Text(value)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#334155')
-        .layoutWeight(1)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
-    .margin({ top: 8 })
   }
 
   build() {
