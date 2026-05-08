@@ -92,6 +92,116 @@ class CodeDiffFile {
   }
 }
 
+class MermaidNode {
+  id: string;
+  label: string;
+  shape: string;
+
+  constructor(id: string, label: string, shape?: string) {
+    this.id = id;
+    this.label = label;
+    this.shape = shape ?? 'rect';
+  }
+}
+
+class MermaidEdge {
+  id: string;
+  from: MermaidNode;
+  to: MermaidNode;
+  label: string;
+
+  constructor(id: string, from: MermaidNode, to: MermaidNode, label?: string) {
+    this.id = id;
+    this.from = from;
+    this.to = to;
+    this.label = label ?? '';
+  }
+}
+
+class MarkdownBlock {
+  id: string;
+  kind: string;
+  text: string;
+  rawText: string;
+  level: number;
+  language: string;
+  rows: string[][];
+  edges: MermaidEdge[];
+
+  constructor(id: string, kind: string, text: string, level?: number, language?: string, rows?: string[][], edges?: MermaidEdge[], rawText?: string) {
+    this.id = id;
+    this.kind = kind;
+    this.text = text;
+    this.rawText = rawText ?? text;
+    this.level = level ?? 0;
+    this.language = language ?? '';
+    this.rows = rows ?? [];
+    this.edges = edges ?? [];
+  }
+}
+
+class MathSegment {
+  id: string;
+  kind: string;
+  text: string;
+  rawText: string;
+
+  constructor(id: string, kind: string, text: string, rawText?: string) {
+    this.id = id;
+    this.kind = kind;
+    this.text = text;
+    this.rawText = rawText ?? text;
+  }
+}
+
+class CodeToken {
+  id: string;
+  kind: string;
+  text: string;
+
+  constructor(id: string, kind: string, text: string) {
+    this.id = id;
+    this.kind = kind;
+    this.text = text;
+  }
+}
+
+class FormulaNode {
+  kind: string;
+  text: string;
+  variant: string;
+  children: FormulaNode[];
+  numerator: FormulaNode | null;
+  denominator: FormulaNode | null;
+  base: FormulaNode | null;
+  superscript: FormulaNode | null;
+  subscript: FormulaNode | null;
+  radicand: FormulaNode | null;
+
+  constructor(kind: string, text?: string, children?: FormulaNode[], variant?: string) {
+    this.kind = kind;
+    this.text = text ?? '';
+    this.variant = variant ?? 'roman';
+    this.children = children ?? [];
+    this.numerator = null;
+    this.denominator = null;
+    this.base = null;
+    this.superscript = null;
+    this.subscript = null;
+    this.radicand = null;
+  }
+}
+
+class FormulaParseResult {
+  node: FormulaNode;
+  nextIndex: number;
+
+  constructor(node: FormulaNode, nextIndex: number) {
+    this.node = node;
+    this.nextIndex = nextIndex;
+  }
+}
+
 @Entry
 @Component
 struct Index {
@@ -179,6 +289,8 @@ struct Index {
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
   @State private expandedIntermediateMessageIds: string[] = [];
+  @State private rawMarkdownMessageIds: string[] = [];
+  @State private rawMermaidBlockIds: string[] = [];
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -2376,16 +2488,710 @@ struct Index {
   }
 
   @Builder
+  private markdownModeChip(label: string) {
+    Text(label)
+      .copyOption(CopyOptions.None)
+      .fontSize(9)
+      .fontColor('#64748B')
+      .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+      .backgroundColor('#F8FAFC')
+      .border({ width: 0.5, color: '#E2E8F0' })
+      .borderRadius(6)
+  }
+
+  @Builder
+  private messageBody(item: ChatMessage) {
+    if (this.isMessageCollapsed(item)) {
+      Text(item.content)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(12)
+        .lineHeight(19)
+        .fontColor(this.messageContentColor(item.itemType))
+        .margin({ top: 6 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .hitTestBehavior(HitTestMode.Block)
+        .onClick(() => {
+          this.toggleMessageExpanded(item.id);
+        })
+    } else if (!this.shouldRenderMarkdown(item.content)) {
+      Text(item.content)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(12)
+        .lineHeight(19)
+        .fontColor(this.messageContentColor(item.itemType))
+        .margin({ top: 6 })
+    } else if (this.shouldRenderInlineOnlyMarkdown(item.content)) {
+      this.inlineMessageMarkdownBody(item)
+    } else {
+      this.markdownRenderedBody(item)
+    }
+  }
+
+  @Builder
+  private inlineMessageMarkdownBody(item: ChatMessage) {
+    Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+      ForEach(this.inlineMarkdownSegments(item.content.trim(), `${item.id}:inline`), (segment: MathSegment) => {
+        if (segment.kind === 'math') {
+          this.inlineMathSegment(segment, 12, 19)
+        } else {
+          this.inlineMarkdownTextSegment(segment, this.messageContentColor(item.itemType), 12, 19)
+        }
+      }, (segment: MathSegment) => segment.id)
+    }
+    .constraintSize({ maxWidth: '100%' })
+    .margin({ top: 6 })
+  }
+
+  @Builder
+  private markdownRenderedBody(item: ChatMessage) {
+    Column() {
+      ForEach(this.markdownBlocks(item.content), (block: MarkdownBlock) => {
+        this.markdownBlock(item.id, block)
+      }, (block: MarkdownBlock) => block.id)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ top: 6 })
+  }
+
+  @Builder
+  private markdownBlock(messageId: string, block: MarkdownBlock) {
+    if (block.kind === 'heading') {
+      Column() {
+        this.inlineMarkdownContent(
+          messageId,
+          block.id,
+          block.text,
+          '#0F172A',
+          this.markdownHeadingFontSize(block.level),
+          this.markdownHeadingLineHeight(block.level),
+          FontWeight.Medium
+        )
+      }
+      .width('100%')
+      .margin({ top: 6, bottom: 4 })
+    } else if (block.kind === 'quote') {
+      Row() {
+        Column()
+          .width(3)
+          .height('100%')
+          .backgroundColor('#CBD5E1')
+          .borderRadius(2)
+          .margin({ right: 9 })
+        this.inlineMarkdownContent(messageId, block.id, block.text, '#475569')
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .padding({ top: 7, bottom: 7, right: 8 })
+      .backgroundColor('#F8FAFC')
+      .borderRadius(8)
+      .margin({ top: 5, bottom: 5 })
+    } else if (block.kind === 'list') {
+      Column() {
+        ForEach(block.text.split('\n'), (line: string, index: number) => {
+          Row() {
+            Text(this.markdownListMarker(line))
+              .copyOption(CopyOptions.None)
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width(24)
+            this.inlineMarkdownContent(messageId, `${block.id}-${index}`, this.markdownListText(line), '#27272A')
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+          .margin({ top: index === 0 ? 0 : 3 })
+        })
+      }
+      .width('100%')
+      .margin({ top: 4, bottom: 4 })
+    } else if (block.kind === 'code') {
+      this.codeBlock(block)
+    } else if (block.kind === 'math') {
+      this.mathBlock(block)
+    } else if (block.kind === 'mermaid') {
+      this.mermaidBlock(`${messageId}:${block.id}`, block)
+    } else if (block.kind === 'table') {
+      this.markdownTable(messageId, block)
+    } else if (block.kind === 'divider') {
+      Column()
+        .width('100%')
+        .height(1)
+        .backgroundColor('#E4E4E7')
+        .margin({ top: 8, bottom: 8 })
+    } else {
+      this.inlineMarkdownContent(messageId, block.id, block.text, '#27272A')
+    }
+  }
+
+  @Builder
+  private markdownTable(messageId: string, block: MarkdownBlock) {
+    Column() {
+      ForEach(block.rows, (row: string[], rowIndex: number) => {
+        Row() {
+          ForEach(row, (cell: string, cellIndex?: number) => {
+            Column() {
+              this.inlineMarkdownContent(
+                messageId,
+                `${block.id}:r${rowIndex}:c${cellIndex ?? 0}`,
+                cell,
+                rowIndex === 0 ? '#0F172A' : '#334155',
+                10,
+                16,
+                rowIndex === 0 ? FontWeight.Medium : FontWeight.Regular
+              )
+            }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              .padding({ left: 7, right: 7, top: 6, bottom: 6 })
+          }, (cell: string, cellIndex?: number) => `${rowIndex}:${cellIndex ?? 0}`)
+        }
+        .width('100%')
+        .backgroundColor(rowIndex === 0 ? '#F1F5F9' : '#FFFFFF')
+        .border({ width: 0.5, color: '#E2E8F0' })
+      })
+    }
+    .width('100%')
+    .borderRadius(8)
+    .margin({ top: 5, bottom: 5 })
+  }
+
+  @Builder
+  private codeBlock(block: MarkdownBlock) {
+    Column() {
+      Row() {
+        Text(block.language.length > 0 ? block.language : 'text')
+          .copyOption(CopyOptions.None)
+          .fontSize(9)
+          .fontColor('#0369A1')
+          .fontWeight(FontWeight.Medium)
+          .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+          .backgroundColor('#E0F2FE')
+          .borderRadius(6)
+        Blank()
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .margin({ bottom: 6 })
+
+      Column() {
+        this.highlightedCodeLines(block.text, block.language, `${block.id}:code`)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 10, top: 9, bottom: 9 })
+    .backgroundColor('#F8FAFC')
+    .border({ width: 0.5, color: '#CBD5E1' })
+    .borderRadius(8)
+    .margin({ top: 5, bottom: 5 })
+  }
+
+  @Builder
+  private highlightedCodeLines(text: string, language: string, baseId: string) {
+    Column() {
+      ForEach(this.codeBlockLines(text), (line: string, lineIndex: number) => {
+        Row() {
+          Text(`${lineIndex + 1}`)
+            .copyOption(CopyOptions.None)
+            .fontSize(10)
+            .lineHeight(18)
+            .fontColor('#94A3B8')
+            .fontFamily('monospace')
+            .textAlign(TextAlign.End)
+            .width(28)
+            .margin({ right: 10 })
+
+          Text() {
+            ForEach(this.codeLineTokens(line, language, `${baseId}:${lineIndex}`), (token: CodeToken) => {
+              Span(token.text)
+                .fontColor(this.codeTokenColor(token.kind))
+                .fontWeight(this.codeTokenWeight(token.kind))
+            }, (token: CodeToken) => token.id)
+          }
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .lineHeight(18)
+          .fontFamily('monospace')
+          .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+        .margin({ top: lineIndex === 0 ? 0 : 1 })
+      }, (line: string, lineIndex: number) => `${lineIndex}:${line}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private inlineMarkdownContent(messageId: string, blockId: string, text: string, color: string, fontSize?: number, lineHeight?: number, weight?: FontWeight) {
+    Column() {
+      ForEach(text.split('\n'), (line: string, lineIndex: number) => {
+        if (line.length === 0) {
+          Blank()
+            .width('100%')
+            .height(8)
+        } else {
+          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+            ForEach(this.inlineMarkdownSegments(line, `${messageId}:${blockId}:${lineIndex}`), (segment: MathSegment) => {
+              if (segment.kind === 'math') {
+                this.inlineMathSegment(segment, fontSize ?? 12, lineHeight ?? 19)
+              } else {
+                this.inlineMarkdownTextSegment(segment, color, fontSize ?? 12, lineHeight ?? 19, weight)
+              }
+            }, (segment: MathSegment) => segment.id)
+          }
+          .width('100%')
+          .margin({ top: lineIndex === 0 ? 0 : 2 })
+        }
+      })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private inlineMarkdownTextSegment(segment: MathSegment, color: string, fontSize: number, lineHeight: number, weight?: FontWeight) {
+    if (segment.kind === 'code') {
+      Text(segment.text)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(Math.max(fontSize - 1, 10))
+        .lineHeight(lineHeight)
+        .fontFamily('monospace')
+        .fontColor('#0F172A')
+        .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+        .margin({ left: 2, right: 2, bottom: 2 })
+        .backgroundColor('#F1F5F9')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(4)
+    } else {
+      Text(segment.text)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(fontSize)
+        .lineHeight(lineHeight)
+        .fontColor(segment.kind === 'link' ? '#2563EB' : color)
+        .fontWeight(segment.kind === 'strong' ? FontWeight.Medium : (weight ?? FontWeight.Regular))
+        .margin({ bottom: 2 })
+    }
+  }
+
+  @Builder
+  private inlineMathSegment(segment: MathSegment, fontSize: number, lineHeight: number) {
+    Row() {
+      this.formulaInlineContent(segment.rawText, fontSize)
+    }
+    .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+    .margin({ right: 4, bottom: 2 })
+    .backgroundColor('#F8FAFC')
+    .border({ width: 0.5, color: '#CBD5E1' })
+    .borderRadius(6)
+  }
+
+  @Builder
+  private formulaInlineContent(source: string, fontSize: number) {
+    Row() {
+      this.formulaNode(this.parseFormula(source), Math.max(fontSize + 1, 13), '#0F172A')
+    }
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private formulaBlockContent(source: string) {
+    Column() {
+      ForEach(this.mathBlockLines(source), (line: string, lineIndex?: number) => {
+        Row() {
+          this.formulaNode(this.parseFormula(line), 19, '#0F172A')
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: (lineIndex ?? 0) === 0 ? 0 : 6 })
+      }, (line: string, lineIndex?: number) => `${lineIndex ?? 0}:${line}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  private formulaNode(node: FormulaNode, fontSize: number, color: string) {
+    if (node.kind === 'sequence') {
+      Row() {
+        ForEach(node.children, (child: FormulaNode, childIndex?: number) => {
+          this.formulaNode(child, fontSize, color)
+        }, (child: FormulaNode, childIndex?: number) => `${child.kind}:${childIndex ?? 0}:${child.text}`)
+      }
+      .alignItems(VerticalAlign.Center)
+    } else if (node.kind === 'group' && node.children.length > 0) {
+      Row() {
+        Text(node.text.length > 0 ? node.text.charAt(0) : '(')
+          .copyOption(CopyOptions.None)
+          .fontSize(fontSize)
+          .lineHeight(fontSize + 6)
+          .fontColor(color)
+          .fontWeight(FontWeight.Medium)
+
+        this.formulaNode(node.children[0], fontSize, color)
+
+        Text(node.text.length > 1 ? node.text.charAt(1) : ')')
+          .copyOption(CopyOptions.None)
+          .fontSize(fontSize)
+          .lineHeight(fontSize + 6)
+          .fontColor(color)
+          .fontWeight(FontWeight.Medium)
+      }
+      .alignItems(VerticalAlign.Center)
+    } else if (node.kind === 'fraction' && node.numerator !== null && node.denominator !== null) {
+      Column() {
+        Row() {
+          this.formulaNode(node.numerator, Math.max(fontSize - 2, 11), color)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ bottom: 2 })
+
+        Column()
+          .width('100%')
+          .height(1)
+          .backgroundColor(color)
+
+        Row() {
+          this.formulaNode(node.denominator, Math.max(fontSize - 2, 11), color)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 2 })
+      }
+      .width(this.formulaFractionWidth(node, fontSize))
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: 3, right: 3 })
+    } else if (node.kind === 'sqrt' && node.radicand !== null) {
+      Row() {
+        Text('√')
+          .copyOption(CopyOptions.None)
+          .fontSize(fontSize + 2)
+          .lineHeight(fontSize + 6)
+          .fontColor(color)
+          .fontWeight(FontWeight.Medium)
+
+        Column() {
+          Column()
+            .width('100%')
+            .height(1)
+            .backgroundColor(color)
+            .margin({ bottom: 1 })
+
+          this.formulaNode(node.radicand, Math.max(fontSize - 1, 11), color)
+        }
+        .width(this.formulaRadicandWidth(node, fontSize))
+        .padding({ left: 3, right: 3, top: 2 })
+      }
+      .alignItems(VerticalAlign.Bottom)
+    } else if (node.kind === 'script' && node.base !== null) {
+      Row() {
+        this.formulaNode(node.base, fontSize, color)
+
+        Column() {
+          if (node.superscript !== null) {
+            this.formulaNode(node.superscript, Math.max(fontSize - 5, 9), color)
+          }
+          if (node.subscript !== null) {
+            this.formulaNode(node.subscript, Math.max(fontSize - 5, 9), color)
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+      }
+      .alignItems(VerticalAlign.Top)
+    } else if (node.kind === 'space') {
+      Blank()
+        .width(this.formulaSpacingWidth(node.text, fontSize))
+        .height(1)
+    } else {
+      Text(node.text)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(fontSize)
+        .lineHeight(fontSize + 6)
+        .fontColor(color)
+        .fontWeight(FontWeight.Regular)
+    }
+  }
+
+  @Builder
+  private mathBlock(block: MarkdownBlock) {
+    Column() {
+      this.formulaBlockContent(block.rawText)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 10, top: 9, bottom: 10 })
+    .backgroundColor('#FDFEFF')
+    .border({ width: 0.5, color: '#BFDBFE' })
+    .borderRadius(8)
+    .margin({ top: 5, bottom: 5 })
+  }
+
+  private formulaFractionWidth(node: FormulaNode, fontSize: number): number {
+    if (node.numerator === null || node.denominator === null) {
+      return Math.max(fontSize * 2, 26);
+    }
+    const numeratorWidth: number = this.formulaNodeApproxWidth(node.numerator, Math.max(fontSize - 2, 11));
+    const denominatorWidth: number = this.formulaNodeApproxWidth(node.denominator, Math.max(fontSize - 2, 11));
+    return Math.min(Math.max(Math.max(numeratorWidth, denominatorWidth) + 12, fontSize * 1.8), 360);
+  }
+
+  private formulaRadicandWidth(node: FormulaNode, fontSize: number): number {
+    if (node.radicand === null) {
+      return Math.max(fontSize * 2, 26);
+    }
+    return Math.min(Math.max(this.formulaNodeApproxWidth(node.radicand, Math.max(fontSize - 1, 11)) + 8, fontSize * 1.8), 340);
+  }
+
+  private formulaNodeApproxWidth(node: FormulaNode, fontSize: number): number {
+    if (node.kind === 'sequence') {
+      let width: number = 0;
+      for (let i = 0; i < node.children.length; i++) {
+        width += this.formulaNodeApproxWidth(node.children[i], fontSize);
+      }
+      return Math.max(width, fontSize);
+    }
+    if (node.kind === 'group' && node.children.length > 0) {
+      return this.formulaNodeApproxWidth(node.children[0], fontSize) + fontSize;
+    }
+    if (node.kind === 'fraction' && node.numerator !== null && node.denominator !== null) {
+      return this.formulaFractionWidth(node, fontSize);
+    }
+    if (node.kind === 'sqrt' && node.radicand !== null) {
+      return this.formulaRadicandWidth(node, fontSize) + fontSize;
+    }
+    if (node.kind === 'script' && node.base !== null) {
+      const baseWidth: number = this.formulaNodeApproxWidth(node.base, fontSize);
+      const supWidth: number = node.superscript === null ? 0 : this.formulaNodeApproxWidth(node.superscript, Math.max(fontSize - 5, 9));
+      const subWidth: number = node.subscript === null ? 0 : this.formulaNodeApproxWidth(node.subscript, Math.max(fontSize - 5, 9));
+      return baseWidth + Math.max(supWidth, subWidth);
+    }
+    if (node.kind === 'space') {
+      return this.formulaSpacingWidth(node.text, fontSize);
+    }
+    return this.formulaTextApproxWidth(node.text, fontSize);
+  }
+
+  private formulaSpacingWidth(command: string, fontSize: number): number {
+    switch (command) {
+      case 'qquad': return fontSize * 2;
+      case 'quad': return fontSize;
+      case ';': return fontSize * 0.35;
+      case ':': return fontSize * 0.28;
+      case ',': return fontSize * 0.18;
+      default: return fontSize * 0.35;
+    }
+  }
+
+  private formulaTextApproxWidth(text: string, fontSize: number): number {
+    let width: number = 0;
+    for (let i = 0; i < text.length; i++) {
+      width += text[i] === ' ' ? fontSize * 0.35 : fontSize * 0.58;
+    }
+    return Math.max(width, fontSize * 0.6);
+  }
+
+  @Builder
+  private mermaidBlock(blockId: string, block: MarkdownBlock) {
+    Column() {
+      Row() {
+        Text('Mermaid')
+          .copyOption(CopyOptions.None)
+          .fontSize(9)
+          .fontColor('#2563EB')
+          .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+          .backgroundColor('#EFF6FF')
+          .borderRadius(6)
+        Blank()
+          .layoutWeight(1)
+        Text(this.isMermaidSourceVisible(blockId) ? '返回渲染' : '点击查看源码')
+          .copyOption(CopyOptions.None)
+          .fontSize(9)
+          .fontColor('#2563EB')
+      }
+      .width('100%')
+      .margin({ bottom: 7 })
+
+      if (this.isMermaidSourceVisible(blockId)) {
+        this.mermaidSourceBlock(blockId, block)
+      } else if (block.edges.length > 0) {
+        if (this.isLinearMermaidGraph(block.edges)) {
+          this.mermaidPathGraph(block)
+        } else {
+          this.mermaidEdgeGraph(block)
+        }
+      } else {
+        Text(block.text)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .lineHeight(17)
+          .fontColor('#334155')
+          .fontFamily('monospace')
+          .width('100%')
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 10, top: 9, bottom: 10 })
+    .backgroundColor('#F8FAFC')
+    .border({ width: 0.5, color: '#BFDBFE' })
+    .borderRadius(8)
+    .margin({ top: 5, bottom: 5 })
+    .hitTestBehavior(HitTestMode.Block)
+    .onClick(() => {
+      this.toggleMermaidSource(blockId);
+    })
+  }
+
+  @Builder
+  private mermaidSourceBlock(blockId: string, block: MarkdownBlock) {
+    Column() {
+      this.highlightedCodeLines(block.text, 'mermaid', `${blockId}:source`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+    .backgroundColor('#FFFFFF')
+    .border({ width: 0.5, color: '#E2E8F0' })
+    .borderRadius(7)
+  }
+
+  @Builder
+  private mermaidPathGraph(block: MarkdownBlock) {
+    if (this.isVerticalMermaid(block.rawText)) {
+      Column() {
+        ForEach(this.orderedMermaidPath(block.edges), (node: MermaidNode, index: number) => {
+          if (index > 0) {
+            Text(this.mermaidArrowSymbol(block.rawText))
+              .copyOption(CopyOptions.None)
+              .fontSize(18)
+              .fontColor('#2563EB')
+              .margin({ top: 2, bottom: 2 })
+          }
+          this.mermaidNodeChip(node)
+        }, (node: MermaidNode, index: number) => `${index}:${node.id}`)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+    } else {
+      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
+        ForEach(this.orderedMermaidPath(block.edges), (node: MermaidNode, index: number) => {
+          if (index > 0) {
+            Text(this.mermaidArrowSymbol(block.rawText))
+              .copyOption(CopyOptions.None)
+              .fontSize(18)
+              .fontColor('#2563EB')
+              .margin({ left: 8, right: 8, bottom: 6 })
+          }
+          this.mermaidNodeChip(node)
+        }, (node: MermaidNode, index: number) => `${index}:${node.id}`)
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  private mermaidEdgeGraph(block: MarkdownBlock) {
+    Column() {
+      ForEach(block.edges, (edge: MermaidEdge) => {
+        Row() {
+          this.mermaidNodeChip(edge.from)
+          Column() {
+            if (edge.label.length > 0) {
+              Text(edge.label)
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(9)
+                .fontColor('#64748B')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            Text(this.mermaidArrowSymbol(block.rawText))
+              .copyOption(CopyOptions.None)
+              .fontSize(18)
+              .fontColor('#2563EB')
+          }
+          .width(48)
+          .alignItems(HorizontalAlign.Center)
+          this.mermaidNodeChip(edge.to)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 5 })
+      }, (edge: MermaidEdge) => edge.id)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private mermaidNodeChip(node: MermaidNode) {
+    Text(node.label)
+      .copyOption(CopyOptions.LocalDevice)
+      .fontSize(10)
+      .fontColor(node.shape === 'diamond' ? '#92400E' : '#1E3A8A')
+      .fontWeight(FontWeight.Medium)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .maxLines(2)
+      .padding({ left: 9, right: 9, top: 7, bottom: 7 })
+      .margin({ right: 4, bottom: 6 })
+      .backgroundColor(node.shape === 'diamond' ? '#FEF3C7' : '#DBEAFE')
+      .border({ width: 0.5, color: node.shape === 'diamond' ? '#F59E0B' : '#93C5FD' })
+      .borderRadius(node.shape === 'round' ? 16 : 7)
+  }
+
+  @Builder
+  private mermaidNodePill(node: MermaidNode) {
+    Text(node.label)
+      .copyOption(CopyOptions.LocalDevice)
+      .fontSize(10)
+      .fontColor(node.shape === 'diamond' ? '#92400E' : '#1E3A8A')
+      .fontWeight(FontWeight.Medium)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .maxLines(2)
+      .layoutWeight(1)
+      .padding({ left: 8, right: 8, top: 7, bottom: 7 })
+      .backgroundColor(node.shape === 'diamond' ? '#FEF3C7' : '#DBEAFE')
+      .border({ width: 0.5, color: node.shape === 'diamond' ? '#F59E0B' : '#93C5FD' })
+      .borderRadius(node.shape === 'round' ? 16 : 7)
+  }
+
+  @Builder
+  private mermaidNodeBadge(node: MermaidNode) {
+    Text(node.label)
+      .copyOption(CopyOptions.LocalDevice)
+      .fontSize(9)
+      .fontColor(node.shape === 'diamond' ? '#92400E' : '#1E3A8A')
+      .fontWeight(FontWeight.Medium)
+      .padding({ left: 7, right: 7, top: 4, bottom: 4 })
+      .margin({ right: 6, bottom: 6 })
+      .backgroundColor(node.shape === 'diamond' ? '#FEF3C7' : '#EFF6FF')
+      .border({ width: 0.5, color: node.shape === 'diamond' ? '#F59E0B' : '#BFDBFE' })
+      .borderRadius(node.shape === 'round' ? 14 : 6)
+  }
+
+  @Builder
   private messageCard(item: ChatMessage) {
     Column() {
       Row() {
         if (this.isCollapsibleMessage(item)) {
-          Text(this.isMessageCollapsed(item) ? '▸' : '▾')
-            .copyOption(CopyOptions.None)
-            .fontSize(12)
-            .fontColor('#71717A')
-            .width(14)
-            .margin({ right: 2 })
+          Row() {
+            Text(this.isMessageCollapsed(item) ? '▸' : '▾')
+              .copyOption(CopyOptions.None)
+              .fontSize(17)
+              .fontColor('#52525B')
+          }
+          .width(24)
+          .height(24)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor('#FFFFFF')
+          .border({ width: 0.5, color: '#E4E4E7' })
+          .borderRadius(7)
+          .margin({ right: 6 })
         }
 
         Text(this.messageIcon(item.itemType))
@@ -2415,32 +3221,18 @@ struct Index {
         }
       }
       .constraintSize({ maxWidth: '100%' })
+      .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.Block)
       .onClick(() => {
         if (this.isCollapsibleMessage(item)) {
           this.toggleMessageExpanded(item.id);
         }
       })
 
-      if (this.isMessageCollapsed(item)) {
-        Text(item.content)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(12)
-          .lineHeight(19)
-          .fontColor(this.messageContentColor(item.itemType))
-          .margin({ top: 6 })
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      } else {
-        Text(item.content)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(12)
-          .lineHeight(19)
-          .fontColor(this.messageContentColor(item.itemType))
-          .margin({ top: 6 })
-      }
+      this.messageBody(item)
     }
     .alignItems(HorizontalAlign.Start)
-    .constraintSize({ maxWidth: '100%' })
+    .constraintSize({ maxWidth: this.messageCardMaxWidth(item) })
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
     .borderRadius(10)
@@ -2466,6 +3258,60 @@ struct Index {
 
   private isUserMessage(item: ChatMessage): boolean {
     return item.role === 'user';
+  }
+
+  private shouldRenderMarkdown(content: string): boolean {
+    const text: string = content.trim();
+    if (text.length === 0) {
+      return false;
+    }
+    return this.hasBlockMarkdownContent(text) || this.hasInlineMarkdownContent(text);
+  }
+
+  private shouldRenderInlineOnlyMarkdown(content: string): boolean {
+    const text: string = content.trim();
+    return text.length > 0 && !this.hasBlockMarkdownContent(text) && this.hasInlineMarkdownContent(text);
+  }
+
+  private hasBlockMarkdownContent(text: string): boolean {
+    return text.indexOf('```') >= 0 ||
+      text.indexOf('$$') >= 0 ||
+      text.indexOf('\\[') >= 0 ||
+      text.match(/(^|\n)#{1,6}\s+\S/) !== null ||
+      text.match(/(^|\n)\s*>\s+\S/) !== null ||
+      text.match(/(^|\n)\s*([-*+]|\d+\.)\s+\S/) !== null ||
+      text.match(/\n\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?/) !== null ||
+      text.match(/(^|\n)\s*(---|\*\*\*|___)\s*($|\n)/) !== null;
+  }
+
+  private hasInlineMarkdownContent(text: string): boolean {
+    const dollarStart: number = this.findInlineDollarStart(text, 0);
+    return text.indexOf('\\(') >= 0 ||
+      (dollarStart >= 0 && this.findInlineDollarEnd(text, dollarStart + 1) >= 0) ||
+      text.match(/\*\*[^*]+\*\*/) !== null ||
+      text.match(/__[^_]+__/) !== null ||
+      text.match(/`[^`]+`/) !== null ||
+      text.match(/!\[[^\]]*\]\([^)]+\)/) !== null ||
+      text.match(/\[[^\]]+\]\([^)]+\)/) !== null;
+  }
+
+  private messageCardMaxWidth(item: ChatMessage): string {
+    if (this.isCollapsibleMessage(item)) {
+      return '82%';
+    }
+    if (this.isUserMessage(item)) {
+      return this.hasWideMarkdownContent(item.content) ? '82%' : '72%';
+    }
+    return this.hasWideMarkdownContent(item.content) ? '88%' : '78%';
+  }
+
+  private hasWideMarkdownContent(content: string): boolean {
+    const text: string = content.trim();
+    return text.indexOf('```') >= 0 ||
+      text.indexOf('$$') >= 0 ||
+      text.indexOf('\\[') >= 0 ||
+      text.match(/\n\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?/) !== null ||
+      text.length > 180;
   }
 
   private isCollapsibleMessage(item: ChatMessage): boolean {
@@ -2497,6 +3343,1564 @@ struct Index {
     }
     this.expandedIntermediateMessageIds = [...this.expandedIntermediateMessageIds, messageId];
   }
+
+  private isMessageSourceVisible(messageId: string): boolean {
+    return this.rawMarkdownMessageIds.indexOf(messageId) >= 0;
+  }
+
+  private toggleMessageSource(messageId: string): void {
+    if (this.isMessageSourceVisible(messageId)) {
+      this.rawMarkdownMessageIds = this.rawMarkdownMessageIds.filter((id: string) => id !== messageId);
+      return;
+    }
+    this.rawMarkdownMessageIds = [...this.rawMarkdownMessageIds, messageId];
+  }
+
+  private isMermaidSourceVisible(blockId: string): boolean {
+    return this.rawMermaidBlockIds.indexOf(blockId) >= 0;
+  }
+
+  private toggleMermaidSource(blockId: string): void {
+    if (this.isMermaidSourceVisible(blockId)) {
+      this.rawMermaidBlockIds = this.rawMermaidBlockIds.filter((id: string) => id !== blockId);
+      return;
+    }
+    this.rawMermaidBlockIds = [...this.rawMermaidBlockIds, blockId];
+  }
+
+  private uniqueMermaidNodes(edges: MermaidEdge[]): MermaidNode[] {
+    const seen: Map<string, MermaidNode> = new Map();
+    for (let i = 0; i < edges.length; i++) {
+      if (!seen.has(edges[i].from.id)) {
+        seen.set(edges[i].from.id, edges[i].from);
+      }
+      if (!seen.has(edges[i].to.id)) {
+        seen.set(edges[i].to.id, edges[i].to);
+      }
+    }
+    return Array.from(seen.values());
+  }
+
+  private isLinearMermaidGraph(edges: MermaidEdge[]): boolean {
+    if (edges.length === 0) {
+      return false;
+    }
+    const outgoing: Map<string, number> = new Map();
+    const incoming: Map<string, number> = new Map();
+    for (let i = 0; i < edges.length; i++) {
+      outgoing.set(edges[i].from.id, (outgoing.get(edges[i].from.id) ?? 0) + 1);
+      incoming.set(edges[i].to.id, (incoming.get(edges[i].to.id) ?? 0) + 1);
+      if ((outgoing.get(edges[i].from.id) ?? 0) > 1 || (incoming.get(edges[i].to.id) ?? 0) > 1) {
+        return false;
+      }
+    }
+    return this.orderedMermaidPath(edges).length === edges.length + 1;
+  }
+
+  private orderedMermaidPath(edges: MermaidEdge[]): MermaidNode[] {
+    if (edges.length === 0) {
+      return [];
+    }
+    const outgoing: Map<string, MermaidEdge> = new Map();
+    const incoming: Map<string, boolean> = new Map();
+    const nodes: Map<string, MermaidNode> = new Map();
+    for (let i = 0; i < edges.length; i++) {
+      outgoing.set(edges[i].from.id, edges[i]);
+      incoming.set(edges[i].to.id, true);
+      nodes.set(edges[i].from.id, edges[i].from);
+      nodes.set(edges[i].to.id, edges[i].to);
+    }
+
+    let start: MermaidNode | null = null;
+    const allNodes: MermaidNode[] = Array.from(nodes.values());
+    for (let i = 0; i < allNodes.length; i++) {
+      if (!incoming.has(allNodes[i].id)) {
+        start = allNodes[i];
+        break;
+      }
+    }
+    if (start === null) {
+      start = edges[0].from;
+    }
+
+    const path: MermaidNode[] = [];
+    const visited: Map<string, boolean> = new Map();
+    let current: MermaidNode | null = start;
+    while (current !== null && !visited.has(current.id)) {
+      path.push(current);
+      visited.set(current.id, true);
+      const edge: MermaidEdge | undefined = outgoing.get(current.id);
+      current = edge === undefined ? null : edge.to;
+    }
+    return path;
+  }
+
+  private markdownBlocks(content: string): MarkdownBlock[] {
+    const lines: string[] = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const blocks: MarkdownBlock[] = [];
+    let i = 0;
+    let serial = 0;
+
+    while (i < lines.length) {
+      const line: string = lines[i];
+      const trimmed: string = line.trim();
+      if (trimmed.length === 0) {
+        i++;
+        continue;
+      }
+
+      if (trimmed.startsWith('```')) {
+        const language: string = trimmed.substring(3).trim().toLowerCase();
+        const body: string[] = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith('```')) {
+          body.push(lines[i]);
+          i++;
+        }
+        if (i < lines.length) {
+          i++;
+        }
+        const code: string = body.join('\n');
+        const kind: string = language === 'mermaid' || code.trim().startsWith('flowchart ') || code.trim().startsWith('graph ') ? 'mermaid' : 'code';
+        const rawLanguage: string = kind === 'mermaid' ? (language.length > 0 ? language : 'mermaid') : language;
+        blocks.push(new MarkdownBlock(
+          `md-${serial++}`,
+          kind,
+          code,
+          0,
+          language,
+          [],
+          kind === 'mermaid' ? this.parseMermaidEdges(code) : [],
+          this.fencedCodeSource(rawLanguage, code)
+        ));
+        continue;
+      }
+
+      if (trimmed.startsWith('$$')) {
+        const body: string[] = [];
+        const firstBody: string = trimmed.substring(2);
+        if (firstBody.endsWith('$$') && firstBody.length > 2) {
+          body.push(firstBody.substring(0, firstBody.length - 2));
+          i++;
+        } else {
+          if (firstBody.trim().length > 0) {
+            body.push(firstBody);
+          }
+          i++;
+          while (i < lines.length && !lines[i].trim().endsWith('$$')) {
+            body.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) {
+            const lastLine: string = lines[i].trim();
+            const lastBody: string = lastLine.substring(0, Math.max(lastLine.length - 2, 0));
+            if (lastBody.trim().length > 0) {
+              body.push(lastBody);
+            }
+            i++;
+          }
+        }
+        const mathBody: string = body.join('\n');
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'math', mathBody, 0, '', [], [], this.wrappedMathSource('$$', '$$', mathBody)));
+        continue;
+      }
+
+      if (trimmed.startsWith('\\[')) {
+        const body: string[] = [];
+        const firstBody: string = trimmed.substring(2);
+        if (firstBody.endsWith('\\]') && firstBody.length > 2) {
+          body.push(firstBody.substring(0, firstBody.length - 2));
+          i++;
+        } else {
+          if (firstBody.trim().length > 0) {
+            body.push(firstBody);
+          }
+          i++;
+          while (i < lines.length && !lines[i].trim().endsWith('\\]')) {
+            body.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) {
+            const lastLine: string = lines[i].trim();
+            const lastBody: string = lastLine.substring(0, Math.max(lastLine.length - 2, 0));
+            if (lastBody.trim().length > 0) {
+              body.push(lastBody);
+            }
+            i++;
+          }
+        }
+        const mathBody: string = body.join('\n');
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'math', mathBody, 0, '', [], [], this.wrappedMathSource('\\[', '\\]', mathBody)));
+        continue;
+      }
+
+      const headingMatch: RegExpMatchArray | null = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch !== null) {
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'heading', headingMatch[2], headingMatch[1].length));
+        i++;
+        continue;
+      }
+
+      if (this.isDividerLine(trimmed)) {
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'divider', ''));
+        i++;
+        continue;
+      }
+
+      if (this.isTableStart(lines, i)) {
+        const rows: string[][] = [];
+        rows.push(this.parseTableRow(lines[i]));
+        i += 2;
+        while (i < lines.length && lines[i].indexOf('|') >= 0 && lines[i].trim().length > 0) {
+          rows.push(this.parseTableRow(lines[i]));
+          i++;
+        }
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'table', '', 0, '', rows));
+        continue;
+      }
+
+      if (this.isQuoteLine(trimmed)) {
+        const body: string[] = [];
+        while (i < lines.length && this.isQuoteLine(lines[i].trim())) {
+          body.push(lines[i].trim().replace(/^>\s?/, ''));
+          i++;
+        }
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'quote', body.join('\n')));
+        continue;
+      }
+
+      if (this.isListLine(trimmed)) {
+        const body: string[] = [];
+        while (i < lines.length && this.isListLine(lines[i].trim())) {
+          body.push(lines[i].trim());
+          i++;
+        }
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'list', body.join('\n')));
+        continue;
+      }
+
+      const body: string[] = [];
+      while (i < lines.length && lines[i].trim().length > 0 && !this.isMarkdownBoundary(lines, i)) {
+        body.push(lines[i].trim());
+        i++;
+      }
+      if (body.length === 0) {
+        body.push(line);
+        i++;
+      }
+      blocks.push(new MarkdownBlock(`md-${serial++}`, 'paragraph', body.join('\n')));
+    }
+
+    if (blocks.length === 0) {
+      blocks.push(new MarkdownBlock('md-empty', 'paragraph', content));
+    }
+    return blocks;
+  }
+
+  private isMarkdownBoundary(lines: string[], index: number): boolean {
+    const trimmed: string = lines[index].trim();
+    return trimmed.startsWith('```') ||
+      trimmed.startsWith('$$') ||
+      trimmed.startsWith('\\[') ||
+      trimmed.match(/^(#{1,6})\s+(.+)$/) !== null ||
+      this.isDividerLine(trimmed) ||
+      this.isQuoteLine(trimmed) ||
+      this.isListLine(trimmed) ||
+      this.isTableStart(lines, index);
+  }
+
+  private isDividerLine(trimmed: string): boolean {
+    return trimmed === '---' || trimmed === '***' || trimmed === '___';
+  }
+
+  private isQuoteLine(trimmed: string): boolean {
+    return trimmed.startsWith('>');
+  }
+
+  private isListLine(trimmed: string): boolean {
+    return trimmed.match(/^([-*+])\s+.+$/) !== null || trimmed.match(/^\d+\.\s+.+$/) !== null;
+  }
+
+  private isTableStart(lines: string[], index: number): boolean {
+    if (index + 1 >= lines.length) {
+      return false;
+    }
+    const current: string = lines[index].trim();
+    const separator: string = lines[index + 1].trim();
+    return current.indexOf('|') >= 0 && separator.match(/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/) !== null;
+  }
+
+  private parseTableRow(line: string): string[] {
+    let text: string = line.trim();
+    if (text.startsWith('|')) {
+      text = text.substring(1);
+    }
+    if (text.endsWith('|')) {
+      text = text.substring(0, text.length - 1);
+    }
+    return text.split('|').map((cell: string): string => cell.trim());
+  }
+
+  private codeBlockLines(text: string): string[] {
+    const lines: string[] = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\t/g, '    ').split('\n');
+    return lines.length > 0 ? lines : [''];
+  }
+
+  private codeLineTokens(line: string, language: string, baseId: string): CodeToken[] {
+    const tokens: CodeToken[] = [];
+    const lang: string = this.normalizeCodeLanguage(language);
+    let cursor: number = 0;
+    let serial: number = 0;
+
+    while (cursor < line.length) {
+      const current: string = line[cursor];
+      if (current === ' ') {
+        let end: number = cursor + 1;
+        while (end < line.length && line[end] === ' ') {
+          end += 1;
+        }
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, 'plain', line.substring(cursor, end)));
+        cursor = end;
+        continue;
+      }
+
+      if (this.isCodeLineCommentStart(line, cursor, lang)) {
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, 'comment', line.substring(cursor)));
+        break;
+      }
+
+      if (line.startsWith('/*', cursor)) {
+        const closing: number = line.indexOf('*/', cursor + 2);
+        const end: number = closing >= 0 ? closing + 2 : line.length;
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, 'comment', line.substring(cursor, end)));
+        cursor = end;
+        continue;
+      }
+
+      if (current === '"' || current === '\'' || current === '`') {
+        const end: number = this.findCodeStringEnd(line, cursor, current);
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, 'string', line.substring(cursor, end)));
+        cursor = end;
+        continue;
+      }
+
+      if (this.isCodeDigit(current)) {
+        const end: number = this.findCodeNumberEnd(line, cursor);
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, 'number', line.substring(cursor, end)));
+        cursor = end;
+        continue;
+      }
+
+      if (this.isCodeIdentifierStart(current)) {
+        const end: number = this.findCodeIdentifierEnd(line, cursor);
+        const word: string = line.substring(cursor, end);
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, this.codeIdentifierKind(word, lang), word));
+        cursor = end;
+        continue;
+      }
+
+      if (this.isCodeOperator(current)) {
+        let end: number = cursor + 1;
+        while (end < line.length && this.isCodeOperator(line[end])) {
+          end += 1;
+        }
+        tokens.push(new CodeToken(`${baseId}:${serial++}`, 'operator', line.substring(cursor, end)));
+        cursor = end;
+        continue;
+      }
+
+      tokens.push(new CodeToken(`${baseId}:${serial++}`, 'plain', current));
+      cursor += 1;
+    }
+
+    if (tokens.length === 0) {
+      tokens.push(new CodeToken(`${baseId}:empty`, 'plain', ' '));
+    }
+    return tokens;
+  }
+
+  private normalizeCodeLanguage(language: string): string {
+    const lang: string = language.trim().toLowerCase();
+    if (lang === 'c++' || lang === 'cpp' || lang === 'cc' || lang === 'cxx') {
+      return 'cpp';
+    }
+    if (lang === 'ts' || lang === 'tsx' || lang === 'typescript') {
+      return 'typescript';
+    }
+    if (lang === 'js' || lang === 'jsx' || lang === 'javascript') {
+      return 'javascript';
+    }
+    if (lang === 'py' || lang === 'python3') {
+      return 'python';
+    }
+    if (lang === 'sh' || lang === 'bash' || lang === 'zsh' || lang === 'powershell' || lang === 'ps1') {
+      return 'shell';
+    }
+    return lang;
+  }
+
+  private isCodeLineCommentStart(line: string, index: number, lang: string): boolean {
+    if (line.startsWith('//', index)) {
+      return lang !== 'python' && lang !== 'shell';
+    }
+    if (line.startsWith('%%', index)) {
+      return lang === 'mermaid';
+    }
+    if (line.startsWith('#', index)) {
+      return lang === 'python' || lang === 'shell' || lang === 'ruby' || lang === 'toml' || lang === 'yaml';
+    }
+    if (line.startsWith('--', index)) {
+      return lang === 'sql' || lang === 'lua';
+    }
+    return false;
+  }
+
+  private findCodeStringEnd(line: string, start: number, quote: string): number {
+    let cursor: number = start + 1;
+    while (cursor < line.length) {
+      if (line[cursor] === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (line[cursor] === quote) {
+        return cursor + 1;
+      }
+      cursor += 1;
+    }
+    return line.length;
+  }
+
+  private findCodeNumberEnd(line: string, start: number): number {
+    let cursor: number = start + 1;
+    while (cursor < line.length && /[A-Za-z0-9_.]/.test(line[cursor])) {
+      cursor += 1;
+    }
+    return cursor;
+  }
+
+  private findCodeIdentifierEnd(line: string, start: number): number {
+    let cursor: number = start + 1;
+    while (cursor < line.length && this.isCodeIdentifierPart(line[cursor])) {
+      cursor += 1;
+    }
+    return cursor;
+  }
+
+  private isCodeIdentifierStart(ch: string): boolean {
+    return /[A-Za-z_$]/.test(ch);
+  }
+
+  private isCodeIdentifierPart(ch: string): boolean {
+    return /[A-Za-z0-9_$]/.test(ch);
+  }
+
+  private isCodeDigit(ch: string): boolean {
+    return /[0-9]/.test(ch);
+  }
+
+  private isCodeOperator(ch: string): boolean {
+    return '+-*/%=!<>&|^~?:.'.indexOf(ch) >= 0;
+  }
+
+  private codeIdentifierKind(word: string, lang: string): string {
+    if (word === 'true' || word === 'false' || word === 'null' || word === 'undefined' || word === 'None' ||
+      word === 'nil' || word === 'nullptr') {
+      return 'literal';
+    }
+    if (this.isCodeKeyword(word, lang)) {
+      return 'keyword';
+    }
+    if (this.isCodeBuiltin(word, lang)) {
+      return 'builtin';
+    }
+    return 'plain';
+  }
+
+  private isCodeKeyword(word: string, lang: string): boolean {
+    const common: string = '|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|new|class|struct|enum|interface|extends|implements|public|private|protected|static|const|let|var|void|async|await|import|export|from|as|in|of|';
+    if (common.indexOf(`|${word}|`) >= 0) {
+      return true;
+    }
+    if (lang === 'c' || lang === 'cpp') {
+      return '|auto|char|double|float|int|long|short|signed|unsigned|sizeof|typedef|union|volatile|extern|register|inline|namespace|template|typename|using|virtual|override|include|define|'.indexOf(`|${word}|`) >= 0;
+    }
+    if (lang === 'python') {
+      return '|def|lambda|yield|with|pass|elif|global|nonlocal|assert|del|is|not|and|or|except|raise|'.indexOf(`|${word}|`) >= 0;
+    }
+    if (lang === 'rust') {
+      return '|fn|let|mut|impl|trait|pub|crate|mod|use|match|where|loop|move|ref|self|Self|super|unsafe|'.indexOf(`|${word}|`) >= 0;
+    }
+    if (lang === 'java' || lang === 'kotlin') {
+      return '|abstract|boolean|byte|char|double|final|float|int|long|native|package|short|strictfp|super|synchronized|this|throws|transient|volatile|'.indexOf(`|${word}|`) >= 0;
+    }
+    if (lang === 'css') {
+      return '|display|position|absolute|relative|fixed|flex|grid|block|inline|none|color|background|border|margin|padding|width|height|'.indexOf(`|${word}|`) >= 0;
+    }
+    if (lang === 'mermaid') {
+      return '|graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|stateDiagram-v2|erDiagram|journey|gantt|pie|mindmap|timeline|subgraph|end|participant|actor|as|title|section|TD|TB|BT|LR|RL|'.indexOf(`|${word}|`) >= 0;
+    }
+    return false;
+  }
+
+  private isCodeBuiltin(word: string, lang: string): boolean {
+    const common: string = '|String|Number|Boolean|Array|Object|Map|Set|Promise|Error|Date|Math|JSON|console|print|printf|scanf|main|';
+    if (common.indexOf(`|${word}|`) >= 0) {
+      return true;
+    }
+    if (lang === 'python') {
+      return '|str|int|float|bool|list|dict|set|tuple|len|range|open|enumerate|zip|sum|min|max|'.indexOf(`|${word}|`) >= 0;
+    }
+    if (lang === 'rust') {
+      return '|String|Vec|Option|Result|Some|None|Ok|Err|println|format|'.indexOf(`|${word}|`) >= 0;
+    }
+    return false;
+  }
+
+  private codeTokenColor(kind: string): string {
+    switch (kind) {
+      case 'keyword': return '#7C3AED';
+      case 'builtin': return '#0369A1';
+      case 'string': return '#15803D';
+      case 'number':
+      case 'literal': return '#B45309';
+      case 'comment': return '#64748B';
+      case 'operator': return '#BE123C';
+      default: return '#0F172A';
+    }
+  }
+
+  private codeTokenWeight(kind: string): FontWeight {
+    return kind === 'keyword' || kind === 'builtin' ? FontWeight.Medium : FontWeight.Regular;
+  }
+
+  private parseMermaidEdges(source: string): MermaidEdge[] {
+    const nodes: Map<string, MermaidNode> = new Map();
+    const edges: MermaidEdge[] = [];
+    const lines: string[] = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    let serial = 0;
+    for (let i = 0; i < lines.length; i++) {
+      let line: string = lines[i].trim();
+      if (line.length === 0 || line.startsWith('%%') || line.startsWith('flowchart ') || line.startsWith('graph ')) {
+        continue;
+      }
+      if (line.endsWith(';')) {
+        line = line.substring(0, line.length - 1);
+      }
+      const arrow: string = this.findMermaidArrow(line);
+      if (arrow.length === 0) {
+        const singleNode: MermaidNode | null = this.parseMermaidNode(line);
+        if (singleNode !== null && !nodes.has(singleNode.id)) {
+          nodes.set(singleNode.id, singleNode);
+        }
+        continue;
+      }
+      const parts: string[] = line.split(arrow);
+      if (parts.length < 2) {
+        continue;
+      }
+      const left: MermaidNode | null = this.parseMermaidNode(this.removeMermaidLeftLabel(parts[0].trim()));
+      const rightParts: string[] = parts.slice(1);
+      const rightRaw: string = rightParts.join(arrow).trim();
+      const label: string = this.extractMermaidEdgeLabel(line);
+      const right: MermaidNode | null = this.parseMermaidNode(this.removeMermaidEdgeLabel(rightRaw));
+      if (left === null || right === null) {
+        continue;
+      }
+      const from: MermaidNode = nodes.get(left.id) ?? left;
+      const to: MermaidNode = nodes.get(right.id) ?? right;
+      nodes.set(from.id, from);
+      nodes.set(to.id, to);
+      edges.push(new MermaidEdge(`edge-${serial++}`, from, to, label));
+    }
+    return edges;
+  }
+
+  private findMermaidArrow(line: string): string {
+    const arrows: string[] = ['-.->', '==>', '-->', '---'];
+    for (let i = 0; i < arrows.length; i++) {
+      if (line.indexOf(arrows[i]) >= 0) {
+        return arrows[i];
+      }
+    }
+    return '';
+  }
+
+  private parseMermaidNode(rawText: string): MermaidNode | null {
+    let text: string = this.removeMermaidEdgeLabel(rawText.trim());
+    if (text.length === 0) {
+      return null;
+    }
+    const match: RegExpMatchArray | null = text.match(/^([A-Za-z0-9_]+)\s*(?:\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\))?$/);
+    if (match === null) {
+      const fallback: string = text.replace(/[^A-Za-z0-9_]/g, '');
+      if (fallback.length === 0) {
+        return null;
+      }
+      return new MermaidNode(fallback, text, 'rect');
+    }
+    const label: string = match[2] ?? match[3] ?? match[4] ?? match[1];
+    const shape: string = match[3] !== undefined ? 'diamond' : (match[4] !== undefined ? 'round' : 'rect');
+    return new MermaidNode(match[1], label, shape);
+  }
+
+  private extractMermaidEdgeLabel(line: string): string {
+    const pipeMatch: RegExpMatchArray | null = line.match(/\|([^|]+)\|/);
+    if (pipeMatch !== null) {
+      return pipeMatch[1].trim();
+    }
+    const labelMatch: RegExpMatchArray | null = line.match(/--\s*([^-]+?)\s*-->/);
+    return labelMatch !== null ? labelMatch[1].trim() : '';
+  }
+
+  private removeMermaidLeftLabel(text: string): string {
+    const dashLabel: number = text.lastIndexOf('--');
+    if (dashLabel > 0) {
+      return text.substring(0, dashLabel).trim();
+    }
+    const equalLabel: number = text.lastIndexOf('==');
+    if (equalLabel > 0) {
+      return text.substring(0, equalLabel).trim();
+    }
+    return text;
+  }
+
+  private removeMermaidEdgeLabel(text: string): string {
+    let result: string = text.trim();
+    if (result.startsWith('|')) {
+      const closing: number = result.indexOf('|', 1);
+      if (closing > 0) {
+        result = result.substring(closing + 1).trim();
+      }
+    }
+    return result.replace(/\|[^|]+\|/g, '').trim();
+  }
+
+  private normalizeInlineMarkdownText(text: string): string {
+    let result: string = text;
+    result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '图片: $1');
+    result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+    result = result.replace(/\*\*([^*]+)\*\*/g, '$1');
+    result = result.replace(/__([^_]+)__/g, '$1');
+    result = result.replace(/`([^`]+)`/g, '$1');
+    return result;
+  }
+
+  private inlineMarkdownText(text: string): string {
+    const segments: MathSegment[] = this.inlineMarkdownSegments(text, 'plain');
+    let result: string = '';
+    for (let i = 0; i < segments.length; i++) {
+      result += segments[i].kind === 'math' ? segments[i].rawText : segments[i].text;
+    }
+    return result;
+  }
+
+  private inlineMarkdownSegments(text: string, baseId: string): MathSegment[] {
+    const segments: MathSegment[] = [];
+    let cursor: number = 0;
+    let serial: number = 0;
+
+    while (cursor < text.length) {
+      const dollarStart: number = this.findInlineDollarStart(text, cursor);
+      const parenStart: number = text.indexOf('\\(', cursor);
+      let start: number = -1;
+      let kind: string = '';
+
+      if (dollarStart >= 0 && (parenStart < 0 || dollarStart < parenStart)) {
+        start = dollarStart;
+        kind = 'dollar';
+      } else if (parenStart >= 0) {
+        start = parenStart;
+        kind = 'paren';
+      }
+
+      if (start < 0) {
+        serial = this.pushInlineMarkdownTextSegments(segments, text.substring(cursor), baseId, serial);
+        break;
+      }
+
+      if (start > cursor) {
+        serial = this.pushInlineMarkdownTextSegments(segments, text.substring(cursor, start), baseId, serial);
+      }
+
+      if (kind === 'dollar') {
+        const end: number = this.findInlineDollarEnd(text, start + 1);
+        if (end < 0) {
+          serial = this.pushInlineMarkdownTextSegments(segments, text.substring(start), baseId, serial);
+          break;
+        }
+        const expr: string = text.substring(start + 1, end);
+        const raw: string = text.substring(start, end + 1);
+        if (expr.indexOf('\n') >= 0 || expr.trim().length === 0) {
+          serial = this.pushInlineMarkdownTextSegments(segments, raw, baseId, serial);
+        } else {
+          this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:math:${serial++}`, 'math', expr.trim(), raw));
+        }
+        cursor = end + 1;
+        continue;
+      }
+
+      const parenEnd: number = text.indexOf('\\)', start + 2);
+      if (parenEnd < 0) {
+        serial = this.pushInlineMarkdownTextSegments(segments, text.substring(start), baseId, serial);
+        break;
+      }
+      const expr: string = text.substring(start + 2, parenEnd);
+      const raw: string = text.substring(start, parenEnd + 2);
+      if (expr.indexOf('\n') >= 0 || expr.trim().length === 0) {
+        serial = this.pushInlineMarkdownTextSegments(segments, raw, baseId, serial);
+      } else {
+        this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:math:${serial++}`, 'math', expr.trim(), raw));
+      }
+      cursor = parenEnd + 2;
+    }
+
+    if (segments.length === 0) {
+      segments.push(new MathSegment(`${baseId}:text:0`, 'text', this.normalizeInlineMarkdownText(text)));
+    }
+    return segments;
+  }
+
+  private pushInlineMarkdownTextSegments(segments: MathSegment[], text: string, baseId: string, serial: number): number {
+    let cursor: number = 0;
+    while (cursor < text.length) {
+      let next: number = text.length;
+      let kind: string = '';
+      const codeStart: number = text.indexOf('`', cursor);
+      if (codeStart >= 0 && codeStart < next) {
+        next = codeStart;
+        kind = 'code';
+      }
+      const strongStarStart: number = text.indexOf('**', cursor);
+      if (strongStarStart >= 0 && strongStarStart < next) {
+        next = strongStarStart;
+        kind = 'strong-star';
+      }
+      const strongUnderlineStart: number = text.indexOf('__', cursor);
+      if (strongUnderlineStart >= 0 && strongUnderlineStart < next) {
+        next = strongUnderlineStart;
+        kind = 'strong-underline';
+      }
+      const imageStart: number = text.indexOf('![', cursor);
+      if (imageStart >= 0 && imageStart < next) {
+        next = imageStart;
+        kind = 'image';
+      }
+      const linkStart: number = text.indexOf('[', cursor);
+      if (linkStart >= 0 && linkStart < next) {
+        next = linkStart;
+        kind = 'link';
+      }
+
+      if (next > cursor) {
+        this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:text:${serial++}`, 'text', text.substring(cursor, next)));
+      }
+      if (kind.length === 0) {
+        break;
+      }
+
+      if (kind === 'code') {
+        const end: number = text.indexOf('`', next + 1);
+        if (end > next + 1) {
+          this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:code:${serial++}`, 'code', text.substring(next + 1, end), text.substring(next, end + 1)));
+          cursor = end + 1;
+          continue;
+        }
+      } else if (kind === 'strong-star') {
+        const end: number = text.indexOf('**', next + 2);
+        if (end > next + 2) {
+          this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:strong:${serial++}`, 'strong', text.substring(next + 2, end), text.substring(next, end + 2)));
+          cursor = end + 2;
+          continue;
+        }
+      } else if (kind === 'strong-underline') {
+        const end: number = text.indexOf('__', next + 2);
+        if (end > next + 2) {
+          this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:strong:${serial++}`, 'strong', text.substring(next + 2, end), text.substring(next, end + 2)));
+          cursor = end + 2;
+          continue;
+        }
+      } else if (kind === 'image' || kind === 'link') {
+        const parsedEnd: number = this.pushInlineMarkdownLinkSegment(segments, text, next, baseId, serial, kind === 'image');
+        if (parsedEnd > next) {
+          serial += 1;
+          cursor = parsedEnd;
+          continue;
+        }
+      }
+
+      this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:text:${serial++}`, 'text', text[next]));
+      cursor = next + 1;
+    }
+    return serial;
+  }
+
+  private pushInlineMarkdownLinkSegment(segments: MathSegment[], text: string, start: number, baseId: string, serial: number, image: boolean): number {
+    const labelStart: number = image ? start + 2 : start + 1;
+    const labelEnd: number = text.indexOf(']', labelStart);
+    if (labelEnd <= labelStart || labelEnd + 1 >= text.length || text[labelEnd + 1] !== '(') {
+      return -1;
+    }
+    const urlEnd: number = text.indexOf(')', labelEnd + 2);
+    if (urlEnd <= labelEnd + 2) {
+      return -1;
+    }
+    const label: string = text.substring(labelStart, labelEnd).trim();
+    const url: string = text.substring(labelEnd + 2, urlEnd).trim();
+    const display: string = image ? (label.length > 0 ? `图片: ${label}` : '图片') : (label.length > 0 ? label : url);
+    this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:link:${serial}`, 'link', display, text.substring(start, urlEnd + 1)));
+    return urlEnd + 1;
+  }
+
+  private pushInlineMarkdownSegment(segments: MathSegment[], segment: MathSegment): void {
+    if (segment.text.length === 0) {
+      return;
+    }
+    if (segment.kind === 'text' && segments.length > 0 && segments[segments.length - 1].kind === 'text') {
+      const previous: MathSegment = segments[segments.length - 1];
+      previous.text += segment.text;
+      previous.rawText += segment.rawText;
+      return;
+    }
+    segments.push(segment);
+  }
+
+  private findInlineDollarStart(text: string, cursor: number): number {
+    for (let i = cursor; i < text.length; i++) {
+      if (text[i] !== '$') {
+        continue;
+      }
+      if (i > 0 && text[i - 1] === '\\') {
+        continue;
+      }
+      if (i + 1 < text.length && text[i + 1] === '$') {
+        continue;
+      }
+      return i;
+    }
+    return -1;
+  }
+
+  private findInlineDollarEnd(text: string, cursor: number): number {
+    for (let i = cursor; i < text.length; i++) {
+      if (text[i] !== '$') {
+        continue;
+      }
+      if (i > 0 && text[i - 1] === '\\') {
+        continue;
+      }
+      if (i + 1 < text.length && text[i + 1] === '$') {
+        continue;
+      }
+      return i;
+    }
+    return -1;
+  }
+
+  private mathBlockLines(text: string): string[] {
+    const normalized: string = this.normalizeFormulaSource(text).replace(/\\\\/g, '\n');
+    const rawLines: string[] = normalized.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const lines: string[] = [];
+    for (let i = 0; i < rawLines.length; i++) {
+      const line: string = rawLines[i].replace(/&/g, ' ').trim();
+      if (line.length > 0) {
+        lines.push(line);
+      }
+    }
+    if (lines.length > 0) {
+      return lines;
+    }
+    const fallback: string = normalized.trim();
+    return fallback.length > 0 ? [fallback] : ['0'];
+  }
+
+  private normalizeFormulaSource(text: string): string {
+    let result: string = text.trim();
+    if (result.startsWith('$$') && result.endsWith('$$') && result.length > 4) {
+      result = result.substring(2, result.length - 2).trim();
+    } else if (result.startsWith('\\[') && result.endsWith('\\]') && result.length > 4) {
+      result = result.substring(2, result.length - 2).trim();
+    } else if (result.startsWith('\\(') && result.endsWith('\\)') && result.length > 4) {
+      result = result.substring(2, result.length - 2).trim();
+    } else if (result.startsWith('$') && result.endsWith('$') && result.length > 2) {
+      result = result.substring(1, result.length - 1).trim();
+    }
+    result = result.replace(/\\begin\{[^{}]+\}/g, '');
+    result = result.replace(/\\end\{[^{}]+\}/g, '');
+    result = result.replace(/\\left/g, '');
+    result = result.replace(/\\right/g, '');
+    result = result.replace(/\\,/g, ' ');
+    result = result.replace(/\\;/g, ' ');
+    result = result.replace(/\\:/g, ' ');
+    result = result.replace(/\\!/g, '');
+    return result.trim();
+  }
+
+  private parseFormula(text: string): FormulaNode {
+    const parsed: FormulaParseResult = this.parseFormulaSequence(this.normalizeFormulaSource(text), 0, '');
+    return parsed.node;
+  }
+
+  private parseFormulaSequence(source: string, index: number, stopChar: string): FormulaParseResult {
+    const children: FormulaNode[] = [];
+    let cursor: number = index;
+
+    while (cursor < source.length) {
+      if (stopChar.length > 0 && source[cursor] === stopChar) {
+        cursor += 1;
+        break;
+      }
+      if (source[cursor] === '}') {
+        break;
+      }
+      if (source[cursor] === ' ' || source[cursor] === '\t') {
+        this.pushFormulaChild(children, new FormulaNode('text', ' '));
+        cursor += 1;
+        continue;
+      }
+      if (source[cursor] === '/') {
+        const numeratorIndex: number = this.findFormulaFractionNumeratorIndex(children);
+        if (numeratorIndex >= 0) {
+          const denominatorCursor: number = this.skipFormulaWhitespace(source, cursor + 1);
+          const denominator: FormulaParseResult = this.parseFormulaOperand(source, denominatorCursor);
+          if (!(denominator.node.kind === 'text' && denominator.node.text.length === 0 && denominator.nextIndex === denominatorCursor)) {
+            const numeratorNodes: FormulaNode[] = children.splice(numeratorIndex, children.length - numeratorIndex);
+            const fraction: FormulaNode = new FormulaNode('fraction');
+            fraction.numerator = numeratorNodes[0];
+            fraction.denominator = denominator.node;
+            this.pushFormulaChild(children, fraction);
+            cursor = denominator.nextIndex;
+            continue;
+          }
+        }
+      }
+      const operand: FormulaParseResult = this.parseFormulaOperand(source, cursor);
+      this.pushFormulaChild(children, operand.node);
+      cursor = operand.nextIndex;
+    }
+
+    if (children.length === 0) {
+      return new FormulaParseResult(new FormulaNode('text', ''), cursor);
+    }
+    if (children.length === 1) {
+      return new FormulaParseResult(children[0], cursor);
+    }
+    return new FormulaParseResult(new FormulaNode('sequence', '', children), cursor);
+  }
+
+  private parseFormulaOperand(source: string, index: number): FormulaParseResult {
+    const atom: FormulaParseResult = this.parseFormulaAtom(source, index);
+    let node: FormulaNode = atom.node;
+    let cursor: number = atom.nextIndex;
+    let superscript: FormulaNode | null = null;
+    let subscript: FormulaNode | null = null;
+
+    while (cursor < source.length && (source[cursor] === '^' || source[cursor] === '_')) {
+      const operator: string = source[cursor];
+      const operand: FormulaParseResult = this.parseFormulaScriptOperand(source, cursor + 1);
+      cursor = operand.nextIndex;
+      if (operator === '^') {
+        superscript = operand.node;
+      } else {
+        subscript = operand.node;
+      }
+    }
+
+    if (superscript !== null || subscript !== null) {
+      const scriptNode: FormulaNode = new FormulaNode('script');
+      scriptNode.base = node;
+      scriptNode.superscript = superscript;
+      scriptNode.subscript = subscript;
+      node = scriptNode;
+    }
+
+    return new FormulaParseResult(node, cursor);
+  }
+
+  private parseFormulaScriptOperand(source: string, index: number): FormulaParseResult {
+    if (index >= source.length) {
+      return new FormulaParseResult(new FormulaNode('text', ''), index);
+    }
+    if (source[index] === '{') {
+      return this.parseFormulaSequence(source, index + 1, '}');
+    }
+    return this.parseFormulaAtom(source, index);
+  }
+
+  private parseFormulaAtom(source: string, index: number): FormulaParseResult {
+    if (index >= source.length) {
+      return new FormulaParseResult(new FormulaNode('text', ''), index);
+    }
+
+    const current: string = source[index];
+    if (current === '{') {
+      return this.parseFormulaSequence(source, index + 1, '}');
+    }
+    if (current === '(') {
+      return this.parseFormulaDelimitedGroup(source, index, ')', '()');
+    }
+    if (current === '[') {
+      return this.parseFormulaDelimitedGroup(source, index, ']', '[]');
+    }
+
+    if (current === '\\') {
+      if (index + 1 >= source.length) {
+        return new FormulaParseResult(new FormulaNode('text', '\\'), index + 1);
+      }
+
+      if (source[index + 1] === '\\') {
+        return new FormulaParseResult(new FormulaNode('text', ' '), index + 2);
+      }
+
+      let cursor: number = index + 1;
+      while (cursor < source.length && this.isFormulaLetter(source[cursor])) {
+        cursor += 1;
+      }
+
+      if (cursor === index + 1) {
+        return new FormulaParseResult(new FormulaNode('text', source[index + 1]), index + 2);
+      }
+
+      const command: string = source.substring(index + 1, cursor);
+      if (command === 'frac' || command === 'dfrac' || command === 'tfrac') {
+        const numerator: FormulaParseResult = this.parseFormulaScriptOperand(source, cursor);
+        const denominator: FormulaParseResult = this.parseFormulaScriptOperand(source, numerator.nextIndex);
+        const fraction: FormulaNode = new FormulaNode('fraction');
+        fraction.numerator = numerator.node;
+        fraction.denominator = denominator.node;
+        return new FormulaParseResult(fraction, denominator.nextIndex);
+      }
+
+      if (command === 'sqrt') {
+        let nextIndex: number = cursor;
+        if (nextIndex < source.length && source[nextIndex] === '[') {
+          nextIndex += 1;
+          while (nextIndex < source.length && source[nextIndex] !== ']') {
+            nextIndex += 1;
+          }
+          if (nextIndex < source.length) {
+            nextIndex += 1;
+          }
+        }
+        const radicand: FormulaParseResult = this.parseFormulaScriptOperand(source, nextIndex);
+        const sqrtNode: FormulaNode = new FormulaNode('sqrt');
+        sqrtNode.radicand = radicand.node;
+        return new FormulaParseResult(sqrtNode, radicand.nextIndex);
+      }
+
+      if (command === 'text' || command === 'mathrm' || command === 'operatorname' || command === 'mathbf' ||
+        command === 'mathit' || command === 'mathbb' || command === 'mathcal' || command === 'mathsf' || command === 'mathtt') {
+        return this.parseFormulaTextGroup(source, cursor, command === 'mathit' ? 'italic' : 'roman');
+      }
+
+      if (command === 'displaystyle' || command === 'textstyle' || command === 'limits' || command === 'nolimits') {
+        return new FormulaParseResult(new FormulaNode('text', ''), cursor);
+      }
+
+      if (this.isFormulaSpacingCommand(command)) {
+        return new FormulaParseResult(new FormulaNode('space', command), cursor);
+      }
+
+      const mapped: string = this.formulaCommandText(command);
+      if (mapped.length > 0) {
+        return new FormulaParseResult(
+          new FormulaNode(this.isFormulaOperatorCommand(command) ? 'operator' : 'text', mapped, [], this.isFormulaOperatorCommand(command) ? 'roman' : 'italic'),
+          cursor
+        );
+      }
+
+      return new FormulaParseResult(new FormulaNode('text', command), cursor);
+    }
+
+    if (this.isFormulaLetter(current)) {
+      let cursor: number = index + 1;
+      while (cursor < source.length && this.isFormulaLetter(source[cursor])) {
+        cursor += 1;
+      }
+      return new FormulaParseResult(new FormulaNode('text', source.substring(index, cursor), [], 'italic'), cursor);
+    }
+
+    if (this.isFormulaDigit(current)) {
+      let cursor: number = index + 1;
+      while (cursor < source.length && this.isFormulaDigit(source[cursor])) {
+        cursor += 1;
+      }
+      return new FormulaParseResult(new FormulaNode('number', source.substring(index, cursor), [], 'roman'), cursor);
+    }
+
+    return new FormulaParseResult(
+      new FormulaNode(this.isFormulaOperatorChar(current) || this.isFormulaPunctuationChar(current) ? 'operator' : 'text', current, [], 'roman'),
+      index + 1
+    );
+  }
+
+  private pushFormulaChild(children: FormulaNode[], node: FormulaNode): void {
+    if (node.kind === 'text' && node.text.length === 0) {
+      return;
+    }
+    if (children.length > 0 && children[children.length - 1].kind === node.kind && children[children.length - 1].variant === node.variant &&
+      (node.kind === 'text' || node.kind === 'number' || node.kind === 'operator')) {
+      children[children.length - 1].text += node.text;
+      return;
+    }
+    children.push(node);
+  }
+
+  private parseFormulaTextGroup(source: string, index: number, variant: string): FormulaParseResult {
+    if (index >= source.length || source[index] !== '{') {
+      return this.parseFormulaScriptOperand(source, index);
+    }
+    let cursor: number = index + 1;
+    let depth: number = 1;
+    let result: string = '';
+    while (cursor < source.length && depth > 0) {
+      if (source[cursor] === '{') {
+        depth += 1;
+        result += source[cursor];
+        cursor += 1;
+        continue;
+      }
+      if (source[cursor] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          cursor += 1;
+          break;
+        }
+        result += source[cursor];
+        cursor += 1;
+        continue;
+      }
+      result += source[cursor];
+      cursor += 1;
+    }
+    return new FormulaParseResult(new FormulaNode('text', result, [], variant), cursor);
+  }
+
+  private parseFormulaDelimitedGroup(source: string, index: number, closingChar: string, delimiter: string): FormulaParseResult {
+    const inner: FormulaParseResult = this.parseFormulaSequence(source, index + 1, closingChar);
+    return new FormulaParseResult(new FormulaNode('group', delimiter, [inner.node]), inner.nextIndex);
+  }
+
+  private skipFormulaWhitespace(source: string, index: number): number {
+    let cursor: number = index;
+    while (cursor < source.length && (source[cursor] === ' ' || source[cursor] === '\t')) {
+      cursor += 1;
+    }
+    return cursor;
+  }
+
+  private findFormulaFractionNumeratorIndex(children: FormulaNode[]): number {
+    let index: number = children.length - 1;
+    while (index >= 0 && this.isFormulaSpaceNode(children[index])) {
+      index -= 1;
+    }
+    if (index < 0) {
+      return -1;
+    }
+    return this.isFormulaFractionCandidate(children[index]) ? index : -1;
+  }
+
+  private isFormulaSpaceNode(node: FormulaNode): boolean {
+    return node.kind === 'text' && node.text === ' ';
+  }
+
+  private isFormulaFractionCandidate(node: FormulaNode): boolean {
+    if (node.kind === 'text' || node.kind === 'number' || node.kind === 'sequence' || node.kind === 'group' ||
+      node.kind === 'fraction' || node.kind === 'sqrt' || node.kind === 'script') {
+      return true;
+    }
+    if (node.kind === 'operator') {
+      return node.text.length > 1 || '+-=<>*/'.indexOf(node.text) < 0;
+    }
+    return false;
+  }
+
+  private isFormulaLetter(ch: string): boolean {
+    return /[A-Za-z]/.test(ch);
+  }
+
+  private isFormulaDigit(ch: string): boolean {
+    return /[0-9]/.test(ch);
+  }
+
+  private isFormulaOperatorChar(ch: string): boolean {
+    return '+-=<>*/'.indexOf(ch) >= 0;
+  }
+
+  private isFormulaPunctuationChar(ch: string): boolean {
+    return '()[]{}|,.;:!'.indexOf(ch) >= 0;
+  }
+
+  private isFormulaSpacingCommand(command: string): boolean {
+    return command === 'quad' || command === 'qquad';
+  }
+
+  private isFormulaOperatorCommand(command: string): boolean {
+    return command === 'sum' ||
+      command === 'prod' ||
+      command === 'int' ||
+      command === 'times' ||
+      command === 'cdot' ||
+      command === 'pm' ||
+      command === 'mp' ||
+      command === 'leq' ||
+      command === 'le' ||
+      command === 'geq' ||
+      command === 'ge' ||
+      command === 'neq' ||
+      command === 'approx' ||
+      command === 'mid' ||
+      command === 'cap' ||
+      command === 'cup' ||
+      command === 'in' ||
+      command === 'notin' ||
+      command === 'to' ||
+      command === 'rightarrow' ||
+      command === 'leftarrow' ||
+      command === 'mapsto' ||
+      command === 'sin' ||
+      command === 'cos' ||
+      command === 'tan' ||
+      command === 'log' ||
+      command === 'ln' ||
+      command === 'max' ||
+      command === 'min' ||
+      command === 'exp';
+  }
+
+  private formulaCommandText(command: string): string {
+    switch (command) {
+      case 'alpha': return 'α';
+      case 'beta': return 'β';
+      case 'gamma': return 'γ';
+      case 'delta': return 'δ';
+      case 'epsilon':
+      case 'varepsilon': return 'ε';
+      case 'theta':
+      case 'vartheta': return 'θ';
+      case 'lambda': return 'λ';
+      case 'mu': return 'μ';
+      case 'pi': return 'π';
+      case 'sigma': return 'σ';
+      case 'phi':
+      case 'varphi': return 'φ';
+      case 'omega': return 'ω';
+      case 'Gamma': return 'Γ';
+      case 'Delta': return 'Δ';
+      case 'Theta': return 'Θ';
+      case 'Lambda': return 'Λ';
+      case 'Pi': return 'Π';
+      case 'Sigma': return 'Σ';
+      case 'Phi': return 'Φ';
+      case 'Omega': return 'Ω';
+      case 'sum': return '∑';
+      case 'prod': return '∏';
+      case 'int': return '∫';
+      case 'infty': return '∞';
+      case 'times': return '×';
+      case 'cdot': return '·';
+      case 'pm': return '±';
+      case 'mp': return '∓';
+      case 'neq': return '≠';
+      case 'approx': return '≈';
+      case 'mid': return '|';
+      case 'cap': return '∩';
+      case 'cup': return '∪';
+      case 'in': return '∈';
+      case 'notin': return '∉';
+      case 'le':
+      case 'leq': return '≤';
+      case 'ge':
+      case 'geq': return '≥';
+      case 'to':
+      case 'rightarrow': return '→';
+      case 'leftarrow': return '←';
+      case 'mapsto': return '↦';
+      case 'cdots': return '⋯';
+      case 'ldots': return '…';
+      case 'sin':
+      case 'cos':
+      case 'tan':
+      case 'log':
+      case 'ln':
+      case 'max':
+      case 'min':
+      case 'exp': return command;
+      default: return '';
+    }
+  }
+
+  private renderInlineMath(text: string): string {
+    let result: string = '';
+    let cursor: number = 0;
+    while (cursor < text.length) {
+      const start: number = this.findInlineDollarStart(text, cursor);
+      if (start < 0) {
+        result += text.substring(cursor);
+        break;
+      }
+      const end: number = this.findInlineDollarEnd(text, start + 1);
+      if (end < 0) {
+        result += text.substring(cursor);
+        break;
+      }
+      const expr: string = text.substring(start + 1, end);
+      if (expr.indexOf('\n') >= 0 || expr.trim().length === 0) {
+        result += text.substring(cursor, end + 1);
+      } else {
+        result += text.substring(cursor, start) + this.renderMathText(expr);
+      }
+      cursor = end + 1;
+    }
+    return result;
+  }
+
+  private renderInlineParenMath(text: string): string {
+    let result: string = '';
+    let cursor: number = 0;
+    while (cursor < text.length) {
+      const start: number = text.indexOf('\\(', cursor);
+      if (start < 0) {
+        result += text.substring(cursor);
+        break;
+      }
+      const end: number = text.indexOf('\\)', start + 2);
+      if (end < 0) {
+        result += text.substring(cursor);
+        break;
+      }
+      const expr: string = text.substring(start + 2, end);
+      if (expr.indexOf('\n') >= 0 || expr.trim().length === 0) {
+        result += text.substring(cursor, end + 2);
+      } else {
+        result += text.substring(cursor, start) + this.renderMathText(expr);
+      }
+      cursor = end + 2;
+    }
+    return result;
+  }
+
+  private renderMathText(text: string): string {
+    let result: string = text.trim();
+    let previous: string = '';
+    while (previous !== result) {
+      previous = result;
+      result = result.replace(/\\begin\{[^{}]+\}/g, '');
+      result = result.replace(/\\end\{[^{}]+\}/g, '');
+      result = result.replace(/\\operatorname\{([^{}]+)\}/g, '$1');
+      result = result.replace(/\\mathrm\{([^{}]+)\}/g, '$1');
+      result = result.replace(/\\text\{([^{}]+)\}/g, '$1');
+      result = result.replace(/\\left/g, '');
+      result = result.replace(/\\right/g, '');
+      result = result.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1)/($2)');
+      result = result.replace(/\\sqrt\{([^{}]+)\}/g, '√($1)');
+    }
+    result = result.replace(/\\\\/g, '\n');
+    result = result.replace(/\s*&\s*/g, '  ');
+    result = result.replace(/\\qquad/g, '    ');
+    result = result.replace(/\\quad/g, '  ');
+    result = result.replace(/\\,/g, ' ');
+    result = result.replace(/\\;/g, ' ');
+    result = result.replace(/\\:/g, ' ');
+    result = result.replace(/\\!/g, '');
+    result = result.replace(/\\sum/g, 'Σ');
+    result = result.replace(/\\int/g, '∫');
+    result = result.replace(/\\prod/g, 'Π');
+    result = result.replace(/\\to/g, '→');
+    result = result.replace(/\\mapsto/g, '↦');
+    result = result.replace(/\\cdots/g, '⋯');
+    result = result.replace(/\\ldots/g, '…');
+    result = result.replace(/\\times/g, '×');
+    result = result.replace(/\\cdot/g, '·');
+    result = result.replace(/\\leq?/g, '≤');
+    result = result.replace(/\\geq?/g, '≥');
+    result = result.replace(/\\neq/g, '≠');
+    result = result.replace(/\\approx/g, '≈');
+    result = result.replace(/\\rightarrow/g, '→');
+    result = result.replace(/\\leftarrow/g, '←');
+    result = result.replace(/\\alpha/g, 'α');
+    result = result.replace(/\\beta/g, 'β');
+    result = result.replace(/\\gamma/g, 'γ');
+    result = result.replace(/\\delta/g, 'δ');
+    result = result.replace(/\\lambda/g, 'λ');
+    result = result.replace(/\\mu/g, 'μ');
+    result = result.replace(/\\pi/g, 'π');
+    result = result.replace(/\\sigma/g, 'σ');
+    result = result.replace(/\\theta/g, 'θ');
+    result = result.replace(/\\infty/g, '∞');
+    result = result.replace(/\^\{([^{}]+)\}/g, (_match: string, expr: string): string => this.renderMathSuperscript(expr));
+    result = result.replace(/\^([A-Za-z0-9+\-=()])/g, (_match: string, expr: string): string => this.renderMathSuperscript(expr));
+    result = result.replace(/_\{([^{}]+)\}/g, (_match: string, expr: string): string => this.renderMathSubscript(expr));
+    result = result.replace(/_([A-Za-z0-9+\-=()])/g, (_match: string, expr: string): string => this.renderMathSubscript(expr));
+    result = result.replace(/[ \t]+\n/g, '\n');
+    result = result.replace(/\n[ \t]+/g, '\n');
+    return result;
+  }
+
+  private renderMathSuperscript(text: string): string {
+    const map: Record<string, string> = {
+      '0': '⁰',
+      '1': '¹',
+      '2': '²',
+      '3': '³',
+      '4': '⁴',
+      '5': '⁵',
+      '6': '⁶',
+      '7': '⁷',
+      '8': '⁸',
+      '9': '⁹',
+      '+': '⁺',
+      '-': '⁻',
+      '=': '⁼',
+      '(': '⁽',
+      ')': '⁾',
+      'n': 'ⁿ',
+      'i': 'ⁱ'
+    };
+    let result: string = '';
+    const source: string = text.trim();
+    for (let i = 0; i < source.length; i++) {
+      const mapped: string | undefined = map[source[i]];
+      if (mapped === undefined) {
+        return `^(${source})`;
+      }
+      result += mapped;
+    }
+    return result;
+  }
+
+  private renderMathSubscript(text: string): string {
+    const map: Record<string, string> = {
+      '0': '₀',
+      '1': '₁',
+      '2': '₂',
+      '3': '₃',
+      '4': '₄',
+      '5': '₅',
+      '6': '₆',
+      '7': '₇',
+      '8': '₈',
+      '9': '₉',
+      '+': '₊',
+      '-': '₋',
+      '=': '₌',
+      '(': '₍',
+      ')': '₎',
+      'a': 'ₐ',
+      'e': 'ₑ',
+      'h': 'ₕ',
+      'i': 'ᵢ',
+      'j': 'ⱼ',
+      'k': 'ₖ',
+      'l': 'ₗ',
+      'm': 'ₘ',
+      'n': 'ₙ',
+      'o': 'ₒ',
+      'p': 'ₚ',
+      'r': 'ᵣ',
+      's': 'ₛ',
+      't': 'ₜ',
+      'u': 'ᵤ',
+      'v': 'ᵥ',
+      'x': 'ₓ'
+    };
+    let result: string = '';
+    const source: string = text.trim();
+    for (let i = 0; i < source.length; i++) {
+      const mapped: string | undefined = map[source[i]];
+      if (mapped === undefined) {
+        return `_(${source})`;
+      }
+      result += mapped;
+    }
+    return result;
+  }
+
+  private mathDisplayLines(text: string): string[] {
+    const lines: string[] = this.renderMathText(text)
+      .split('\n')
+      .map((line: string): string => line.trim())
+      .filter((line: string): boolean => line.length > 0);
+    if (lines.length > 0) {
+      return lines;
+    }
+    const fallback: string = this.renderMathText(text).trim();
+    return fallback.length > 0 ? [fallback] : ['0'];
+  }
+
+  private fencedCodeSource(language: string, code: string): string {
+    const info: string = language.trim();
+    if (info.length > 0) {
+      return `\`\`\`${info}\n${code}\n\`\`\``;
+    }
+    return `\`\`\`\n${code}\n\`\`\``;
+  }
+
+  private wrappedMathSource(opening: string, closing: string, body: string): string {
+    if (body.indexOf('\n') >= 0) {
+      return `${opening}\n${body}\n${closing}`;
+    }
+    return `${opening}${body}${closing}`;
+  }
+
+  private mermaidDirection(source: string): string {
+    const match: RegExpMatchArray | null = source.match(/(?:flowchart|graph)\s+(TD|TB|BT|LR|RL)/i);
+    return match !== null ? match[1].toUpperCase() : 'LR';
+  }
+
+  private isVerticalMermaid(source: string): boolean {
+    const direction: string = this.mermaidDirection(source);
+    return direction === 'TD' || direction === 'TB' || direction === 'BT';
+  }
+
+  private mermaidArrowSymbol(source: string): string {
+    const direction: string = this.mermaidDirection(source);
+    if (direction === 'TD' || direction === 'TB') {
+      return '↓';
+    }
+    if (direction === 'BT') {
+      return '↑';
+    }
+    if (direction === 'RL') {
+      return '←';
+    }
+    return '→';
+  }
+
+  private markdownHeadingFontSize(level: number): number {
+    if (level <= 1) {
+      return 18;
+    }
+    if (level === 2) {
+      return 16;
+    }
+    if (level === 3) {
+      return 14;
+    }
+    return 13;
+  }
+
+  private markdownHeadingLineHeight(level: number): number {
+    if (level <= 1) {
+      return 26;
+    }
+    if (level === 2) {
+      return 24;
+    }
+    return 21;
+  }
+
+  private markdownListMarker(line: string): string {
+    const ordered: RegExpMatchArray | null = line.match(/^(\d+)\.\s+.+$/);
+    if (ordered !== null) {
+      return `${ordered[1]}.`;
+    }
+    return '•';
+  }
+
+  private markdownListText(line: string): string {
+    return line.replace(/^([-*+])\s+/, '').replace(/^\d+\.\s+/, '');
+  }
+
   private messageIcon(itemType?: string): string {
     switch (itemType) {
       case 'reasoning':
