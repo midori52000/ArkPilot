@@ -173,7 +173,7 @@ struct Index {
   @State private recentWorkspaces: WorkspaceItem[] = [];
   @State private directoryFilter: string = '';
   @State private directoryFilterText: string = '使用默认工作区';
-  @State private draft: string = '检查当前工作目录，并说明需要我批准的操作。';
+  @State private draft: string = '';
   private savedDraft: string = '';
   @State private pendingApproval: CodexApprovalRequest | null = null;
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
@@ -1553,9 +1553,154 @@ struct Index {
     this.syncRecentWorkspaces();
     this.refreshWorkspaceBindingState();
     this.syncCurrentWorkspaceState();
-    this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
     this.persistWorkspaceBindings();
     await this.loadSelectedWorkspaceHistory();
+  }
+
+  private lastConversationMessage(): ChatMessage | null {
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const item: ChatMessage = this.messages[index];
+      const content: string = item.content.trim();
+      if (content.length === 0 || item.id === 'welcome-1') {
+        continue;
+      }
+      if (item.role === 'user' || item.role === 'assistant' || item.role === 'agent') {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  private hasFailureSignal(text: string): boolean {
+    const lowerText: string = text.toLowerCase();
+    return lowerText.indexOf('失败') >= 0 ||
+      lowerText.indexOf('错误') >= 0 ||
+      lowerText.indexOf('异常') >= 0 ||
+      lowerText.indexOf('error') >= 0 ||
+      lowerText.indexOf('failed') >= 0 ||
+      lowerText.indexOf('exception') >= 0;
+  }
+
+  private hasChoiceSignal(text: string): boolean {
+    return text.indexOf('需要') >= 0 ||
+      text.indexOf('选择') >= 0 ||
+      text.indexOf('确认') >= 0 ||
+      text.indexOf('补充') >= 0 ||
+      text.indexOf('请先') >= 0;
+  }
+
+  private hasDiffSignal(): boolean {
+    return this.diffFiles.length > 0 ||
+      (this.changedFiles.trim().length > 0 && this.changedFiles !== NO_FILE_CHANGES_TEXT) ||
+      this.diffStat.trim() !== '+0 -0';
+  }
+
+  private uniqueInputHints(values: string[], maxCount: number): string[] {
+    const result: string[] = [];
+    for (let index = 0; index < values.length; index += 1) {
+      const value: string = values[index].trim();
+      if (value.length === 0 || result.indexOf(value) >= 0) {
+        continue;
+      }
+      result.push(value);
+      if (result.length >= maxCount) {
+        break;
+      }
+    }
+    return result;
+  }
+
+  private dynamicInputHints(): string[] {
+    if (this.pendingRequestUserInput !== null) {
+      const firstQuestion: string = this.pendingRequestUserInput.questions.length > 0
+        ? this.pendingRequestUserInput.questions[0].header.trim()
+        : '';
+      return this.uniqueInputHints([
+        firstQuestion.length > 0 ? `补充“${firstQuestion}”` : '补充上方需要的信息',
+        '说明我还不确定的部分',
+        '让 ArkPilot 先给可选方案'
+      ], 3);
+    }
+
+    if (this.pendingApproval !== null) {
+      return this.uniqueInputHints([
+        '解释这次操作的影响',
+        '改用不需要审批的方案',
+        '停止当前操作并总结原因'
+      ], 3);
+    }
+
+    if (this.isRunning) {
+      return this.uniqueInputHints([
+        '完成后总结当前进展',
+        '完成后检查 diff',
+        '停止后保留当前草稿'
+      ], 3);
+    }
+
+    const lastMessage: ChatMessage | null = this.lastConversationMessage();
+    const contextText: string = `${this.summaryTitle}\n${this.summaryPoints.join('\n')}\n${lastMessage !== null ? lastMessage.content : ''}`;
+    const hints: string[] = [];
+
+    if (this.hasFailureSignal(contextText)) {
+      hints.push('根据最新错误继续修复');
+      hints.push('定位失败原因并给出最小改动');
+      hints.push('重新运行验证并报告结果');
+    } else if (lastMessage !== null && this.hasChoiceSignal(lastMessage.content)) {
+      hints.push('按推荐方案继续');
+      hints.push('先比较可选方案再执行');
+      hints.push('我补充约束后再处理');
+    } else if (this.hasDiffSignal()) {
+      hints.push('检查当前 diff 是否有风险');
+      hints.push('总结本轮改动和验证结果');
+      hints.push('继续完善右侧变更');
+    } else if (lastMessage !== null && lastMessage.role === 'user') {
+      hints.push('补充上条需求的限制条件');
+      hints.push('换一种实现方案');
+      hints.push('基于当前工作目录继续');
+    } else if (lastMessage !== null) {
+      hints.push('继续处理最新回复里的下一步');
+      hints.push('总结刚才的结论和风险');
+      hints.push('检查当前工作目录是否还有遗漏');
+    }
+
+    if (this.workspaceRoot.trim().length > 0) {
+      hints.push('检查当前工作目录的变更');
+    } else {
+      hints.push('说明当前默认 cwd 并检查可操作范围');
+    }
+
+    return this.uniqueInputHints([...hints, ...this.quickActions], 3);
+  }
+
+  private dynamicInputPlaceholder(): string {
+    if (this.pendingRequestUserInput !== null) {
+      return '上方有待补充问题，也可以输入追加说明...';
+    }
+    if (this.pendingApproval !== null) {
+      return '上方有待确认操作，也可以输入替代指令...';
+    }
+    if (this.isRunning) {
+      return '任务执行中，输入下一步想法会先保留为草稿...';
+    }
+    if (this.connectionState !== 'connected') {
+      return '连接后输入要发送给 ArkPilot 的指令...';
+    }
+
+    const lastMessage: ChatMessage | null = this.lastConversationMessage();
+    if (lastMessage === null) {
+      return '输入要发送给 ArkPilot 的指令...';
+    }
+    if (this.hasFailureSignal(`${this.summaryTitle}\n${lastMessage.content}`)) {
+      return '描述期望结果，或要求继续修复最新错误...';
+    }
+    if (this.hasDiffSignal()) {
+      return '围绕当前 diff 提问、要求检查或继续修改...';
+    }
+    if (lastMessage.role === 'user') {
+      return '补充上条需求的背景、路径或验收条件...';
+    }
+    return '基于最新回复继续追问、修正或要求验证...';
   }
 
   private connectionButtonLabel(): string {
@@ -3432,7 +3577,7 @@ struct Index {
         }
 
         Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-          ForEach(this.quickActions, (item: string) => {
+          ForEach(this.dynamicInputHints(), (item: string) => {
             this.actionChip(item)
           }, (item: string) => item)
         }
@@ -3440,7 +3585,7 @@ struct Index {
         .margin({ top: 8 })
 
         Row() {
-          TextInput({ text: this.draft, placeholder: '输入要发送给 ArkPilot 的指令...' })
+          TextInput({ text: this.draft, placeholder: this.dynamicInputPlaceholder() })
             .layoutWeight(1)
             .height(40)
             .fontSize(12)
