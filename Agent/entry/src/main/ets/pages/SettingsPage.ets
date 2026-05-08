@@ -1821,11 +1821,13 @@ struct SettingsPage {
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
-      Text(this.heroSubtitle())
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .fontColor('#6B7280')
-        .margin({ top: 4 })
+      if (this.heroSubtitle().length > 0) {
+        Text(this.heroSubtitle())
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .fontColor('#6B7280')
+          .margin({ top: 4 })
+      }
     }
     .width('100%')
     .padding({ top: 4, bottom: 16 })
@@ -1849,11 +1851,11 @@ struct SettingsPage {
       case 'mcp':
         return '管理 MCP 服务器连接与工具源';
       case 'skills':
-        return '统一管理已安装 Skills、仓库源和备份快照，保持高密度但不混乱。';
+        return '';
       case 'prompts':
-        return '在界面里显式展示当前指令集合、启用状态和草稿编辑区。';
+        return '';
       default:
-        return '管理服务商接入信息与 API 配置';
+        return '';
     }
   }
 
@@ -1933,11 +1935,13 @@ struct SettingsPage {
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
-      Text(subtitle)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#64748B')
-        .margin({ top: 4 })
+      if (subtitle.length > 0) {
+        Text(subtitle)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(11)
+          .fontColor('#64748B')
+          .margin({ top: 4 })
+      }
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -2649,7 +2653,7 @@ struct SettingsPage {
           .width('100%')
           .margin({ bottom: 12 })
 
-          this.sectionCard('Prompt 列表', '通过卡片显式展示启用状态、更新时间与说明。')
+          this.sectionCard('Prompt 列表', '')
 
           Column() {
             ForEach(this.prompts, (prompt: PromptRecord) => {
@@ -3407,13 +3411,13 @@ struct SettingsPage {
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
-            Text(apiManagementVM.state.errorText.trim().length > 0
-              ? apiManagementVM.state.errorText
-              : '统一卡片列表、顶部切换和添加入口，让设置页与独立页保持同一视觉语言。')
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(11)
-              .fontColor(apiManagementVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
-              .margin({ top: 4 })
+            if (apiManagementVM.state.errorText.trim().length > 0) {
+              Text(apiManagementVM.state.errorText)
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(11)
+                .fontColor('#B91C1C')
+                .margin({ top: 4 })
+            }
           }
           .alignItems(HorizontalAlign.Start)
 
