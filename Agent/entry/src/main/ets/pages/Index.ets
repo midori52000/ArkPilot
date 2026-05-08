@@ -21,7 +21,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, SidebarView, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, SidebarItem, DailyTokenSnapshot, ProjectRecord } from '../backend/ConsoleModels';
+import { SessionSummary, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, DailyTokenSnapshot, ProjectRecord } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import { projectStore } from '../backend/ProjectStore';
 import router from '@ohos.router';
@@ -108,10 +108,6 @@ struct Index {
     new SelectorOption('high', 'high'),
     new SelectorOption('xhigh', 'xhigh')
   ];
-  private readonly sidebarItems: SidebarItem[] = [
-    new SidebarItem('chat', 'Chat', '继续与内置 ArkPilot 协作'),
-    new SidebarItem('sessions', 'Sessions', '查看、切换并删除历史会话')
-  ];
   private backendSubscriptionId: number = -1;
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
@@ -123,7 +119,6 @@ struct Index {
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private workspaces: WorkspaceItem[] = [];
-  @State private activeSidebarView: SidebarView = 'chat';
   @State private activeWorkspaceId: number = 1;
   @State private activeWorkspaceBindingId: string = 'session:1';
   @State private currentWorkspaceTitle: string = '新会话 1';
@@ -243,14 +238,7 @@ struct Index {
     this.restoreWorkspaceBindings();
     this.loadProjects();
 
-    // Check if SessionsPage passed a selected session ID
-    const selectedSessionId: string = (AppStorage.get('sessionsPageSelectedSessionId') as string) ?? '';
-    if (selectedSessionId.trim().length > 0) {
-      AppStorage.setOrCreate('sessionsPageSelectedSessionId', '');
-      void this.loadSessionFromSessionsPage(selectedSessionId);
-    } else {
-      void this.restoreSessionsFromBackend();
-    }
+    void this.restoreSessionsFromBackend();
 
     this.scheduleEmbeddedHostReconnect(0);
     this.scheduleMessageScrollToBottom();
@@ -641,27 +629,6 @@ struct Index {
     this.refreshWorkspaceBindingState();
     this.syncCurrentWorkspaceState();
     this.persistWorkspaceBindings();
-  }
-
-  private async loadSessionFromSessionsPage(sessionId: string): Promise<void> {
-    await this.restoreSessionsFromBackend(sessionId);
-    const workspace: WorkspaceItem | undefined = this.findWorkspaceBySessionId(sessionId);
-    if (workspace !== undefined) {
-      this.directoryFilter = this.workspaceRoot;
-      this.directoryFilterText = this.workspaceRoot.length > 0 ? this.workspaceRoot : '使用默认工作区';
-      this.syncRecentWorkspaces();
-      this.draft = `继续处理"${workspace.title}"，重点关注当前工作目录。`;
-    }
-  }
-
-  private findWorkspaceBySessionId(sessionId: string): WorkspaceItem | undefined {
-    for (let index: number = 0; index < this.workspaces.length; index += 1) {
-      const workspace: WorkspaceItem = this.workspaces[index];
-      if (this.ensureWorkspaceBinding(workspace) === sessionId) {
-        return workspace;
-      }
-    }
-    return undefined;
   }
 
   private async loadSelectedWorkspaceHistory(): Promise<void> {
@@ -1581,7 +1548,6 @@ struct Index {
     this.refreshWorkspaceBindingState();
     this.syncCurrentWorkspaceState();
     this.draft = `继续处理”${item.title}”，重点关注当前工作目录。`;
-    this.activeSidebarView = 'chat';
     this.persistWorkspaceBindings();
     await this.loadSelectedWorkspaceHistory();
   }
@@ -1726,10 +1692,6 @@ struct Index {
 
   private isWorkspaceActive(item: WorkspaceItem): boolean {
     return this.activeWorkspaceId === item.id;
-  }
-
-  private isSidebarActive(view: SidebarView): boolean {
-    return this.activeSidebarView === view;
   }
 
   private toggleLeftDrawer(): void {
@@ -2214,45 +2176,6 @@ struct Index {
           this.showDeleteSessionDialog = true;
         })
     }
-  }
-
-  @Builder
-  private sidebarRow(item: SidebarItem) {
-    Column() {
-      Row() {
-        Text(item.label)
-          .copyOption(CopyOptions.None)
-          .fontSize(12)
-          .fontWeight(this.isSidebarActive(item.view) ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor('#18181B')
-
-        Blank()
-          .layoutWeight(1)
-      }
-      .width('100%')
-
-      Text(item.description)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#A1A1AA')
-        .margin({ top: 4 })
-        .lineHeight(16)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .padding(10)
-    .backgroundColor(this.isSidebarActive(item.view) ? '#F4F4F5' : '#FFFFFF')
-    .borderRadius(8)
-    .margin({ bottom: 6 })
-    .onClick(() => {
-      if (item.view === 'sessions') {
-        router.pushUrl({ url: 'pages/SessionsPage' });
-      } else {
-        this.activeSidebarView = item.view;
-      }
-    })
   }
 
   @Builder
@@ -2771,38 +2694,10 @@ struct Index {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#18181B')
-
-              Text('项目侧边栏控制台')
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(10)
-                .fontColor('#A1A1AA')
-                .margin({ top: 4 })
             }
             .alignItems(HorizontalAlign.Start)
           }
           .width('100%')
-
-          // Navigation
-          Column() {
-            this.panelTitle('导航', '通过项目侧边栏切换控制台子面板')
-            List({ space: 0 }) {
-              ForEach(this.sidebarItems, (item: SidebarItem) => {
-                ListItem() {
-                  this.sidebarRow(item)
-                }
-              }, (item: SidebarItem) => item.view)
-            }
-            .width('100%')
-            .scrollBar(BarState.Off)
-            .margin({ top: 10 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(12)
-          .margin({ top: 12 })
-          .backgroundColor('#FFFFFF')
-          .border({ width: 0.5, color: '#E4E4E7' })
-          .borderRadius(12)
 
           // Projects section
           Column() {
