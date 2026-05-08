@@ -51,6 +51,7 @@ export interface SkillBackupJson {
 /**
  * 已安装 Skill 的注册记录（持久化到 skills-registry.json）
  */
+@Observed
 export class InstalledSkill {
   id: string; // "owner/repo:directory" 或 "local:directory"
   name: string; // 显示名称（来自 SKILL.md frontmatter）

@@ -71,6 +71,7 @@ export type CodexDiffKind = 'add' | 'delete' | 'context';
 export type CodexConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type CodexApprovalKind = 'command' | 'fileChange' | 'permissions' | 'mcpToolApproval' | 'requestUserInput';
 export type CodexAuthMode = 'none' | 'apiKey' | 'chatgpt' | 'chatgptAuthTokens' | 'unknown';
+export type CodexCompactionStatus = 'idle' | 'starting' | 'running' | 'completed' | 'failed' | 'timeout';
 export type CodexTurnUpdateHandler = (result: CodexTurnResult) => void;
 type BackendListener = (snapshot: CodexBackendSnapshot) => void;
 
@@ -367,7 +368,12 @@ export class ConfigManagerFacade {
   async setSkillEnabled(id: string, enabled: boolean): Promise<ConfigActionResult<InstalledSkill>> {
     try {
       const updated = await this.skillsService().setSkillEnabled(id, enabled);
-      await this.reloadInstalledSkills();
+      for (let i = 0; i < this.skillInstalledStore.length; i++) {
+        if (this.skillInstalledStore[i].id === id) {
+          this.skillInstalledStore[i] = this.cloneInstalledSkill(updated);
+          break;
+        }
+      }
       return configSuccess<InstalledSkill>(this.cloneInstalledSkill(updated));
     } catch (err) {
       return this.configFailureFromError<InstalledSkill>(err as Object, 'SET_SKILL_ENABLED_FAILED', '切换 Skill 启用状态失败。');
@@ -823,6 +829,18 @@ class ThreadReadRequestPayload {
   includeTurns: boolean = true;
 }
 
+class ThreadReadSnapshotPayload {
+  thread: CodexThreadRecord;
+  lastTurnId: string;
+  lastTurnStatus: string;
+
+  constructor(thread: CodexThreadRecord, lastTurnId: string, lastTurnStatus: string) {
+    this.thread = thread;
+    this.lastTurnId = lastTurnId;
+    this.lastTurnStatus = lastTurnStatus;
+  }
+}
+
 class ThreadResumeRequestPayload {
   threadId: string = '';
   cwd?: string;
@@ -1043,6 +1061,20 @@ export class CodexRequestUserInput {
   }
 }
 
+export class CodexCompactionSnapshot {
+  threadId: string;
+  status: CodexCompactionStatus;
+  errorMessage: string;
+  savedTokens: number;
+
+  constructor(threadId: string, status: CodexCompactionStatus, errorMessage: string = '', savedTokens: number = 0) {
+    this.threadId = threadId;
+    this.status = status;
+    this.errorMessage = errorMessage;
+    this.savedTokens = savedTokens;
+  }
+}
+
 export class CodexBackendSnapshot {
   serverUrl: string;
   connectionState: CodexConnectionState;
@@ -1058,8 +1090,27 @@ export class CodexBackendSnapshot {
   mcpErrorText: string;
   collaborationModes: CollaborationModeOption[];
   tokenUsage: TurnTokenUsage | null;
+  activeThreadId: string;
+  compaction: CodexCompactionSnapshot;
 
-  constructor(serverUrl: string, connectionState: CodexConnectionState, connectionText: string, pendingApproval: CodexApprovalRequest | null, pendingRequestUserInput: CodexRequestUserInput | null, authMode: CodexAuthMode, requiresOpenAIAuth: boolean, authStatusText: string, planTypeText: string, mcpStatusText: string, mcpServerCount: number, mcpErrorText: string, collaborationModes?: CollaborationModeOption[], tokenUsage?: TurnTokenUsage | null) {
+  constructor(
+    serverUrl: string,
+    connectionState: CodexConnectionState,
+    connectionText: string,
+    pendingApproval: CodexApprovalRequest | null,
+    pendingRequestUserInput: CodexRequestUserInput | null,
+    authMode: CodexAuthMode,
+    requiresOpenAIAuth: boolean,
+    authStatusText: string,
+    planTypeText: string,
+    mcpStatusText: string,
+    mcpServerCount: number,
+    mcpErrorText: string,
+    collaborationModes?: CollaborationModeOption[],
+    tokenUsage?: TurnTokenUsage | null,
+    activeThreadId?: string,
+    compaction?: CodexCompactionSnapshot
+  ) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
     this.connectionText = connectionText;
@@ -1074,6 +1125,8 @@ export class CodexBackendSnapshot {
     this.mcpErrorText = mcpErrorText;
     this.collaborationModes = collaborationModes ?? [];
     this.tokenUsage = tokenUsage ?? null;
+    this.activeThreadId = activeThreadId ?? '';
+    this.compaction = compaction ?? new CodexCompactionSnapshot('', 'idle');
   }
 }
 
@@ -1093,6 +1146,16 @@ class PendingTurnState {
       this.resolveCompletion = resolve;
     });
   }
+}
+
+class CompactionRunState {
+  threadId: string = '';
+  baselineTurnId: string = '';
+  turnId: string = '';
+  oldTotalTokens: number = 0;
+  status: CodexCompactionStatus = 'idle';
+  errorMessage: string = '';
+  savedTokens: number = 0;
 }
 
 class CodexThreadRecord {
@@ -1171,6 +1234,7 @@ export class CodexBackend {
   private readonly threads: Map<string, CodexThreadRecord> = new Map();
   private readonly threadKeysByRemoteId: Map<string, string> = new Map();
   private readonly workspaceCatalog: Map<string, WorkspaceDescriptor> = new Map();
+  private activeThreadId: string = '';
   private serverUrl: string = DEFAULT_SERVER_URL;
   private listenerSequence: number = 1;
   private pendingApproval: CodexApprovalRequest | null = null;
@@ -1180,6 +1244,7 @@ export class CodexBackend {
   private authStatusText: string = '未登录';
   private planTypeText: string = '';
   private collaborationModes: CollaborationModeOption[] = [];
+  private readonly compactionState: CompactionRunState = new CompactionRunState();
   private mcpServersCache: McpServerRecord[] = [];
   private readonly mcpConfigByName: Map<string, Object> = new Map();
   private mcpStatusText: string = '尚未加载 MCP 状态';
@@ -1202,12 +1267,8 @@ export class CodexBackend {
   }
 
   snapshot(): CodexBackendSnapshot {
-    let activeTokenUsage: TurnTokenUsage | null = null;
-    this.threads.forEach((thread: CodexThreadRecord) => {
-      if (activeTokenUsage === null && thread.tokenUsage !== null) {
-        activeTokenUsage = thread.tokenUsage;
-      }
-    });
+    const activeThread: CodexThreadRecord | null = this.activeThreadRecord();
+    const activeTokenUsage: TurnTokenUsage | null = activeThread?.tokenUsage ?? null;
     return new CodexBackendSnapshot(
       this.serverUrl,
       this.connectionState,
@@ -1222,7 +1283,9 @@ export class CodexBackend {
       this.mcpServersCache.length,
       this.mcpErrorText,
       this.collaborationModes.map((mode: CollaborationModeOption) => this.cloneCollaborationMode(mode)),
-      activeTokenUsage
+      activeTokenUsage,
+      activeThread?.remoteThreadId ?? '',
+      this.compactionSnapshot()
     );
   }
 
@@ -1425,20 +1488,11 @@ export class CodexBackend {
   }
 
   async loadThreadHistory(threadId: string): Promise<CodexTurnResult> {
-    await this.ensureConnected();
-    const trimmedThreadId: string = threadId.trim();
-    if (trimmedThreadId.length === 0) {
-      throw new Error('thread/read requires a valid thread id.');
-    }
-    const readRequest: ThreadReadRequestPayload = new ThreadReadRequestPayload();
-    readRequest.threadId = trimmedThreadId;
-    readRequest.includeTurns = true;
-    const payload: Record<string, Object> = parseJsonText(
-      threadReadNative(JSON.stringify(readRequest)),
-      new Object() as Object
-    ) as Record<string, Object>;
-    const thread: CodexThreadRecord = this.ensureThreadRecordFromReadPayload(trimmedThreadId, payload);
-    return this.snapshotForThread(thread, thread.lastTurnStatus);
+    const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(threadId);
+    await this.hydrateThreadTokenUsage(snapshot.thread, snapshot.lastTurnId);
+    this.activeThreadId = snapshot.thread.remoteThreadId;
+    this.notifyListeners();
+    return this.snapshotForThread(snapshot.thread, snapshot.thread.lastTurnStatus, snapshot.lastTurnId);
   }
 
   async createThreadSession(
@@ -1565,6 +1619,12 @@ export class CodexBackend {
     }
     this.threads.delete(trimmedThreadId);
     this.threadKeysByRemoteId.delete(trimmedThreadId);
+    if (this.activeThreadId === trimmedThreadId) {
+      this.activeThreadId = '';
+    }
+    if (this.compactionState.threadId === trimmedThreadId) {
+      this.clearCompactionState();
+    }
   }
 
   async startTurn(request: CodexTurnRequest, onUpdate?: CodexTurnUpdateHandler): Promise<CodexTurnResult> {
@@ -1573,6 +1633,7 @@ export class CodexBackend {
       throw new Error('当前后端尚未登录 OpenAI。请先填写 API Key 并登录。');
     }
     const thread: CodexThreadRecord = await this.ensureRemoteThread(request);
+    this.activeThreadId = thread.remoteThreadId;
     const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate);
     thread.activeTurn = pendingTurn;
     const workspace: WorkspaceDescriptor = this.bindWorkspaceToThread(thread, request);
@@ -1630,62 +1691,264 @@ export class CodexBackend {
     turnInterruptNative(thread.remoteThreadId, activeTurn.turnId);
   }
 
+  setActiveThread(threadId: string): void {
+    const normalizedThreadId: string = this.normalizeThreadId(threadId);
+    if (this.activeThreadId === normalizedThreadId) {
+      return;
+    }
+    this.activeThreadId = normalizedThreadId;
+    this.notifyListeners();
+  }
+
   private lastCompactError: string = '';
 
-  compactActiveThread(): string {
+  async compactThread(threadId: string, timeoutMs: number = 30000): Promise<void> {
     this.lastCompactError = '';
-    let target: CodexThreadRecord | null = null;
-    this.threads.forEach((t: CodexThreadRecord) => {
-      if (t.remoteThreadId.trim().length > 0 && target === null) {
-        target = t;
+    const normalizedThreadId: string = this.normalizeThreadId(threadId);
+    if (normalizedThreadId.length === 0) {
+      const message: string = '当前会话还没有远端线程';
+      this.failCompaction(message, threadId);
+      throw new Error(message);
+    }
+    const thread: CodexThreadRecord | undefined = this.threads.get(normalizedThreadId);
+    if (thread === undefined || thread.remoteThreadId.trim().length === 0) {
+      const message: string = '没有可用的线程';
+      this.failCompaction(message, normalizedThreadId);
+      throw new Error(message);
+    }
+    try {
+      this.activeThreadId = thread.remoteThreadId;
+      const baseline: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
+      await this.hydrateThreadTokenUsage(thread, baseline.lastTurnId);
+      this.compactionState.threadId = thread.remoteThreadId;
+      this.compactionState.baselineTurnId = baseline.lastTurnId;
+      this.compactionState.turnId = '';
+      this.compactionState.oldTotalTokens = thread.tokenUsage?.total.totalTokens ?? 0;
+      this.compactionState.status = 'starting';
+      this.compactionState.errorMessage = '';
+      this.compactionState.savedTokens = 0;
+      this.notifyListeners();
+      const resp = parseJsonText(
+        compactStartNative(JSON.stringify({ threadId: thread.remoteThreadId })),
+        new Object() as Object
+      ) as Record<string, Object>;
+      const ok = resp['ok'] === true;
+      if (!ok) {
+        const err = resp['error'] as Record<string, Object> | undefined;
+        const msg = typeof err?.['message'] === 'string' ? (err!['message'] as string) : 'compact 失败';
+        this.failCompaction(msg, thread.remoteThreadId);
+        this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
+        throw new Error(msg);
       }
-    });
-    if (target === null) {
-      this.lastCompactError = '没有可用的线程';
-      this.logInfo('compact: no thread found');
-      return '';
+      this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
+      await this.pollCompactionUntilCompleted(thread, baseline.lastTurnId, timeoutMs);
+    } catch (err) {
+      const message: string = err instanceof Error ? err.message : JSON.stringify(err);
+      if (this.compactionState.status !== 'failed' && this.compactionState.status !== 'timeout') {
+        this.failCompaction(message, thread.remoteThreadId);
+      }
+      if (err instanceof Error) {
+        throw err;
+      }
+      throw new Error(message);
     }
-    const thread: CodexThreadRecord = target;
-    const resp = parseJsonText(
-      compactStartNative(JSON.stringify({ threadId: thread.remoteThreadId })),
-      new Object() as Object
-    ) as Record<string, Object>;
-    const ok = resp['ok'] === true;
-    if (!ok) {
-      const err = resp['error'] as Record<string, Object> | undefined;
-      const msg = typeof err?.['message'] === 'string' ? (err!['message'] as string) : 'compact 失败';
-      this.lastCompactError = msg;
-      this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
-      return '';
-    }
-    this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
-    return thread.remoteThreadId;
   }
 
   getLastCompactError(): string {
     return this.lastCompactError;
   }
 
-  async pollUntilTokenChange(threadId: string, oldTotalTokens: number, onUpdate: (usage: TurnTokenUsage) => void, timeoutMs: number = 30000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    const intervalMs = 2000;
+  clearCompactionNotice(threadId: string): void {
+    const normalizedThreadId: string = this.normalizeThreadId(threadId);
+    if (normalizedThreadId.length === 0 || this.compactionState.threadId !== normalizedThreadId) {
+      return;
+    }
+    this.clearCompactionState();
+    this.notifyListeners();
+  }
+
+  private activeThreadRecord(): CodexThreadRecord | null {
+    if (this.activeThreadId.trim().length === 0) {
+      return null;
+    }
+    return this.threads.get(this.activeThreadId) ?? null;
+  }
+
+  private normalizeThreadId(threadId: string): string {
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0 || trimmedThreadId.startsWith('session:')) {
+      return '';
+    }
+    const direct: CodexThreadRecord | undefined = this.threads.get(trimmedThreadId);
+    if (direct !== undefined && direct.remoteThreadId.trim().length > 0) {
+      return direct.remoteThreadId;
+    }
+    const localKey: string | undefined = this.threadKeysByRemoteId.get(trimmedThreadId);
+    if (localKey !== undefined) {
+      const mapped: CodexThreadRecord | undefined = this.threads.get(localKey);
+      if (mapped !== undefined && mapped.remoteThreadId.trim().length > 0) {
+        return mapped.remoteThreadId;
+      }
+    }
+    return trimmedThreadId;
+  }
+
+  private compactionSnapshot(): CodexCompactionSnapshot {
+    return new CodexCompactionSnapshot(
+      this.compactionState.threadId,
+      this.compactionState.status,
+      this.compactionState.errorMessage,
+      this.compactionState.savedTokens
+    );
+  }
+
+  private clearCompactionState(): void {
+    this.compactionState.threadId = '';
+    this.compactionState.baselineTurnId = '';
+    this.compactionState.turnId = '';
+    this.compactionState.oldTotalTokens = 0;
+    this.compactionState.status = 'idle';
+    this.compactionState.errorMessage = '';
+    this.compactionState.savedTokens = 0;
+  }
+
+  private failCompaction(message: string, threadId: string, status: CodexCompactionStatus = 'failed'): void {
+    const normalizedThreadId: string = this.normalizeThreadId(threadId);
+    this.lastCompactError = message;
+    this.compactionState.threadId = normalizedThreadId;
+    this.compactionState.status = status;
+    this.compactionState.errorMessage = message;
+    this.compactionState.savedTokens = 0;
+    this.notifyListeners();
+  }
+
+  private completeCompaction(thread: CodexThreadRecord): void {
+    const newTotal: number = thread.tokenUsage?.total.totalTokens ?? this.compactionState.oldTotalTokens;
+    const saved: number = this.compactionState.oldTotalTokens - newTotal;
+    this.compactionState.threadId = thread.remoteThreadId;
+    this.compactionState.status = 'completed';
+    this.compactionState.errorMessage = '';
+    this.compactionState.savedTokens = saved > 0 ? saved : 0;
+    this.lastCompactError = '';
+    this.notifyListeners();
+  }
+
+  private async readThreadSnapshot(threadId: string): Promise<ThreadReadSnapshotPayload> {
+    await this.ensureConnected();
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0) {
+      throw new Error('thread/read requires a valid thread id.');
+    }
+    const readRequest: ThreadReadRequestPayload = new ThreadReadRequestPayload();
+    readRequest.threadId = trimmedThreadId;
+    readRequest.includeTurns = true;
+    const payload: Record<string, Object> = parseJsonText(
+      threadReadNative(JSON.stringify(readRequest)),
+      new Object() as Object
+    ) as Record<string, Object>;
+    const errorRecord: Record<string, Object> | undefined = payload['error'] as Record<string, Object> | undefined;
+    const errorMessage: string = typeof errorRecord?.['message'] === 'string' ? (errorRecord!['message'] as string) : '';
+    if (errorMessage.trim().length > 0) {
+      throw new Error(errorMessage);
+    }
+    const thread: CodexThreadRecord = this.ensureThreadRecordFromReadPayload(trimmedThreadId, payload);
+    const lastTurnId: string = typeof payload['lastTurnId'] === 'string' ? (payload['lastTurnId'] as string) : '';
+    const lastTurnStatus: string = typeof payload['lastTurnStatus'] === 'string' ? (payload['lastTurnStatus'] as string) : 'completed';
+    return new ThreadReadSnapshotPayload(thread, lastTurnId, lastTurnStatus);
+  }
+
+  private async hydrateThreadTokenUsage(thread: CodexThreadRecord, turnId: string): Promise<void> {
+    const trimmedTurnId: string = turnId.trim();
+    if (thread.remoteThreadId.trim().length === 0 || trimmedTurnId.length === 0) {
+      return;
+    }
+    try {
+      const payload: Record<string, Object> = parseJsonText(
+        turnPollNative(thread.remoteThreadId, trimmedTurnId),
+        new TurnPollResponsePayload() as Object
+      ) as Record<string, Object>;
+      this.applyTokenUsagePayload(thread, payload['tokenUsage']);
+    } catch (err) {
+      const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+      this.logInfo(`hydrateThreadTokenUsage failed thread=${thread.remoteThreadId} turnId=${trimmedTurnId} error=${errorText}`);
+    }
+  }
+
+  private applyTokenUsagePayload(thread: CodexThreadRecord, tokenUsageRaw: Object | undefined): void {
+    if (tokenUsageRaw === undefined || tokenUsageRaw === null) {
+      return;
+    }
+    const tu = tokenUsageRaw as Record<string, Object>;
+    const parseBreakdown = (raw: Object): TokenUsageBreakdown => {
+      const b = raw as Record<string, Object>;
+      return new TokenUsageBreakdown(
+        typeof b['inputTokens'] === 'number' ? (b['inputTokens'] as number) : 0,
+        typeof b['outputTokens'] === 'number' ? (b['outputTokens'] as number) : 0,
+        typeof b['cachedInputTokens'] === 'number' ? (b['cachedInputTokens'] as number) : 0,
+        typeof b['reasoningOutputTokens'] === 'number' ? (b['reasoningOutputTokens'] as number) : 0,
+        typeof b['totalTokens'] === 'number' ? (b['totalTokens'] as number) : 0,
+        typeof b['blendedTotal'] === 'number' ? (b['blendedTotal'] as number) : undefined
+      );
+    };
+    const total = tu['total'] !== undefined ? parseBreakdown(tu['total'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
+    const last = tu['last'] !== undefined ? parseBreakdown(tu['last'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
+    const ctxWindow = typeof tu['modelContextWindow'] === 'number' ? (tu['modelContextWindow'] as number) : 0;
+    const ctxRemainingPct = typeof tu['contextRemainingPercent'] === 'number' ? (tu['contextRemainingPercent'] as number) : -1;
+    thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow, ctxRemainingPct);
+  }
+
+  private async pollCompactionUntilCompleted(thread: CodexThreadRecord, baselineTurnId: string, timeoutMs: number): Promise<void> {
+    const deadline: number = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
-      try {
-        const pollRaw = turnPollNative(threadId, '');
-        const pollObj = parseJsonText(pollRaw, new Object() as Object) as Record<string, Object>;
-        const tu = pollObj['tokenUsage'] as Record<string, Object> | null;
-        if (tu !== null && tu !== undefined) {
-          const total = tu['total'] as Record<string, Object> | null;
-          const newTotal = (typeof total?.['totalTokens'] === 'number') ? (total!['totalTokens'] as number) : 0;
-          if (newTotal !== oldTotalTokens) {
-            const usage = parseJsonText(JSON.stringify(tu), new Object() as Object) as TurnTokenUsage;
-            onUpdate(usage);
-            return;
-          }
+      if (this.compactionState.turnId.trim().length === 0) {
+        const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
+        if (snapshot.lastTurnId.trim().length > 0 && snapshot.lastTurnId !== baselineTurnId) {
+          this.compactionState.turnId = snapshot.lastTurnId;
+          this.compactionState.status = snapshot.lastTurnStatus === 'failed' ? 'failed' : 'running';
+          this.notifyListeners();
         }
-      } catch (_e) {
-        // ignore poll errors
+      }
+      if (this.compactionState.turnId.trim().length > 0) {
+        const pollObject: Record<string, Object> = parseJsonText(
+          turnPollNative(thread.remoteThreadId, this.compactionState.turnId),
+          new TurnPollResponsePayload() as Object
+        ) as Record<string, Object>;
+        this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} payload=${JSON.stringify(pollObject)}`);
+        const result: CodexTurnResult = this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
+        if (this.compactionState.status !== 'running') {
+          this.compactionState.status = result.status === 'failed' ? 'failed' : (result.status === 'inProgress' ? 'running' : this.compactionState.status);
+        }
+        this.notifyListeners();
+        if (result.status === 'completed') {
+          await this.drainCompactionTokenUsage(thread);
+          this.completeCompaction(thread);
+          return;
+        }
+        if (result.status === 'failed' || result.status === 'interrupted') {
+          this.failCompaction(result.summaryPoints[0] ?? '压缩失败', thread.remoteThreadId);
+          return;
+        }
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
+    }
+    this.failCompaction('压缩超时', thread.remoteThreadId, 'timeout');
+    throw new Error('压缩超时');
+  }
+
+  private async drainCompactionTokenUsage(thread: CodexThreadRecord): Promise<void> {
+    for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
+      if (thread.tokenUsage !== null && thread.tokenUsage.total.totalTokens !== this.compactionState.oldTotalTokens) {
+        return;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
+      const pollObject: Record<string, Object> = parseJsonText(
+        turnPollNative(thread.remoteThreadId, this.compactionState.turnId),
+        new TurnPollResponsePayload() as Object
+      ) as Record<string, Object>;
+      this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
+      this.notifyListeners();
+      if (thread.tokenUsage !== null && thread.tokenUsage.total.totalTokens !== this.compactionState.oldTotalTokens) {
+        return;
       }
     }
   }
@@ -2078,6 +2341,8 @@ export class CodexBackend {
 
   private ensureThreadRecordFromReadPayload(threadId: string, payload: Record<string, Object>): CodexThreadRecord {
     const threadPayload: Record<string, Object> | undefined = payload['thread'] as Record<string, Object> | undefined;
+    const existingThread: CodexThreadRecord | undefined = this.threads.get(threadId);
+    const previousTokenUsage: TurnTokenUsage | null = existingThread?.tokenUsage ?? null;
     if (threadPayload !== undefined) {
       this.upsertThreadFromListPayload(threadPayload);
     }
@@ -2128,6 +2393,9 @@ export class CodexBackend {
     thread.lastTurnStatus = this.mapTurnStatus(
       typeof payload['lastTurnStatus'] === 'string' ? (payload['lastTurnStatus'] as string) : 'completed'
     );
+    if (thread.tokenUsage === null && previousTokenUsage !== null) {
+      thread.tokenUsage = previousTokenUsage;
+    }
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
     return thread;
@@ -2302,7 +2570,8 @@ export class CodexBackend {
           recovered.summaryTitle,
           recovered.summaryPoints,
           recovered.changedFiles,
-          recovered.diffStat
+          recovered.diffStat,
+          recovered.tokenUsage
         );
         this.logInfo(
           `threadRead diff recovery thread=${thread.remoteThreadId} attempt=${attempt + 1} diffStat=${currentSnapshot.diffStat}`
@@ -2375,26 +2644,7 @@ export class CodexBackend {
     const summaryPoints: string[] = summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item));
     thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : (status === 'completed' ? '本轮已完成' : '执行中');
     thread.summaryPoints = summaryPoints.length > 0 ? summaryPoints : [status === 'completed' ? '本轮执行已结束。' : '等待更多轮询结果。'];
-    const tokenUsageRaw = payload['tokenUsage'];
-    if (tokenUsageRaw !== undefined && tokenUsageRaw !== null) {
-      const tu = tokenUsageRaw as Record<string, Object>;
-      const parseBreakdown = (raw: Object): TokenUsageBreakdown => {
-        const b = raw as Record<string, Object>;
-        return new TokenUsageBreakdown(
-          typeof b['inputTokens'] === 'number' ? (b['inputTokens'] as number) : 0,
-          typeof b['outputTokens'] === 'number' ? (b['outputTokens'] as number) : 0,
-          typeof b['cachedInputTokens'] === 'number' ? (b['cachedInputTokens'] as number) : 0,
-          typeof b['reasoningOutputTokens'] === 'number' ? (b['reasoningOutputTokens'] as number) : 0,
-          typeof b['totalTokens'] === 'number' ? (b['totalTokens'] as number) : 0,
-          typeof b['blendedTotal'] === 'number' ? (b['blendedTotal'] as number) : undefined
-        );
-      };
-      const total = tu['total'] !== undefined ? parseBreakdown(tu['total'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
-      const last = tu['last'] !== undefined ? parseBreakdown(tu['last'] as Object) : new TokenUsageBreakdown(0, 0, 0, 0, 0);
-      const ctxWindow = typeof tu['modelContextWindow'] === 'number' ? (tu['modelContextWindow'] as number) : 0;
-      const ctxRemainingPct = typeof tu['contextRemainingPercent'] === 'number' ? (tu['contextRemainingPercent'] as number) : -1;
-      thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow, ctxRemainingPct);
-    }
+    this.applyTokenUsagePayload(thread, payload['tokenUsage']);
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();
     return this.snapshotForThread(thread, status, turnId);

@@ -280,21 +280,40 @@ struct Index {
       this.requestUserInputVersion += 1;
     }
     this.syncSelectedCollaborationMode();
-    if (snapshot.tokenUsage !== null && snapshot.tokenUsage !== undefined) {
-      if (this.compacting && this.tokenUsage !== null && this.tokenUsage !== undefined) {
-        const oldTotal = this.tokenUsage.total.totalTokens;
-        const newTotal = snapshot.tokenUsage.total.totalTokens;
-        if (oldTotal !== newTotal) {
-          this.compacting = false;
-          const saved = oldTotal - newTotal;
-          if (saved > 0) {
-            promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
-          } else {
-            promptAction.showToast({ message: '压缩完成', duration: 2000 });
-          }
+    this.tokenUsage = snapshot.tokenUsage;
+    this.applyCompactionSnapshot(snapshot);
+  }
+
+  private applyCompactionSnapshot(snapshot: CodexBackendSnapshot): void {
+    const currentThreadId: string = this.activeWorkspaceBindingId.trim();
+    const compaction = snapshot.compaction;
+    const hadError: boolean = this.compactError.length > 0;
+    const wasCompacting: boolean = this.compacting;
+    const isCurrentThread: boolean = currentThreadId.length > 0 && compaction.threadId === currentThreadId;
+    const nextCompacting: boolean = isCurrentThread && (compaction.status === 'starting' || compaction.status === 'running');
+    this.compacting = nextCompacting;
+    if (!isCurrentThread) {
+      this.compactError = '';
+      return;
+    }
+    if (compaction.status === 'failed' || compaction.status === 'timeout') {
+      this.compactError = compaction.errorMessage;
+      return;
+    }
+    if (compaction.status === 'completed') {
+      this.compactError = '';
+      if (wasCompacting || hadError) {
+        if (compaction.savedTokens > 0) {
+          promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(compaction.savedTokens)} tokens`, duration: 3000 });
+        } else {
+          promptAction.showToast({ message: '压缩完成', duration: 2000 });
         }
       }
-      this.tokenUsage = snapshot.tokenUsage;
+      codexBackend.clearCompactionNotice(currentThreadId);
+      return;
+    }
+    if (!nextCompacting) {
+      this.compactError = '';
     }
   }
 
@@ -668,14 +687,17 @@ struct Index {
 
   private async loadSelectedWorkspaceHistory(): Promise<void> {
     if (this.workspaces.length === 0) {
+      codexBackend.setActiveThread('');
       this.resetConversationSurface('当前目录下暂无会话', ['请先创建一个新会话。']);
       return;
     }
     const workspace: WorkspaceItem = this.activeWorkspace()!;
     if (!this.isRemoteThreadId(workspace.workspaceId)) {
+      codexBackend.setActiveThread('');
       this.resetConversationSurface('等待创建新会话', ['当前会话尚未在 app-server 中创建，发送第一条消息后会自动建立线程。']);
       return;
     }
+    codexBackend.setActiveThread(workspace.workspaceId);
     try {
       const result: CodexTurnResult = await codexBackend.loadThreadHistory(workspace.workspaceId);
       this.applyBackendResult(result);
@@ -697,6 +719,7 @@ struct Index {
     workspace.workspaceId = trimmedThreadId;
     this.workspaceIds.set(workspace.id, trimmedThreadId);
     this.activeWorkspaceBindingId = trimmedThreadId;
+    codexBackend.setActiveThread(trimmedThreadId);
     this.persistWorkspaceBindings();
   }
 
@@ -1335,20 +1358,7 @@ struct Index {
     this.summaryPoints = result.summaryPoints.length > 0 ? result.summaryPoints : ['没有可展示的摘要信息。'];
     this.changedFiles = result.changedFiles;
     this.diffStat = result.diffStat;
-    if (result.tokenUsage !== null && result.tokenUsage !== undefined) {
-      if (this.compacting && this.tokenUsage !== null && this.tokenUsage !== undefined) {
-        const oldTotal = this.tokenUsage.total.totalTokens;
-        const newTotal = result.tokenUsage.total.totalTokens;
-        if (oldTotal !== newTotal) {
-          this.compacting = false;
-          const saved = oldTotal - newTotal;
-          if (saved > 0) {
-            promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
-          } else {
-            promptAction.showToast({ message: '压缩完成', duration: 2000 });
-          }
-        }
-      }
+    if (result.tokenUsage !== null) {
       this.tokenUsage = result.tokenUsage;
     }
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
@@ -4049,13 +4059,20 @@ struct Index {
     return '总 ' + this.formatTokenCount(total) + suffix;
   }
 
+  private readonly TREND_CHART_H: number = 52;
+
+  private trendChartWidth(): number {
+    return this.rightPanelWidth - 48;
+  }
+
   private tokenTrendLinePath(data: DailyTokenSnapshot[], maxVal: number, w: number, h: number): string {
     if (data.length === 0 || maxVal <= 0) return '';
     const points: string[] = [];
+    const padY = 4;
     const stepX = w / Math.max(data.length - 1, 1);
     for (let i = 0; i < data.length; i++) {
       const x = i * stepX;
-      const y = h - (data[i].totalTokens / maxVal) * (h - 4) - 2;
+      const y = h - (data[i].totalTokens / maxVal) * (h - padY * 2) - padY;
       if (i === 0) {
         points.push(`M ${x} ${y}`);
       } else {
@@ -4076,14 +4093,25 @@ struct Index {
   private getTrendTokenPath(): string {
     const data = this.getTrendData();
     const maxVal = data.reduce((max: number, d: DailyTokenSnapshot) => Math.max(max, d.totalTokens), 0);
-    return this.tokenTrendLinePath(data, maxVal, 220, 60);
+    return this.tokenTrendLinePath(data, maxVal, this.trendChartWidth(), this.TREND_CHART_H);
   }
 
-  private getTrendRequestPath(): string {
+  private getTrendAreaPath(): string {
     const data = this.getTrendData();
-    const maxReqs = data.reduce((max: number, d: DailyTokenSnapshot) => Math.max(max, d.requestCount), 0);
-    const reqData = data.map((d: DailyTokenSnapshot): DailyTokenSnapshot => new DailyTokenSnapshot(d.date, d.requestCount, d.requestCount));
-    return this.tokenTrendLinePath(reqData, maxReqs, 220, 60);
+    const maxVal = data.reduce((max: number, d: DailyTokenSnapshot) => Math.max(max, d.totalTokens), 0);
+    if (data.length === 0 || maxVal <= 0) return '';
+    const w = this.trendChartWidth();
+    const h = this.TREND_CHART_H;
+    const padY = 4;
+    const stepX = w / Math.max(data.length - 1, 1);
+    let path = `M 0 ${h}`;
+    for (let i = 0; i < data.length; i++) {
+      const x = i * stepX;
+      const y = h - (data[i].totalTokens / maxVal) * (h - padY * 2) - padY;
+      path += ` L ${x} ${y}`;
+    }
+    path += ` L ${w} ${h} Z`;
+    return path;
   }
 
   private getTrendSumTokens(): number {
@@ -4102,6 +4130,10 @@ struct Index {
   private getTrendLastDate(): string {
     const data = this.getTrendData();
     return data.length > 0 ? data[data.length - 1].date.substring(5) : '';
+  }
+
+  @Builder trendLegendDot(color: string) {
+    Circle({ width: 6, height: 6 }).fill(color)
   }
 
   @Builder tokenUsageCard() {
@@ -4177,10 +4209,58 @@ struct Index {
           // 展开状态：固定高度 + 滚动
           Scroll() {
             Column() {
+              // 上下文窗口占用（置顶，最重要）
+              Column() {
+                Row() {
+                  Text('上下文窗口')
+                    .fontSize(12)
+                    .fontColor('#18181B')
+                    .fontWeight(FontWeight.Medium)
+                  Blank()
+                  Text(this.contextText())
+                    .fontSize(12)
+                    .fontColor('#18181B')
+                    .fontWeight(FontWeight.Medium)
+                  if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
+                    Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '压缩'))
+                      .fontSize(10)
+                      .fontColor(this.compactError.length > 0 ? '#EF4444' : '#27272A')
+                      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                      .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : '#E4E4E7' })
+                      .borderRadius(6)
+                      .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
+                      .margin({ left: 6 })
+                      .onClick(() => {
+                        if (this.compacting) {
+                          return;
+                        }
+                        const threadId: string = this.activeWorkspaceBindingId.trim();
+                        this.compactError = '';
+                        codexBackend.clearCompactionNotice(threadId);
+                        void codexBackend.compactThread(threadId).catch((err: Error) => {
+                          this.compactError = err.message.trim().length > 0 ? err.message : codexBackend.getLastCompactError();
+                        });
+                      })
+                  }
+                }
+                .width('100%')
+
+                if (this.contextRemainingPct() >= 0) {
+                  Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
+                    .width('100%')
+                    .height(8)
+                    .style({ strokeWidth: 8, enableSmoothEffect: true })
+                    .color(this.contextBarColor())
+                    .margin({ top: 6 })
+                }
+              }
+              .width('100%')
+              .padding({ top: 8, bottom: 10 })
+
               // 标题行
               Row() {
                 Text('Token 用量')
-                  .fontSize(14)
+                  .fontSize(13)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#18181B')
                 Blank()
@@ -4190,25 +4270,6 @@ struct Index {
               }
               .width('100%')
               .padding({ bottom: 2 })
-
-          // 上下文占用 — 仅在主视图显示
-          if (this.contextWindow() > 0 && this.blendedTotal() > 0) {
-            Column() {
-              Row() {
-                Text(this.contextText())
-                  .fontSize(12)
-                  .fontColor('#18181B')
-              }
-              .width('100%')
-              Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
-                .width('100%')
-                .height(6)
-                .style({ strokeWidth: 6, enableSmoothEffect: true })
-                .color(this.contextBarColor())
-                .margin({ top: 4 })
-            }
-            .margin({ top: 8 })
-          }
 
           // 标签页 — 分段式选择器
           Row() {
@@ -4238,107 +4299,12 @@ struct Index {
           // 当前轮 tab
           if (this.tokenTab === 0) {
             Column() {
-              // 上下文窗口占用
-              Column() {
-                Row() {
-                  Text('上下文窗口')
-                    .fontSize(11)
-                    .fontColor('#A1A1AA')
-                  Blank()
-                  Text(this.contextText())
-                    .fontSize(11)
-                    .fontColor('#18181B')
-                  if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
-                    Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '压缩'))
-                      .fontSize(10)
-                      .fontColor(this.compactError.length > 0 ? '#EF4444' : '#27272A')
-                      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-                      .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : '#E4E4E7' })
-                      .borderRadius(6)
-                      .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
-                      .margin({ left: 6 })
-                      .onClick(() => {
-                        this.compactError = '';
-                        this.compacting = true;
-                        const oldTotal = this.totalTokensUsed();
-                        const threadId = codexBackend.compactActiveThread();
-                        if (threadId.length === 0) {
-                          this.compacting = false;
-                          this.compactError = codexBackend.getLastCompactError();
-                          setTimeout(() => { this.compactError = ''; }, 3000);
-                        } else {
-                          codexBackend.pollUntilTokenChange(threadId, oldTotal, (usage: TurnTokenUsage) => {
-                            this.tokenUsage = usage;
-                            this.compacting = false;
-                            const saved = oldTotal - usage.total.totalTokens;
-                            if (saved > 0) {
-                              promptAction.showToast({ message: `压缩完成，释放 ${this.formatTokenCount(saved)} tokens`, duration: 3000 });
-                            } else {
-                              promptAction.showToast({ message: '压缩完成', duration: 2000 });
-                            }
-                          });
-                        }
-                      })
-                  }
-                }
-                .width('100%')
-
-                if (this.contextRemainingPct() >= 0) {
-                  Progress({ value: this.contextRemainingPct(), total: 100, type: ProgressType.Linear })
-                    .width('100%')
-                    .height(4)
-                    .style({ strokeWidth: 4, enableSmoothEffect: true })
-                    .color(this.contextBarColor())
-                    .margin({ top: 4 })
-                }
-              }
-              .width('100%')
-              .padding({ top: 8, bottom: 8 })
-
-              // 分隔线
-              Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
-
               if (this.tokenUsage === null) {
                 Text('等待数据...')
                   .fontSize(11)
                   .fontColor('#A1A1AA')
                   .margin({ top: 12 })
               } else {
-                // 堆叠条
-                if (this.tokenUsage!.last.totalTokens <= 0) {
-                  Row().width('100%').height(8).backgroundColor('#F4F4F5').borderRadius(4)
-                } else {
-                  Row() {
-                    if (this.tokenUsage!.last.inputTokens > 0) {
-                      Row()
-                        .width(this.safePct(this.tokenUsage!.last.inputTokens, this.tokenUsage!.last.totalTokens))
-                        .height(8)
-                        .backgroundColor('#3B82F6')
-                    }
-                    if (this.tokenUsage!.last.cachedInputTokens > 0) {
-                      Row()
-                        .width(this.safePct(this.tokenUsage!.last.cachedInputTokens, this.tokenUsage!.last.totalTokens))
-                        .height(8)
-                        .backgroundColor('#A1A1AA')
-                    }
-                    if (this.tokenUsage!.last.outputTokens > 0) {
-                      Row()
-                        .width(this.safePct(this.tokenUsage!.last.outputTokens, this.tokenUsage!.last.totalTokens))
-                        .height(8)
-                        .backgroundColor('#22C55E')
-                    }
-                    if (this.tokenUsage!.last.reasoningOutputTokens > 0) {
-                      Row()
-                        .width(this.safePct(this.tokenUsage!.last.reasoningOutputTokens, this.tokenUsage!.last.totalTokens))
-                        .height(8)
-                        .backgroundColor('#A855F7')
-                    }
-                  }
-                  .width('100%')
-                  .height(8)
-                  .borderRadius(4)
-                  .clip(true)
-                }
                 // 细分数字
                 Column() {
                   Row() {
@@ -4366,7 +4332,7 @@ struct Index {
                     Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
                   }.width('100%').padding({ top: 6 })
                 }
-                .margin({ top: 10 })
+                .margin({ top: 4 })
               }
             }
             .margin({ top: 8 })
@@ -4415,121 +4381,201 @@ struct Index {
                 .backgroundColor('#F4F4F5')
                 .width('100%')
 
-                // 今日视图：柱状图
+                // 今日视图：水平堆叠条 + 卡片
                 if (this.tokenTrendRange === 0) {
                   Column() {
+                    // 总量摘要
                     Row() {
-                      Text(`共 ${this.formatTokenCount(this.tokenAggregate!.today.totalTokens)} tokens · ${this.tokenAggregate!.today.requestCount} 次请求`)
-                        .fontSize(10).fontColor('#A1A1AA')
-                    }.width('100%').margin({ top: 10 })
-
-                    // 柱状图
-                    Row({ space: 8 }) {
-                      Column() {
-                        Column()
-                          .width(28)
-                          .height(this.tokenAggregate!.today.inputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.inputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#3B82F6').borderRadius({ topLeft: 4, topRight: 4 })
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens))
-                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
-                        Text('输入').fontSize(9).fontColor('#A1A1AA')
-                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
-
-                      Column() {
-                        Column()
-                          .width(28)
-                          .height(this.tokenAggregate!.today.outputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.outputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#22C55E').borderRadius({ topLeft: 4, topRight: 4 })
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens))
-                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
-                        Text('输出').fontSize(9).fontColor('#A1A1AA')
-                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
-
-                      Column() {
-                        Column()
-                          .width(28)
-                          .height(this.tokenAggregate!.today.cachedInputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.cachedInputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#A1A1AA').borderRadius({ topLeft: 4, topRight: 4 })
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens))
-                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
-                        Text('缓存').fontSize(9).fontColor('#A1A1AA')
-                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
-
-                      Column() {
-                        Column()
-                          .width(28)
-                          .height(this.tokenAggregate!.today.reasoningOutputTokens > 0 ? `${Math.max((this.tokenAggregate!.today.reasoningOutputTokens / this.tokenAggregate!.today.totalTokens) * 60, 3)}px` : '3px')
-                          .backgroundColor('#A855F7').borderRadius({ topLeft: 4, topRight: 4 })
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens))
-                          .fontSize(9).fontColor('#A1A1AA').margin({ top: 2 })
-                        Text('推理').fontSize(9).fontColor('#A1A1AA')
-                      }.alignItems(HorizontalAlign.Center).layoutWeight(1)
+                      Text(this.formatTokenCount(this.tokenAggregate!.today.totalTokens))
+                        .fontSize(20)
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor('#18181B')
+                      Text(' tokens')
+                        .fontSize(11)
+                        .fontColor('#A1A1AA')
+                        .margin({ left: 2 })
+                      Blank()
+                      Text(`${this.tokenAggregate!.today.requestCount} 次请求`)
+                        .fontSize(11)
+                        .fontColor('#A1A1AA')
                     }
                     .width('100%')
-                    .alignItems(VerticalAlign.Bottom)
                     .margin({ top: 10 })
+                    .alignItems(VerticalAlign.Bottom)
+
+                    // 水平堆叠条
+                    if (this.tokenAggregate!.today.totalTokens > 0) {
+                      Row() {
+                        if (this.tokenAggregate!.today.inputTokens > 0) {
+                          Row()
+                            .layoutWeight(this.tokenAggregate!.today.inputTokens)
+                            .height(8)
+                            .backgroundColor('#3B82F6')
+                        }
+                        if (this.tokenAggregate!.today.cachedInputTokens > 0) {
+                          Row()
+                            .layoutWeight(this.tokenAggregate!.today.cachedInputTokens)
+                            .height(8)
+                            .backgroundColor('#A1A1AA')
+                        }
+                        if (this.tokenAggregate!.today.outputTokens > 0) {
+                          Row()
+                            .layoutWeight(this.tokenAggregate!.today.outputTokens)
+                            .height(8)
+                            .backgroundColor('#22C55E')
+                        }
+                        if (this.tokenAggregate!.today.reasoningOutputTokens > 0) {
+                          Row()
+                            .layoutWeight(this.tokenAggregate!.today.reasoningOutputTokens)
+                            .height(8)
+                            .backgroundColor('#A855F7')
+                        }
+                      }
+                      .width('100%')
+                      .height(8)
+                      .borderRadius(4)
+                      .clip(true)
+                      .margin({ top: 10 })
+                    }
+
+                    // 分类明细卡片
+                    Column() {
+                      Row() {
+                        this.trendLegendDot('#3B82F6')
+                        Text('输入').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Blank()
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                      }.width('100%').padding({ top: 8, bottom: 8 })
+
+                      Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+
+                      Row() {
+                        this.trendLegendDot('#A1A1AA')
+                        Text('缓存').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Blank()
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                      }.width('100%').padding({ top: 8, bottom: 8 })
+
+                      Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+
+                      Row() {
+                        this.trendLegendDot('#22C55E')
+                        Text('输出').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Blank()
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                      }.width('100%').padding({ top: 8, bottom: 8 })
+
+                      Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+
+                      Row() {
+                        this.trendLegendDot('#A855F7')
+                        Text('推理').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Blank()
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                      }.width('100%').padding({ top: 8, bottom: 8 })
+                    }
+                    .width('100%')
+                    .margin({ top: 12 })
+                    .padding(10)
+                    .backgroundColor('#FAFAFA')
+                    .borderRadius(8)
                   }
                 }
 
-                // 近7天/近30天视图：曲线图
+                // 近7天/近30天视图：面积图
                 if (this.tokenTrendRange === 1 || this.tokenTrendRange === 2) {
                   Column() {
-                    // 总计
+                    // 总量摘要
                     Row() {
-                      Text(`共 ${this.formatTokenCount(this.getTrendSumTokens())} tokens · ${this.getTrendSumRequests()} 次请求`)
-                        .fontSize(10).fontColor('#A1A1AA')
-                    }.width('100%').margin({ top: 10 })
+                      Text(this.formatTokenCount(this.getTrendSumTokens()))
+                        .fontSize(20)
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor('#18181B')
+                      Text(' tokens')
+                        .fontSize(11)
+                        .fontColor('#A1A1AA')
+                        .margin({ left: 2 })
+                      Blank()
+                      Text(`${this.getTrendSumRequests()} 次请求`)
+                        .fontSize(11)
+                        .fontColor('#A1A1AA')
+                    }
+                    .width('100%')
+                    .margin({ top: 10 })
+                    .alignItems(VerticalAlign.Bottom)
 
-                    // 曲线图区域
+                    // 面积图
                     Stack({ alignContent: Alignment.BottomStart }) {
                       // 网格线
                       Column() {
-                        Row().width('100%').height(1).backgroundColor('#F4F4F5')
-                        Row().width('100%').height(1).backgroundColor('#F4F4F5').margin({ top: 19 })
-                        Row().width('100%').height(1).backgroundColor('#F4F4F5').margin({ top: 19 })
-                      }.width(220).height(60)
+                        Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+                        Row().width('100%').height(0.5).backgroundColor('#F4F4F5').margin({ top: 24 })
+                        Row().width('100%').height(0.5).backgroundColor('#F4F4F5').margin({ top: 24 })
+                      }
+                      .width('100%')
+                      .height(52)
+                      .padding({ left: 2, right: 2 })
 
-                      // Token 曲线
+                      // 面积填充
+                      Shape() {
+                        Path()
+                          .commands(this.getTrendAreaPath())
+                          .fill('#1A3B82F6')
+                          .stroke('none')
+                      }
+                      .width('100%')
+                      .height(52)
+
+                      // 折线
                       Shape() {
                         Path()
                           .commands(this.getTrendTokenPath())
                           .stroke('#3B82F6')
-                          .strokeWidth(1.5)
+                          .strokeWidth(2)
                           .fill('none')
-                      }.width(220).height(60)
-
-                      // 请求曲线
-                      Shape() {
-                        Path()
-                          .commands(this.getTrendRequestPath())
-                          .stroke('#22C55E')
-                          .strokeWidth(1.5)
-                          .fill('none')
-                          .strokeDashArray([4, 2])
-                      }.width(220).height(60)
+                      }
+                      .width('100%')
+                      .height(52)
                     }
-                    .width(220)
-                    .height(60)
-                    .margin({ top: 10 })
-
-                    // 图例
-                    Row({ space: 16 }) {
-                      Row({ space: 4 }) {
-                        Row().width(12).height(2).backgroundColor('#3B82F6')
-                        Text('Tokens').fontSize(9).fontColor('#A1A1AA')
-                      }
-                      Row({ space: 4 }) {
-                        Row().width(12).height(2).backgroundColor('#22C55E')
-                        Text('请求').fontSize(9).fontColor('#A1A1AA')
-                      }
-                    }.margin({ top: 6 })
+                    .width('100%')
+                    .height(52)
+                    .margin({ top: 12 })
 
                     // X轴日期
                     Row() {
-                      Text(this.getTrendFirstDate()).fontSize(8).fontColor('#A1A1AA')
+                      Text(this.getTrendFirstDate()).fontSize(9).fontColor('#A1A1AA')
                       Blank()
-                      Text(this.getTrendLastDate()).fontSize(8).fontColor('#A1A1AA')
-                    }.width(220).margin({ top: 2 })
+                      Text(this.getTrendLastDate()).fontSize(9).fontColor('#A1A1AA')
+                    }
+                    .width('100%')
+                    .margin({ top: 4 })
+
+                    // 每日明细列表
+                    Column() {
+                      ForEach(this.getTrendData().slice(-7).reverse(), (item: DailyTokenSnapshot) => {
+                        Row() {
+                          Text(item.date.substring(5))
+                            .fontSize(11)
+                            .fontColor('#71717A')
+                            .width(40)
+                          Blank()
+                          Text(this.formatTokenCount(item.totalTokens))
+                            .fontSize(11)
+                            .fontColor('#18181B')
+                            .fontWeight(FontWeight.Medium)
+                          Text(`  ${item.requestCount}次`)
+                            .fontSize(10)
+                            .fontColor('#A1A1AA')
+                        }
+                        .width('100%')
+                        .padding({ top: 7, bottom: 7 })
+                      })
+                    }
+                    .width('100%')
+                    .margin({ top: 12 })
+                    .padding(10)
+                    .backgroundColor('#FAFAFA')
+                    .borderRadius(8)
                   }
                 }
               }

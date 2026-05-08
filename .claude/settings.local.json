@@ -18,7 +18,11 @@
       "Bash(Select-Object FullName, LastWriteTime, Length)",
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\build\" -Recurse -ErrorAction SilentlyContinue | Where-Object { !$_.PSIsContainer } | Select-Object FullName -First 20)",
       "Bash(python *)",
-      "Bash(git -C \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\" diff HEAD -- \"Agent/entry/src/main/ets/pages/Index.ets\")"
+      "Bash(git -C \"C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\" diff HEAD -- \"Agent/entry/src/main/ets/pages/Index.ets\")",
+      "PowerShell(New-Item *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Huawei\\\\DevEco Studio\\\\tools\\\\hvigor\\\\bin\\\\hvigorw.bat\" tasks)"
     ]
   }
 }
