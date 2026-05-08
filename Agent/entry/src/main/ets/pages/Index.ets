@@ -821,7 +821,9 @@ struct Index {
         next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
       }
     }
-    this.projects = next;
+    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+      this.projects = next;
+    });
     this.saveProjects();
     setTimeout(() => {
       this.leftScrollController.scrollTo({ yOffset: savedOffset, xOffset: 0 });
@@ -2054,7 +2056,7 @@ struct Index {
         // Project header row
         Row() {
           Text(proj.expanded ? '▾' : '▸')
-            .fontSize(11)
+            .fontSize(13)
             .fontColor('#71717A')
             .width(16)
 
@@ -2171,6 +2173,7 @@ struct Index {
           }
           .width('100%')
           .padding({ left: 16 })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseOut }))
         }
       }
       .width('100%')
@@ -2285,11 +2288,6 @@ struct Index {
           .padding({ left: 8, right: 8, top: 5, bottom: 5 })
           .borderRadius(6)
           .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
-          .onHover((isHover: boolean) => {
-            if (this.showSessionMenuId.length === 0) {
-              this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
-            }
-          })
           .onClick(() => {
             void this.selectWorkspace(item);
           })
@@ -2297,6 +2295,12 @@ struct Index {
         }
       }
       .width('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
+      .onHover((isHover: boolean) => {
+        if (this.showSessionMenuId.length === 0) {
+          this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
+        }
+      })
   }
 
   private findSessionUpdatedAt(item: WorkspaceItem): string {
@@ -2843,6 +2847,12 @@ struct Index {
         .fontColor('#18181B')
         .width('100%')
 
+      Divider()
+        .width('100%')
+        .color('#D4D4D8')
+        .strokeWidth(0.5)
+        .margin({ top: 12, bottom: 4 })
+
       // Title row with + button
       Row() {
         Text('项目')
@@ -2880,7 +2890,7 @@ struct Index {
             ListItem() {
               this.projectGroup(proj)
             }
-            .padding({ left: 0, right: 0 })
+            .hitTestBehavior(HitTestMode.Transparent)
           }, (proj: ProjectRecord) => `${proj.id}_${proj.expanded.toString()}`)
         }
       }
