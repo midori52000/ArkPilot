@@ -225,14 +225,12 @@ struct Index {
   @State private showDeleteSessionDialog: boolean = false;
   @State private deleteSessionDialogId: string = '';
   @State private deleteSessionDialogTitle: string = '';
-  @State private hoveredSessionMenuKey: string = '';
   @State private showRenameProjectDialog: boolean = false;
   @State private renameProjectDialogText: string = '';
   @State private renameProjectDialogId: string = '';
   @State private showDeleteProjectDialog: boolean = false;
   @State private deleteProjectDialogId: string = '';
   @State private deleteProjectDialogName: string = '';
-  @State private hoveredMenuKey: string = '';
 
 
   aboutToAppear(): void {
@@ -1939,7 +1937,6 @@ struct Index {
 
   @Builder
   private projectGroup(proj: ProjectRecord) {
-    Stack({ alignContent: Alignment.TopEnd }) {
       Column() {
         // Project header row
         Row() {
@@ -1982,6 +1979,7 @@ struct Index {
             .padding({ left: 6, right: 6, top: 0, bottom: 0 })
             .height(20)
             .visibility(this.hoveredProjectId === proj.id ? Visibility.Visible : Visibility.Hidden)
+            .bindContextMenu(!!this.showProjectMenuId, this.projectContextMenuBuilder(proj), { placement: Placement.TopRight })
             .onClick(() => {
               this.showProjectMenuId = this.showProjectMenuId === proj.id ? '' : proj.id;
             })
@@ -2000,10 +1998,11 @@ struct Index {
         .borderRadius(6)
         .backgroundColor(this.hoveredProjectId === proj.id ? '#F4F4F5' : 'transparent')
         .onHover((isHover: boolean) => {
-          this.hoveredProjectId = isHover ? proj.id : '';
+          if (this.showProjectMenuId.length === 0) {
+            this.hoveredProjectId = isHover ? proj.id : '';
+          }
         })
         .onClick(() => {
-          this.showProjectMenuId = '';
           this.toggleProjectExpanded(proj.id);
         })
         .bindContextMenu(this.projectContextMenuBuilder(proj), ResponseType.RightClick)
@@ -2061,85 +2060,8 @@ struct Index {
           .padding({ left: 16 })
         }
       }
-
-      // Dropdown context menu for "..." button
-      if (this.showProjectMenuId === proj.id) {
-        Column() {
-          Text('重命名项目')
-            .fontSize(12)
-            .fontColor('#27272A')
-            .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .backgroundColor(this.hoveredMenuKey === 'rename' ? '#F4F4F5' : '#FFFFFF')
-            .borderRadius({ topLeft: 8, topRight: 8 })
-            .onHover((isHover: boolean) => {
-              this.hoveredMenuKey = isHover ? 'rename' : '';
-            })
-            .onClick(() => {
-              this.showProjectMenuId = '';
-              this.renameProjectDialogId = proj.id;
-              this.renameProjectDialogText = proj.name;
-              this.showRenameProjectDialog = true;
-            })
-
-          Text('删除项目')
-            .fontSize(12)
-            .fontColor('#DC2626')
-            .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .backgroundColor(this.hoveredMenuKey === 'delete' ? '#FEF2F2' : '#FFFFFF')
-            .onHover((isHover: boolean) => {
-              this.hoveredMenuKey = isHover ? 'delete' : '';
-            })
-            .onClick(() => {
-              this.showProjectMenuId = '';
-              this.deleteProjectDialogId = proj.id;
-              this.deleteProjectDialogName = proj.name;
-              this.showDeleteProjectDialog = true;
-            })
-
-          Text('复制路径')
-            .fontSize(12)
-            .fontColor('#27272A')
-            .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .backgroundColor(this.hoveredMenuKey === 'copy' ? '#F4F4F5' : '#FFFFFF')
-            .borderRadius({ bottomLeft: 8, bottomRight: 8 })
-            .onHover((isHover: boolean) => {
-              this.hoveredMenuKey = isHover ? 'copy' : '';
-            })
-            .onClick(() => {
-              this.showProjectMenuId = '';
-              let targetPath: string = '';
-              for (let i: number = 0; i < this.projects.length; i += 1) {
-                if (this.projects[i].id === proj.id) {
-                  targetPath = this.projects[i].path;
-                  break;
-                }
-              }
-              if (targetPath.length > 0) {
-                try {
-                  const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, targetPath);
-                  const systemPasteboard = pasteboard.getSystemPasteboard();
-                  void systemPasteboard.setData(pasteData);
-                  promptAction.showToast({ message: '路径已复制', duration: 2000 });
-                } catch (_err) {
-                  promptAction.showToast({ message: '复制失败', duration: 2000 });
-                }
-              }
-            })
-        }
-        .width(140)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(8)
-        .shadow({ radius: 8, color: 'rgba(0,0,0,0.1)', offsetX: 0, offsetY: 2 })
-        .position({ x: 60, y: 32 })
-        .zIndex(100)
-      }
-    }
-    .width('100%')
-    .margin({ bottom: 4 })
+      .width('100%')
+      .margin({ bottom: 4 })
   }
 
   @Builder
@@ -2184,7 +2106,6 @@ struct Index {
 
   @Builder
   private sessionItem(item: WorkspaceItem) {
-    Stack({ alignContent: Alignment.TopEnd }) {
       Column() {
         if (this.renamingSessionId === this.ensureWorkspaceBinding(item)) {
           // Inline rename mode
@@ -2241,6 +2162,7 @@ struct Index {
               .fontColor('#A1A1AA')
               .padding({ left: 2, right: 2 })
               .visibility(this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? Visibility.Visible : Visibility.Hidden)
+              .bindContextMenu(!!this.showSessionMenuId, this.sessionContextMenuBuilder(item), { placement: Placement.TopRight })
               .onClick(() => {
                 const sid: string = this.ensureWorkspaceBinding(item);
                 this.showSessionMenuId = this.showSessionMenuId === sid ? '' : sid;
@@ -2251,63 +2173,17 @@ struct Index {
           .borderRadius(6)
           .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
           .onHover((isHover: boolean) => {
-            this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
+            if (this.showSessionMenuId.length === 0) {
+              this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
+            }
           })
           .onClick(() => {
-            this.showSessionMenuId = '';
             void this.selectWorkspace(item);
           })
           .bindContextMenu(this.sessionContextMenuBuilder(item), ResponseType.RightClick)
         }
       }
-
-      // Dropdown context menu for session "..." button
-      if (this.showSessionMenuId === this.ensureWorkspaceBinding(item) && this.renamingSessionId !== this.ensureWorkspaceBinding(item)) {
-        Column() {
-          Text('重命名会话')
-            .fontSize(12)
-            .fontColor('#27272A')
-            .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .backgroundColor(this.hoveredSessionMenuKey === 'rename' ? '#F4F4F5' : '#FFFFFF')
-            .borderRadius({ topLeft: 8, topRight: 8 })
-            .onHover((isHover: boolean) => {
-              this.hoveredSessionMenuKey = isHover ? 'rename' : '';
-            })
-            .onClick(() => {
-              this.showSessionMenuId = '';
-              this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
-              this.renameSessionDialogText = item.title;
-              this.showRenameSessionDialog = true;
-            })
-
-          Text('删除会话')
-            .fontSize(12)
-            .fontColor('#DC2626')
-            .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .backgroundColor(this.hoveredSessionMenuKey === 'delete' ? '#FEF2F2' : '#FFFFFF')
-            .borderRadius({ bottomLeft: 8, bottomRight: 8 })
-            .onHover((isHover: boolean) => {
-              this.hoveredSessionMenuKey = isHover ? 'delete' : '';
-            })
-            .onClick(() => {
-              this.showSessionMenuId = '';
-              this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
-              this.deleteSessionDialogTitle = item.title;
-              this.showDeleteSessionDialog = true;
-            })
-        }
-        .width(140)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(8)
-        .shadow({ radius: 8, color: 'rgba(0,0,0,0.1)', offsetX: 0, offsetY: 2 })
-        .position({ x: 40, y: 28 })
-        .zIndex(100)
-      }
-    }
-    .width('100%')
+      .width('100%')
   }
 
   private findSessionUpdatedAt(item: WorkspaceItem): string {
@@ -2940,20 +2816,10 @@ struct Index {
               Blank()
                 .layoutWeight(1)
 
-              Text('★')
-                .fontSize(12)
-                .fontColor('#A1A1AA')
-                .padding({ left: 6, right: 6 })
-
-              Text('≡')
-                .fontSize(14)
-                .fontColor('#A1A1AA')
-                .padding({ left: 6, right: 6 })
-
-              Text('⊞')
-                .fontSize(14)
-                .fontColor('#A1A1AA')
-                .padding({ left: 2, right: 4 })
+              Text('+')
+                .fontSize(18)
+                .fontColor('#71717A')
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .onClick(() => {
                   this.newProjectName = '';
                   this.newProjectPath = '';
