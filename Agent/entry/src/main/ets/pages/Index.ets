@@ -162,6 +162,8 @@ struct Index {
   @State private showRightDrawer: boolean = true;
   @State private leftPanelWidth: number = 280;
   @State private rightPanelWidth: number = 360;
+  private leftScrollOffset: number = 0;
+  private leftScrollController: Scroller = new Scroller();
   private readonly leftDrawerMinWidth: number = 100;
   private readonly rightDrawerMinWidth: number = 120;
   private dragStartLeftW: number = 0;
@@ -809,6 +811,7 @@ struct Index {
   }
 
   private toggleProjectExpanded(projectId: string): void {
+    const savedOffset: number = this.leftScrollController.currentOffset().yOffset;
     const next: ProjectRecord[] = [];
     for (let i: number = 0; i < this.projects.length; i += 1) {
       const p: ProjectRecord = this.projects[i];
@@ -820,6 +823,9 @@ struct Index {
     }
     this.projects = next;
     this.saveProjects();
+    setTimeout(() => {
+      this.leftScrollController.scrollTo({ yOffset: savedOffset, xOffset: 0 });
+    }, 50);
   }
 
   private openNewSessionDialog(projectId: string): void {
@@ -2684,72 +2690,85 @@ struct Index {
   @Builder
   private leftPanel() {
     Column() {
-      Scroll() {
-        Column() {
-          // Header
-          Row() {
-            Column() {
-              Text('ArkPilot')
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#18181B')
-            }
-            .alignItems(HorizontalAlign.Start)
+      // Header
+      Text('ArkPilot')
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#18181B')
+        .width('100%')
+
+      // Title row with + button
+      Row() {
+        Text('项目')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#18181B')
+
+        Blank()
+          .layoutWeight(1)
+
+        Text('+')
+          .fontSize(18)
+          .fontColor('#71717A')
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .onClick(() => {
+            this.newProjectName = '';
+            this.newProjectPath = '';
+            this.showCreateProjectDialog = true;
+          })
+      }
+      .width('100%')
+      .padding({ left: 4, right: 4, top: 8, bottom: 8 })
+
+      // Scrollable project list — takes all remaining space
+      List({ scroller: this.leftScrollController }) {
+        if (this.projects.length === 0) {
+          ListItem() {
+            Text('暂无项目，点击右上角 + 创建')
+              .fontSize(10)
+              .fontColor('#D4D4D8')
+              .margin({ top: 4 })
           }
-          .width('100%')
-
-          // Projects section
-          Column() {
-            // Header row with title + icons
-            Row() {
-              Text('项目')
-                .fontSize(13)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#18181B')
-
-              Blank()
-                .layoutWeight(1)
-
-              Text('+')
-                .fontSize(18)
-                .fontColor('#71717A')
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .onClick(() => {
-                  this.newProjectName = '';
-                  this.newProjectPath = '';
-                  this.showCreateProjectDialog = true;
-                })
+        } else {
+          ForEach(this.projects, (proj: ProjectRecord) => {
+            ListItem() {
+              this.projectGroup(proj)
             }
-            .width('100%')
-            .padding({ left: 4, right: 4, top: 4, bottom: 8 })
-
-            if (this.projects.length === 0) {
-              Text('暂无项目，点击右上角 + 创建')
-                .fontSize(10)
-                .fontColor('#D4D4D8')
-                .margin({ top: 8 })
-            } else {
-              ForEach(this.projects, (proj: ProjectRecord) => {
-                this.projectGroup(proj)
-              }, (proj: ProjectRecord) => `${proj.id}_${proj.expanded.toString()}`)
-            }
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(12)
-          .margin({ top: 10 })
-          .backgroundColor('#FFFFFF')
-          .border({ width: 0.5, color: '#E4E4E7' })
-          .borderRadius(12)
+            .padding({ left: 0, right: 0 })
+          }, (proj: ProjectRecord) => `${proj.id}_${proj.expanded.toString()}`)
         }
       }
-      .scrollable(ScrollDirection.Vertical)
+      .listDirection(Axis.Vertical)
       .scrollBar(BarState.Auto)
       .layoutWeight(1)
       .width('100%')
+      .edgeEffect(EdgeEffect.Spring)
 
-      // Create project dialog
+      // Settings button — always at bottom
+      Button() {
+        Row() {
+          Text('⚙')
+            .fontSize(14)
+            .fontColor('#71717A')
+
+          Text('设置')
+            .fontSize(12)
+            .fontColor('#71717A')
+            .margin({ left: 6 })
+        }
+      }
+      .height(38)
+      .width('100%')
+      .margin({ top: 8 })
+      .backgroundColor('#FFFFFF')
+      .borderRadius(16)
+      .border({ width: 0.5, color: '#E4E4E7' })
+      .onClick(() => {
+        router.pushUrl({ url: 'pages/SettingsPage' });
+      })
+
+      // Dialogs — below Settings button
       if (this.showCreateProjectDialog) {
         Column() {
           Text('新建项目')
@@ -2822,13 +2841,12 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
-        .margin({ top: 10 })
+        .margin({ top: 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(12)
       }
 
-      // Create session dialog
       if (this.showNewSessionDialog) {
         Column() {
           Text('新建会话')
@@ -2879,13 +2897,12 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
-        .margin({ top: 10 })
+        .margin({ top: 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(12)
       }
 
-      // Rename project dialog
       if (this.showRenameProjectDialog) {
         Column() {
           Text('重命名项目')
@@ -2951,13 +2968,12 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
-        .margin({ top: 10 })
+        .margin({ top: 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(12)
       }
 
-      // Delete project dialog
       if (this.showDeleteProjectDialog) {
         Column() {
           Text('删除项目')
@@ -3005,13 +3021,12 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
-        .margin({ top: 10 })
+        .margin({ top: 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(12)
       }
 
-      // Rename session dialog
       if (this.showRenameSessionDialog) {
         Column() {
           Text('重命名会话')
@@ -3080,13 +3095,12 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
-        .margin({ top: 10 })
+        .margin({ top: 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(12)
       }
 
-      // Delete session dialog
       if (this.showDeleteSessionDialog) {
         Column() {
           Text('删除会话')
@@ -3134,34 +3148,11 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(12)
-        .margin({ top: 10 })
+        .margin({ top: 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: 0.5, color: '#E4E4E7' })
         .borderRadius(12)
       }
-
-      // Settings button
-      Button() {
-        Row() {
-          Text('⚙')
-            .fontSize(14)
-            .fontColor('#71717A')
-
-          Text('设置')
-            .fontSize(12)
-            .fontColor('#71717A')
-            .margin({ left: 6 })
-        }
-      }
-      .height(38)
-      .width('100%')
-      .margin({ top: 8 })
-      .backgroundColor('#FFFFFF')
-      .borderRadius(16)
-      .border({ width: 0.5, color: '#E4E4E7' })
-      .onClick(() => {
-        router.pushUrl({ url: 'pages/SettingsPage' });
-      })
     }
     .height('100%')
     .width(this.leftPanelWidth)
@@ -4327,10 +4318,7 @@ struct Index {
       Row() {
         if (this.showLeftDrawer) {
           Row() {
-            Column() {
-              this.leftPanel()
-            }
-            .height('100%')
+            this.leftPanel()
 
             Column() {
               Column()
@@ -4369,6 +4357,7 @@ struct Index {
                 })
             )
           }
+          .height('100%')
           .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
         }
 
