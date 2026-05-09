@@ -2699,7 +2699,7 @@ where
 {
     let runtime = NATIVE_ASYNC_RUNTIME
         .lock()
-        .expect("native async runtime lock");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     runtime.block_on(future)
 }
 

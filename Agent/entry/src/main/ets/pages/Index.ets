@@ -366,7 +366,7 @@ struct Index {
 
     void this.restoreSessionsFromBackend();
 
-    this.scheduleEmbeddedHostReconnect(0);
+    this.scheduleEmbeddedHostReconnect(2000);
     this.scheduleMessageScrollToBottom();
   }
 

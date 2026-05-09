@@ -1371,11 +1371,20 @@ export class CodexBackend {
     this.updateConnectionState('connecting', '正在初始化原生桥接');
     const initRequest: InitializeRequestPayload = new InitializeRequestPayload();
     const initResult: Object = parseJsonText(initializeNative(JSON.stringify(initRequest)), new Object() as Object);
+    const initRecord: Record<string, Object> = initResult as Record<string, Object>;
+    const ok: boolean = initRecord['ok'] === true;
+    if (!ok) {
+      const errorText: string = typeof initRecord['error'] === 'string'
+        ? (initRecord['error'] as string)
+        : 'initialize failed';
+      this.updateConnectionState('error', `连接失败: ${errorText}`);
+      throw new Error(`initialize failed: ${errorText}`);
+    }
     this.initialized = true;
     this.refreshCollaborationModes();
     await this.refreshAccountState();
-    const platformOs: string = typeof (initResult as Record<string, Object>)['platformOs'] === 'string'
-      ? ((initResult as Record<string, Object>)['platformOs'] as string)
+    const platformOs: string = typeof initRecord['platformOs'] === 'string'
+      ? (initRecord['platformOs'] as string)
       : 'ohos';
     this.updateConnectionState('connected', `已连接 · ${platformOs}`);
     this.ensureApprovalPolling();
