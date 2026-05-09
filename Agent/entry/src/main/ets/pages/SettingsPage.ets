@@ -1959,75 +1959,22 @@ struct SettingsPage {
   }
 
   @Builder
-  private skillsSummaryCard(title: string, value: string, color: string, background: string, tab: SkillsSubTab) {
+  private tabBarBuilder(title: string, index: number) {
     Column() {
       Text(title)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#64748B')
-      Text(value)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-        .margin({ top: 6 })
-      Row() {
-        Column()
-          .width(8)
-          .height(8)
-          .backgroundColor(color)
-          .borderRadius(10)
-        Text(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '当前' : '就绪')
-          .copyOption(CopyOptions.None)
-          .fontSize(10)
-          .fontColor(color)
-          .margin({ left: 6 })
-      }
-      .margin({ top: 10 })
+        .fontSize(13)
+        .fontWeight(this.skillsActiveSubTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.skillsActiveSubTabIndex === index ? '#0A84FF' : '#475569')
+        .margin({ bottom: 6 })
+      Column()
+        .width(24)
+        .height(2)
+        .borderRadius(1)
+        .backgroundColor(this.skillsActiveSubTabIndex === index ? '#0A84FF' : 'transparent')
     }
-    .alignItems(HorizontalAlign.Start)
-    .layoutWeight(1)
-    .height(112)
-    .padding(16)
-    .backgroundColor(background)
-    .border({
-      width: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? 1.6 : 1,
-      color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? color : '#DCE7F3'
-    })
-    .borderRadius(20)
-    .margin({ right: 12 })
-    .scale({ x: this.pressScale(`skill-summary-${tab}`), y: this.pressScale(`skill-summary-${tab}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(`skill-summary-${tab}`, event); })
-    .onClick(() => { this.switchSkillsSubTab(tab); })
-  }
-
-  @Builder
-  private skillsSubTabButton(label: string, tab: SkillsSubTab) {
-    Button(label)
-      .height(32)
-      .fontSize(11)
-      .fontWeight(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#0A84FF' : '#475569')
-      .backgroundColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#EAF3FF' : '#F8FAFC')
-      .border({ width: 1, color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#BFDBFE' : '#DCE5EF' })
-      .borderRadius(12)
-      .padding({ left: 12, right: 12 })
-      .margin({ right: 8 })
-      .scale({ x: this.pressScale(`skill-tab-${tab}`), y: this.pressScale(`skill-tab-${tab}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(`skill-tab-${tab}`, event); })
-      .onClick(() => { this.switchSkillsSubTab(tab); })
-  }
-
-  @Builder
-  private skillInlineTag(label: string, accent: boolean = false) {
-    Text(label)
-      .copyOption(CopyOptions.None)
-      .fontSize(10)
-      .fontWeight(FontWeight.Medium)
-      .fontColor(accent ? '#94A3B8' : '#A3AFBF')
-      .margin({ left: 6 })
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 8, bottom: 8 })
   }
 
   @Builder
@@ -2072,94 +2019,6 @@ struct SettingsPage {
   }
 
   @Builder
-  private installedSkillsPanel() {
-    Column() {
-      if (this.installedSkills.length === 0) {
-        this.skillsEmptyState('暂无已安装 Skills', '点击刷新当前重新扫描本机 Skills 目录。')
-      } else {
-        ForEach(this.installedSkills, (skill: InstalledSkill) => {
-          Row() {
-            Column() {
-              Row() {
-                Text(skill.name)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#111827')
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                if (skill.enabled) {
-                  Text('启用')
-                    .copyOption(CopyOptions.None)
-                    .fontSize(9)
-                    .fontColor('#16A34A')
-                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                    .backgroundColor('#DCFCE7')
-                    .borderRadius(8)
-                    .margin({ left: 8 })
-                }
-              }
-              .width('100%')
-              .alignItems(VerticalAlign.Center)
-              Text(skill.description)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(11)
-                .fontColor('#667085')
-                .lineHeight(17)
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .margin({ top: 6 })
-              Row() {
-                Text(this.skillSourceText(skill))
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#94A3B8')
-                Text(this.skillMetaText(skill))
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#94A3B8')
-                  .margin({ left: 10 })
-              }
-              .width('100%')
-              .margin({ top: 8 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-            .padding({ right: 12 })
-            Row() {
-              this.skillActionButton(
-                skill.enabled ? '启用中' : '禁用中', `skill-toggle-${skill.id}`,
-                skill.enabled ? '#16A34A' : '#94A3B8', skill.enabled ? '#DCFCE7' : '#F5F7FA',
-                skill.enabled ? '#BBF7D0' : '#E5EAF1', () => { this.toggleSkillEnabled(skill.id); }
-              )
-              this.skillActionButton(
-                '打开', `skill-open-${skill.id}`, '#6366F1', '#EEF2FF', '#C7D2FE',
-                () => { this.showSkillDetail(skill); }
-              )
-              this.skillActionButton(
-                '删除', `skill-delete-${skill.id}`, '#EF4444', '#FEF2F2', '#FECACA',
-                () => { this.requestUninstallSkill(skill.id); }
-              )
-            }
-            .justifyContent(FlexAlign.End)
-            .alignItems(VerticalAlign.Center)
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .border({ width: 1, color: skill.enabled ? '#D1FAE5' : '#E7ECF3' })
-        }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
-      }
-    }
-    .width('100%')
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E6EBF2' })
-    .borderRadius(18)
-    .clip(true)
-  }
-
-  @Builder
   private installedSkillsList() {
     Column() {
       if (this.installedSkills.length === 0) {
@@ -2188,7 +2047,12 @@ struct SettingsPage {
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
-                this.pill(skill.enabled ? '启用中' : '禁用中', skill.enabled ? '#DCFCE7' : '#F1F5F9', skill.enabled ? '#166534' : '#64748B')
+                Toggle({ type: ToggleType.Switch, isOn: skill.enabled })
+                  .selectedColor('#16A34A')
+                  .switchPointColor('#FFFFFF')
+                  .width(44)
+                  .height(22)
+                  .onChange((isOn: boolean) => { this.toggleSkillEnabled(skill.id); })
               }
               .width('100%')
               Row() {
@@ -2235,17 +2099,12 @@ struct SettingsPage {
         .justifyContent(FlexAlign.Center)
       } else {
         Column() {
-          Row() {
-            Text(this.selectedSkill()!.name)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#0F172A')
-              .layoutWeight(1)
-            this.pill(this.selectedSkill()!.enabled ? '启用中' : '禁用中', this.selectedSkill()!.enabled ? '#DCFCE7' : '#F1F5F9', this.selectedSkill()!.enabled ? '#166534' : '#64748B')
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
+          Text(this.selectedSkill()!.name)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#0F172A')
+            .width('100%')
           Text(this.selectedSkill()!.description)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
@@ -2280,11 +2139,6 @@ struct SettingsPage {
           .backgroundColor('#F8FAFC')
           .borderRadius(12)
           Row() {
-            this.skillActionButton(
-              this.selectedSkill()!.enabled ? '启用中' : '禁用中', `skill-preview-toggle-${this.selectedSkill()!.id}`,
-              this.selectedSkill()!.enabled ? '#16A34A' : '#94A3B8', this.selectedSkill()!.enabled ? '#DCFCE7' : '#F5F7FA',
-              this.selectedSkill()!.enabled ? '#BBF7D0' : '#E5EAF1', () => { this.toggleSkillEnabled(this.selectedSkill()!.id); }
-            )
             this.skillActionButton(
               '删除', `skill-preview-delete-${this.selectedSkill()!.id}`, '#EF4444', '#FEF2F2', '#FECACA',
               () => { this.requestUninstallSkill(this.selectedSkill()!.id); }
@@ -2434,9 +2288,10 @@ struct SettingsPage {
       Row() {
         Column() {
           Row() {
-            this.skillsSubTabButton('已安装', 'installed')
-            this.skillsSubTabButton('来源', 'repos')
-            this.skillsSubTabButton('备份', 'backups')
+            Text('Skills 管理')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
             Blank().layoutWeight(1)
             this.actionButton('刷新', 'skill-refresh-current', false, () => { this.refreshActiveSkillsSubTab(); })
           }
@@ -2446,14 +2301,25 @@ struct SettingsPage {
             .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
             .margin({ bottom: 8 })
             .visibility(this.skillsStatusText.length > 0 ? Visibility.Visible : Visibility.None)
-          Column() {
-            Column() { this.installedSkillsList() }
-              .width('100%').visibility(this.skillsActiveSubTabIndex === 0 ? Visibility.Visible : Visibility.None)
-            Column() { this.skillReposPanel() }
-              .width('100%').visibility(this.skillsActiveSubTabIndex === 1 ? Visibility.Visible : Visibility.None)
-            Column() { this.skillBackupsPanel() }
-              .width('100%').visibility(this.skillsActiveSubTabIndex === 2 ? Visibility.Visible : Visibility.None)
+          Tabs({ barPosition: BarPosition.Start, index: this.skillsActiveSubTabIndex }) {
+            TabContent() {
+              Column() { this.installedSkillsList() }
+                .width('100%')
+            }
+            .tabBar(this.tabBarBuilder('已安装', 0))
+            TabContent() {
+              Column() { this.skillReposPanel() }
+                .width('100%')
+            }
+            .tabBar(this.tabBarBuilder('来源', 1))
+            TabContent() {
+              Column() { this.skillBackupsPanel() }
+                .width('100%')
+            }
+            .tabBar(this.tabBarBuilder('备份', 2))
           }
+          .barMode(BarMode.Fixed)
+          .onChange((index: number) => { this.switchSkillsSubTab(this.skillsSubTabByIndex(index)); })
           .width('100%')
         }
         .width('38%')
