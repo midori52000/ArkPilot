@@ -8,6 +8,9 @@ import { skillsVM } from '../skills/SkillsViewModel';
 import { PromptsViewModel } from '../prompts/PromptsViewModel';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { PromptRecord } from '../prompts/PromptTypes';
+import { ArkPilotBreakpoint } from '../adaptive/BreakpointTypes';
+import { breakpointManager } from '../adaptive/BreakpointManager';
+import { getArkPilotLayoutProfile } from '../adaptive/LayoutProfiles';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 type ApiSubTab = 'providers' | 'presets';
@@ -80,6 +83,8 @@ struct SettingsPage {
     new SettingsNavItem('mcp', 'MCP', '桥接与工具通道', '#0A84FF')
   ];
 
+  @StorageProp('arkPilotBreakpoint')
+  currentBreakpoint: ArkPilotBreakpoint = 'sm';
   @State private activeTab: SettingsTab = 'api';
   @State private pressedKey: string = '';
   @State private sparkSeed: number = 0;
@@ -139,6 +144,8 @@ struct SettingsPage {
   @State private apiShowSpeedResults: boolean = false;
 
   aboutToAppear(): void {
+    const mediaQuery = this.getUIContext().getMediaQuery();
+    breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
     this.loadMockData();
     const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
     if (codexHome.length > 0) {
@@ -157,6 +164,18 @@ struct SettingsPage {
     this.syncPromptsStateFromViewModel();
     this.syncSkillsStateFromViewModel();
     this.syncMcpStateFromBackend();
+  }
+
+  private isPhoneBreakpoint(): boolean {
+    return this.currentBreakpoint === 'xs' || this.currentBreakpoint === 'sm';
+  }
+
+  private settingsDialogWidth(): number {
+    return getArkPilotLayoutProfile(this.currentBreakpoint).dialogWidth;
+  }
+
+  private settingsContentPadding(): number {
+    return this.isPhoneBreakpoint() ? 14 : 24;
   }
 
   private loadMockData(): void {
@@ -1508,7 +1527,7 @@ struct SettingsPage {
             .margin({ top: 16 })
             .onClick(() => { this.apiShowSpeedResults = false; })
         }
-        .width(420)
+        .width(this.settingsDialogWidth())
         .padding(22)
         .backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' })
@@ -1629,6 +1648,45 @@ struct SettingsPage {
   }
 
   @Builder
+  private topTabs() {
+    Scroll() {
+      Row() {
+        ForEach(this.navItems, (item: SettingsNavItem) => {
+          this.topTabEntry(item)
+        }, (item: SettingsNavItem) => item.tab)
+      }
+      .padding({ left: 14, right: 14 })
+    }
+    .width('100%')
+    .height(48)
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+  }
+
+  @Builder
+  private topTabEntry(item: SettingsNavItem) {
+    Button() {
+      Text(item.label)
+        .copyOption(CopyOptions.None)
+        .fontSize(13)
+        .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
+        .fontColor(this.activeTab === item.tab ? '#0F172A' : '#64748B')
+        .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+    }
+    .height(36)
+    .margin({ right: 8 })
+    .backgroundColor(this.activeTab === item.tab ? '#FFFFFF' : '#F8FAFC')
+    .border({ width: 1, color: this.activeTab === item.tab ? item.accent : '#E5E7EB' })
+    .borderRadius(14)
+    .scale({ x: this.pressScale(`top-nav-${item.tab}`), y: this.pressScale(`top-nav-${item.tab}`) })
+    .animation({ duration: 120, curve: Curve.EaseOut })
+    .onTouch((event: TouchEvent) => { this.updatePressed(`top-nav-${item.tab}`, event); })
+    .onClick(() => {
+      this.selectTab(item.tab);
+    })
+  }
+
+  @Builder
   private sidebarHero() {
     Column() {
       Text('设置')
@@ -1710,7 +1768,7 @@ struct SettingsPage {
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
-      .padding({ left: 24, right: 24, top: 16, bottom: 28 })
+      .padding({ left: this.settingsContentPadding(), right: this.settingsContentPadding(), top: 16, bottom: 28 })
     }
     .layoutWeight(1)
     .height('100%')
@@ -1718,7 +1776,30 @@ struct SettingsPage {
     .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(16)
-    .margin({ left: 16 })
+    .margin({ left: this.isPhoneBreakpoint() ? 0 : 16 })
+  }
+
+  @Builder
+  private phoneSettingsLayout() {
+    Column() {
+      this.topTabs()
+      this.contentArea()
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .padding({ left: 12, right: 12, bottom: 12 })
+  }
+
+  @Builder
+  private wideSettingsLayout() {
+    Row() {
+      this.sidebar()
+      this.contentArea()
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .padding({ left: 24, right: 24, bottom: 24 })
+    .alignItems(VerticalAlign.Top)
   }
 
   @Builder
@@ -2256,7 +2337,7 @@ struct SettingsPage {
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(420).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -2316,7 +2397,7 @@ struct SettingsPage {
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(420).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -2516,7 +2597,7 @@ struct SettingsPage {
           }
           .width('100%').margin({ top: 14 })
         }
-        .width(460).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -2554,7 +2635,7 @@ struct SettingsPage {
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(420).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -3256,7 +3337,7 @@ struct SettingsPage {
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        .width(360)
+        .width(this.settingsDialogWidth())
         .padding({ left: 14, right: 14, top: 12, bottom: 12 })
         .backgroundColor(this.toneBackground(toast.tone))
         .border({ width: 1, color: '#FFFFFF' })
@@ -3264,8 +3345,10 @@ struct SettingsPage {
         .margin({ top: 10 })
       }, (toast: UiToastItem) => `${toast.id}`)
     }
+    .width('100%')
+    .padding({ left: 14, right: 14 })
     .alignItems(HorizontalAlign.End)
-    .position({ x: 700, y: 28 })
+    .position({ x: 0, y: 28 })
   }
 
   private validationStatusCodeText(): string {
@@ -3413,7 +3496,7 @@ struct SettingsPage {
           .margin({ top: 18 })
           .onClick(() => { this.showValidationDialog = false; })
       }
-      .width(360)
+      .width(this.settingsDialogWidth())
       .padding(22)
       .backgroundColor('#FFFFFF')
       .border({ width: 1, color: '#E2EAF3' })
@@ -3429,14 +3512,11 @@ struct SettingsPage {
       Column() {
         this.topBar()
 
-        Row() {
-          this.sidebar()
-          this.contentArea()
+        if (this.isPhoneBreakpoint()) {
+          this.phoneSettingsLayout()
+        } else {
+          this.wideSettingsLayout()
         }
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 24, right: 24, bottom: 24 })
-        .alignItems(VerticalAlign.Top)
       }
       .width('100%')
       .height('100%')
