@@ -457,6 +457,11 @@ export class SkillsBackendService {
   // 发现与扫描
   // ================================================================
 
+  async discoverFromRepo(owner: string, name: string, branch: string): Promise<DiscoverableSkill[]> {
+    const repo = new SkillRepo(owner, name, branch, true);
+    return await this.fetchRepoSkills(repo);
+  }
+
   async discoverFromRepos(): Promise<DiscoverableSkill[]> {
     const reposJson = getSkillsRepos(this.codexHome);
     const reposList: SkillsRepoListJson = JSON.parse(reposJson) as SkillsRepoListJson;

@@ -413,122 +413,122 @@ napi_value SaveProviderCatalog(napi_env env, napi_callback_info info) {
 
 napi_value GetSkillsRegistry(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->skills_registry_json); return result; }
 napi_value SaveSkillsRegistry(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], registry_json[MAX_REGISTRY_JSON_ARG_LEN]; codex_home[0] = '\0'; registry_json[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], registry_json, sizeof(registry_json))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateInt32(env, api.save_skills_registry(codex_home[0] == '\0' ? nullptr : codex_home, registry_json[0] == '\0' ? nullptr : registry_json));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], registry_json, sizeof(registry_json))) { return nullptr; }
+    napi_value result = CreateInt32(env, api->save_skills_registry(codex_home[0] == '\0' ? nullptr : codex_home, registry_json[0] == '\0' ? nullptr : registry_json));
+    return result;
 }
 napi_value GetSkillsRepos(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->skills_repos_json); return result; }
 napi_value SaveSkillsRepos(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], repos_json[MAX_REGISTRY_JSON_ARG_LEN]; codex_home[0] = '\0'; repos_json[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], repos_json, sizeof(repos_json))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateInt32(env, api.save_skills_repos(codex_home[0] == '\0' ? nullptr : codex_home, repos_json[0] == '\0' ? nullptr : repos_json));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], repos_json, sizeof(repos_json))) { return nullptr; }
+    napi_value result = CreateInt32(env, api->save_skills_repos(codex_home[0] == '\0' ? nullptr : codex_home, repos_json[0] == '\0' ? nullptr : repos_json));
+    return result;
 }
 napi_value ComputeDirHash(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->compute_dir_hash); return result; }
 napi_value GetSkillsBackups(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->skills_backups_json); return result; }
 
 napi_value CreateSkillBackup(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], skill_dir[MAX_DIR_PATH_ARG_LEN], skill_json[MAX_SKILL_JSON_ARG_LEN]; codex_home[0] = '\0'; skill_dir[0] = '\0'; skill_json[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_dir, sizeof(skill_dir))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], skill_json, sizeof(skill_json))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateUtf8String(env, api.create_skill_backup(codex_home[0] == '\0' ? nullptr : codex_home, skill_dir[0] == '\0' ? nullptr : skill_dir, skill_json[0] == '\0' ? nullptr : skill_json));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_dir, sizeof(skill_dir))) { return nullptr; }
+    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], skill_json, sizeof(skill_json))) { return nullptr; }
+    napi_value result = CreateUtf8String(env, api->create_skill_backup(codex_home[0] == '\0' ? nullptr : codex_home, skill_dir[0] == '\0' ? nullptr : skill_dir, skill_json[0] == '\0' ? nullptr : skill_json));
+    return result;
 }
 
 napi_value DeleteSkillBackup(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], backup_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; backup_id[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], backup_id, sizeof(backup_id))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateInt32(env, api.delete_skill_backup(codex_home[0] == '\0' ? nullptr : codex_home, backup_id[0] == '\0' ? nullptr : backup_id));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], backup_id, sizeof(backup_id))) { return nullptr; }
+    napi_value result = CreateInt32(env, api->delete_skill_backup(codex_home[0] == '\0' ? nullptr : codex_home, backup_id[0] == '\0' ? nullptr : backup_id));
+    return result;
 }
 
 napi_value InstallSkillFromDir(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], source_dir[MAX_DIR_PATH_ARG_LEN], skill_json[MAX_SKILL_JSON_ARG_LEN]; codex_home[0] = '\0'; source_dir[0] = '\0'; skill_json[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], source_dir, sizeof(source_dir))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], skill_json, sizeof(skill_json))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateUtf8String(env, api.install_skill_from_dir(codex_home[0] == '\0' ? nullptr : codex_home, source_dir[0] == '\0' ? nullptr : source_dir, skill_json[0] == '\0' ? nullptr : skill_json));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], source_dir, sizeof(source_dir))) { return nullptr; }
+    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], skill_json, sizeof(skill_json))) { return nullptr; }
+    napi_value result = CreateUtf8String(env, api->install_skill_from_dir(codex_home[0] == '\0' ? nullptr : codex_home, source_dir[0] == '\0' ? nullptr : source_dir, skill_json[0] == '\0' ? nullptr : skill_json));
+    return result;
 }
 
 napi_value UninstallSkill(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateUtf8String(env, api.uninstall_skill(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { return nullptr; }
+    napi_value result = CreateUtf8String(env, api->uninstall_skill(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id));
+    return result;
 }
 
 napi_value SetSkillEnabled(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
     int32_t enabled = 1;
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { UnloadBridgeApi(&api); return nullptr; }
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { return nullptr; }
     if (argc >= 3) { napi_get_value_int32(env, args[2], &enabled); }
-    napi_value result = CreateUtf8String(env, api.set_skill_enabled(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id, enabled));
-    UnloadBridgeApi(&api); return result;
+    napi_value result = CreateUtf8String(env, api->set_skill_enabled(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id, enabled));
+    return result;
 }
 
 napi_value ReconcileSkills(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->reconcile_skills); return result; }
 
 napi_value GetPromptsRegistry(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->prompts_registry_json); return result; }
 napi_value SavePromptsRegistry(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], registry_json[MAX_REGISTRY_JSON_ARG_LEN]; codex_home[0] = '\0'; registry_json[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], registry_json, sizeof(registry_json))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateInt32(env, api.save_prompts_registry(codex_home[0] == '\0' ? nullptr : codex_home, registry_json[0] == '\0' ? nullptr : registry_json));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], registry_json, sizeof(registry_json))) { return nullptr; }
+    napi_value result = CreateInt32(env, api->save_prompts_registry(codex_home[0] == '\0' ? nullptr : codex_home, registry_json[0] == '\0' ? nullptr : registry_json));
+    return result;
 }
 napi_value ReadAgentsMd(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->read_agents_md); return result; }
 
 napi_value WriteAgentsMd(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], content[MAX_PROMPTS_CONTENT_ARG_LEN]; codex_home[0] = '\0'; content[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], content, sizeof(content))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateInt32(env, api.write_agents_md(codex_home[0] == '\0' ? nullptr : codex_home, content[0] == '\0' ? nullptr : content));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], content, sizeof(content))) { return nullptr; }
+    napi_value result = CreateInt32(env, api->write_agents_md(codex_home[0] == '\0' ? nullptr : codex_home, content[0] == '\0' ? nullptr : content));
+    return result;
 }
 
 napi_value EnablePrompt(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN], prompt_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; prompt_id[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], prompt_id, sizeof(prompt_id))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateUtf8String(env, api.enable_prompt(codex_home[0] == '\0' ? nullptr : codex_home, prompt_id[0] == '\0' ? nullptr : prompt_id));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], prompt_id, sizeof(prompt_id))) { return nullptr; }
+    napi_value result = CreateUtf8String(env, api->enable_prompt(codex_home[0] == '\0' ? nullptr : codex_home, prompt_id[0] == '\0' ? nullptr : prompt_id));
+    return result;
 }
 
 napi_value DisableAllPrompts(napi_env env, napi_callback_info info) {
-    BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env);
+    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 1; napi_value args[1] = {nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     char codex_home[MAX_HOME_ARG_LEN]; codex_home[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { UnloadBridgeApi(&api); return nullptr; }
-    napi_value result = CreateInt32(env, api.disable_all_prompts(codex_home[0] == '\0' ? nullptr : codex_home));
-    UnloadBridgeApi(&api); return result;
+    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
+    napi_value result = CreateInt32(env, api->disable_all_prompts(codex_home[0] == '\0' ? nullptr : codex_home));
+    return result;
 }
 
 napi_value InitializeBridge(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->initialize); return result; }
@@ -545,43 +545,39 @@ napi_value TurnEvents(napi_env env, napi_callback_info info) { BridgeApi* api = 
 napi_value TurnPoll(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_poll); return result; }
 napi_value TurnInterrupt(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString2(env, info, api->turn_interrupt); return result; }
 napi_value ApprovalPoll(napi_env env, napi_callback_info info) { (void)info; BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateUtf8String(env, api->approval_poll()); return result; }
-napi_value ApprovalApprove(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.approval_approve); UnloadBridgeApi(&api); return result; }
-napi_value ApprovalDecline(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.approval_decline); UnloadBridgeApi(&api); return result; }
-napi_value McpStatusList(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.mcp_status_list); UnloadBridgeApi(&api); return result; }
-napi_value McpConfigRead(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.mcp_config_read); UnloadBridgeApi(&api); return result; }
-napi_value McpConfigWrite(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_write); UnloadBridgeApi(&api); return result; }
-napi_value McpConfigBatchWrite(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_batch_write); UnloadBridgeApi(&api); return result; }
-napi_value McpConfigAdd(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_add); UnloadBridgeApi(&api); return result; }
-napi_value McpConfigRemove(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api.mcp_config_remove); UnloadBridgeApi(&api); return result; }
-napi_value McpReload(napi_env env, napi_callback_info info) { (void)info; BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateInt32(env, api.mcp_reload()); UnloadBridgeApi(&api); return result; }
-napi_value McpOauthStart(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.mcp_oauth_start); UnloadBridgeApi(&api); return result; }
-napi_value AccountLogin(napi_env env, napi_callback_info info) { BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api.account_login); UnloadBridgeApi(&api); return result; }
-napi_value AccountRead(napi_env env, napi_callback_info info) { (void)info; BridgeApi api; if (!LoadBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateUtf8String(env, api.account_read()); UnloadBridgeApi(&api); return result; }
+napi_value ApprovalApprove(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api->approval_approve); return result; }
+napi_value ApprovalDecline(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api->approval_decline); return result; }
+napi_value McpStatusList(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->mcp_status_list); return result; }
+napi_value McpConfigRead(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->mcp_config_read); return result; }
+napi_value McpConfigWrite(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api->mcp_config_write); return result; }
+napi_value McpConfigBatchWrite(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api->mcp_config_batch_write); return result; }
+napi_value McpConfigAdd(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api->mcp_config_add); return result; }
+napi_value McpConfigRemove(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallIntString1(env, info, api->mcp_config_remove); return result; }
+napi_value McpReload(napi_env env, napi_callback_info info) { (void)info; BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateInt32(env, api->mcp_reload()); return result; }
+napi_value McpOauthStart(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->mcp_oauth_start); return result; }
+napi_value AccountLogin(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->account_login); return result; }
+napi_value AccountRead(napi_env env, napi_callback_info info) { (void)info; BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CreateUtf8String(env, api->account_read()); return result; }
 napi_value CheckWorkspaceAccess(napi_env env, napi_callback_info info) {
-    BridgeApi api;
-    if (!LoadBridgeApi(&api)) {
+    BridgeApi* api = nullptr;
+    if (!AcquireBridgeApi(&api)) {
         return ThrowLoadError(env);
     }
-    if (api.check_workspace_access == nullptr) {
-        UnloadBridgeApi(&api);
+    if (api->check_workspace_access == nullptr) {
         return CreateUtf8String(env, "{\"rootPath\":\"\",\"accessKind\":\"unknown\",\"permissionState\":\"unavailable\",\"writable\":false,\"exists\":false,\"message\":\"workspace access probe unavailable\"}");
     }
-    napi_value result = CallString1(env, info, api.check_workspace_access);
-    UnloadBridgeApi(&api);
+    napi_value result = CallString1(env, info, api->check_workspace_access);
     return result;
 }
 
 napi_value TokenUsageAggregate(napi_env env, napi_callback_info info) {
-    BridgeApi api;
-    if (!LoadBridgeApi(&api)) {
+    BridgeApi* api = nullptr;
+    if (!AcquireBridgeApi(&api)) {
         return ThrowLoadError(env);
     }
-    if (api.token_usage_aggregate == nullptr) {
-        UnloadBridgeApi(&api);
+    if (api->token_usage_aggregate == nullptr) {
         return CreateUtf8String(env, "{\"today\":0,\"thisWeek\":0,\"thisMonth\":0}");
     }
-    napi_value result = CallString1(env, info, api.token_usage_aggregate);
-    UnloadBridgeApi(&api);
+    napi_value result = CallString1(env, info, api->token_usage_aggregate);
     return result;
 }
 }  // namespace

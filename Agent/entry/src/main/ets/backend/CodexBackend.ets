@@ -482,6 +482,15 @@ export class ConfigManagerFacade {
     }
   }
 
+  async discoverFromSingleRepo(owner: string, name: string, branch: string): Promise<ConfigActionResult<DiscoverableSkill[]>> {
+    try {
+      const result = await this.skillsService().discoverFromRepo(owner, name, branch);
+      return configSuccess<DiscoverableSkill[]>(result);
+    } catch (err) {
+      return this.configFailureFromError<DiscoverableSkill[]>(err as Object, 'DISCOVER_SKILLS_FAILED', '扫描仓库失败。');
+    }
+  }
+
   async scanUnmanagedSkills(): Promise<ConfigActionResult<UnmanagedSkill[]>> {
     try {
       const result = await this.skillsService().scanUnmanaged();
