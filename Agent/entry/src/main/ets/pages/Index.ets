@@ -6136,15 +6136,27 @@ struct Index {
         .alignItems(VerticalAlign.Center)
 
         Column() {
-          Text('当前暂无项目')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(16)
-            .fontColor('#A1A1AA')
-          Text('请新建项目')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(12)
-            .fontColor('#D4D4D8')
-            .margin({ top: 8 })
+          if (this.projects.length === 0) {
+            Text('当前暂无项目')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(16)
+              .fontColor('#A1A1AA')
+            Text('请新建项目')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(12)
+              .fontColor('#D4D4D8')
+              .margin({ top: 8 })
+          } else {
+            Text('当前暂无会话')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(16)
+              .fontColor('#A1A1AA')
+            Text('请在项目中新建会话')
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(12)
+              .fontColor('#D4D4D8')
+              .margin({ top: 8 })
+          }
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
