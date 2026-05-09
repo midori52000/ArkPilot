@@ -10,6 +10,7 @@ import {
   collaborationModeListNative,
   getEmbeddedCodexHostStatus,
   initializeNative,
+  initializeAsyncNative,
   mcpConfigAddNative,
   mcpConfigBatchWriteNative,
   mcpConfigReadNative,
@@ -26,7 +27,9 @@ import {
   threadStartNative,
   turnInterruptNative,
   turnPollNative,
+  turnPollAsyncNative,
   turnStartNative,
+  turnStartAsyncNative,
   fetchNativeTokenUsageAggregate
 } from './CodexNative';
 import {
@@ -1391,7 +1394,7 @@ export class CodexBackend {
     }
     this.updateConnectionState('connecting', '正在初始化原生桥接');
     const initRequest: InitializeRequestPayload = new InitializeRequestPayload();
-    const initResult: Object = parseJsonText(initializeNative(JSON.stringify(initRequest)), new Object() as Object);
+    const initResult: Object = parseJsonText(await initializeAsyncNative(JSON.stringify(initRequest)), new Object() as Object);
     const initRecord: Record<string, Object> = initResult as Record<string, Object>;
     const ok: boolean = initRecord['ok'] === true;
     if (!ok) {
@@ -1681,7 +1684,7 @@ export class CodexBackend {
     turnRequest.effort = request.reasoningEffort !== 'default' ? request.reasoningEffort : undefined;
     turnRequest.collaborationMode = this.buildCollaborationModePayload(request.collaborationMode, turnRequest.model, turnRequest.effort);
     this.logInfo(`turnStart collaborationMode=${turnRequest.collaborationMode !== undefined ? JSON.stringify(turnRequest.collaborationMode) : 'undefined'}`);
-    const turnResult: Object = parseJsonText(turnStartNative(JSON.stringify(turnRequest)), new Object() as Object);
+    const turnResult: Object = parseJsonText(await turnStartAsyncNative(JSON.stringify(turnRequest)), new Object() as Object);
 
     const turnPayload: Record<string, Object> = ((turnResult as Record<string, Object>)['turn'] as Record<string, Object> | undefined) ?? {};
     pendingTurn.turnId = typeof turnPayload['id'] === 'string' ? (turnPayload['id'] as string) : '';
@@ -1904,7 +1907,7 @@ export class CodexBackend {
     }
     try {
       const payload: Record<string, Object> = parseJsonText(
-        turnPollNative(thread.remoteThreadId, trimmedTurnId),
+        await turnPollAsyncNative(thread.remoteThreadId, trimmedTurnId),
         new TurnPollResponsePayload() as Object
       ) as Record<string, Object>;
       this.applyTokenUsagePayload(thread, payload['tokenUsage']);
@@ -1967,7 +1970,7 @@ export class CodexBackend {
       }
       if (this.compactionState.turnId.trim().length > 0) {
         const pollObject: Record<string, Object> = parseJsonText(
-          turnPollNative(thread.remoteThreadId, this.compactionState.turnId),
+          await turnPollAsyncNative(thread.remoteThreadId, this.compactionState.turnId),
           new TurnPollResponsePayload() as Object
         ) as Record<string, Object>;
         this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} payload=${JSON.stringify(pollObject)}`);
@@ -2000,7 +2003,7 @@ export class CodexBackend {
       }
       await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
       const pollObject: Record<string, Object> = parseJsonText(
-        turnPollNative(thread.remoteThreadId, this.compactionState.turnId),
+        await turnPollAsyncNative(thread.remoteThreadId, this.compactionState.turnId),
         new TurnPollResponsePayload() as Object
       ) as Record<string, Object>;
       this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
@@ -2578,7 +2581,7 @@ export class CodexBackend {
         pendingTurn.resolveCompletion(interruptedSnapshot);
         return interruptedSnapshot;
       }
-      const pollObject: Record<string, Object> = parseJsonText(turnPollNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
+      const pollObject: Record<string, Object> = parseJsonText(await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
       this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
       const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
       this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
@@ -2611,7 +2614,7 @@ export class CodexBackend {
     for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
       await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
       const pollObject: Record<string, Object> = parseJsonText(
-        turnPollNative(thread.remoteThreadId, pendingTurn.turnId),
+        await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId),
         new TurnPollResponsePayload() as Object
       ) as Record<string, Object>;
       this.logInfo(`turnPoll drain thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);

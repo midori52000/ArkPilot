@@ -8,6 +8,7 @@ import entry, {
   NativeWorkspaceAccessStatus
 } from 'libentry.so';
 import { ProviderCatalog, ProviderRecord, TokenUsageAggregate, TodayTokenDetail, DailyTokenSnapshot } from './ConsoleModels';
+import taskpool from '@ohos.taskpool';
 
 const nativeBridge: EntryBridgeModule | null = entry ?? null;
 
@@ -835,5 +836,73 @@ export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAgg
     return new TokenUsageAggregate(today, daily);
   } catch (_err) {
     return null;
+  }
+}
+
+// --- Async wrappers via taskpool (offload blocking native calls from UI thread) ---
+
+@Concurrent
+function initializeTask(configJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{}';
+  }
+  try {
+    return mod.initialize(configJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export async function initializeAsyncNative(configJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(initializeTask, configJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+@Concurrent
+function turnStartTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{}';
+  }
+  try {
+    return mod.turnStart(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export async function turnStartAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(turnStartTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+@Concurrent
+function turnPollTask(threadId: string, turnId: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{}';
+  }
+  try {
+    return mod.turnPoll(threadId, turnId);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export async function turnPollAsyncNative(threadId: string, turnId: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(turnPollTask, threadId, turnId);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{}';
   }
 }
