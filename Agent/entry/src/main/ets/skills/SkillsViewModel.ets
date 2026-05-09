@@ -48,6 +48,16 @@ export class SkillsViewModel {
     }
   }
 
+  async discoverFromRepo(owner: string, name: string, branch: string): Promise<DiscoverableSkill[]> {
+    const result = await configManagerFacade.discoverFromSingleRepo(owner, name, branch);
+    if (!result.ok || result.data === null) {
+      this.state.errorText = this.describeActionError(result.error);
+      return [];
+    }
+    this.state.errorText = '';
+    return result.data;
+  }
+
   async installFromGithub(skill: DiscoverableSkill): Promise<void> {
     const result = await configManagerFacade.installSkill(skill);
     if (!result.ok || result.data === null) {

@@ -85,6 +85,7 @@ use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::mpsc;
 
 mod prompts_registry;
 mod skills_backup;
@@ -100,6 +101,7 @@ const DEFAULT_SANDBOX_MODE: &str = "workspace-write";
 const CUSTOM_PROVIDER_ID: &str = "harmony-openai-compatible";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MCP_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_PROVIDER_MODE: &str = "exclusive";
 const DEFAULT_PROVIDER_SYNC_STATUS: &str = "synced";
 const REMOTE_CLIENT_NAME: &str = "codex_harmony_agent_native";
@@ -620,6 +622,103 @@ static NATIVE_ASYNC_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(||
         .expect("native async runtime");
     Mutex::new(runtime)
 });
+
+/// 独立的 tokio 运行时，仅用于 MCP 配置操作（文件 I/O），不与 RPC 操作竞争
+static CONFIG_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("config runtime");
+    Mutex::new(runtime)
+});
+
+/// MCP 后台管理器的刷新请求通道（done_tx 用 std::sync 以便 recv_timeout）
+static MCP_REFRESH_TX: Lazy<Mutex<Option<mpsc::Sender<std::sync::mpsc::SyncSender<()>>>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// MCP 状态缓存（JSON 字符串）
+static MCP_STATUS_CACHE: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// MCP 后台管理器是否已启动
+static MCP_MANAGER_STARTED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+
+/// MCP 后台管理器：在独立线程上处理 reload/status RPC，缓存状态数据
+struct McpBackgroundManager;
+
+impl McpBackgroundManager {
+    fn start() -> mpsc::Sender<std::sync::mpsc::SyncSender<()>> {
+        let (tx, rx) = mpsc::channel::<std::sync::mpsc::SyncSender<()>>(4);
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("mcp background runtime");
+            rt.block_on(Self::run(rx));
+        });
+        tx
+    }
+
+    async fn run(mut refresh_rx: mpsc::Receiver<std::sync::mpsc::SyncSender<()>>) {
+        while let Some(done_tx) = refresh_rx.recv().await {
+            let status_json = Self::do_refresh().await;
+            *MCP_STATUS_CACHE.lock().expect("mcp status cache lock") = Some(status_json);
+            let _ = done_tx.send(());
+        }
+    }
+
+    async fn do_refresh() -> String {
+        let result: Result<String> = async {
+            let (handle, request_id) = with_native_handle(|state| {
+                let handle = state
+                    .client
+                    .as_ref()
+                    .map(RemoteAppServerClient::request_handle)
+                    .context("remote app-server client is not initialized")?;
+                let request_id = next_request_id(state);
+                Ok::<_, anyhow::Error>((handle, request_id))
+            })?;
+
+            // 步骤 1: 发送 McpServerRefresh（快速，仅排队）
+            let _ = tokio::time::timeout(
+                MCP_RPC_TIMEOUT,
+                handle.request_typed::<McpServerRefreshResponse>(ClientRequest::McpServerRefresh {
+                    request_id,
+                    params: None,
+                }),
+            )
+            .await;
+
+            // 步骤 2: 发送 McpServerStatusList（慢，等待所有服务器连接）
+            let status_request_id =
+                with_native_handle(|state| Ok::<_, anyhow::Error>(next_request_id(state)))?;
+
+            let status_response: ListMcpServerStatusResponse = tokio::time::timeout(
+                Duration::from_secs(30),
+                handle.request_typed(ClientRequest::McpServerStatusList {
+                    request_id: status_request_id,
+                    params: ListMcpServerStatusParams {
+                        cursor: None,
+                        limit: None,
+                    },
+                }),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("MCP status list timed out"))?
+            .map_err(anyhow::Error::from)?;
+
+            serde_json::to_string(&status_response).map_err(anyhow::Error::from)
+        }
+        .await;
+
+        match result {
+            Ok(json) => json,
+            Err(err) => {
+                set_host_message(format!("MCP background refresh failed: {err}"));
+                "{\"data\":[],\"nextCursor\":null}".to_string()
+            }
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_start(
@@ -2312,43 +2411,18 @@ pub extern "C" fn codex_ohos_host_approval_decline(params_json: *const c_char) -
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_mcp_status_list(params_json: *const c_char) -> *const c_char {
-    let params_text = ffi_string(params_json).unwrap_or_else(|| "{}".to_string());
-    let request =
-        serde_json::from_str::<NativeMcpStatusListRequest>(&params_text).unwrap_or_default();
+pub extern "C" fn codex_ohos_host_mcp_status_list(_params_json: *const c_char) -> *const c_char {
+    // 触发后台刷新（非阻塞）
+    let tx = ensure_mcp_manager_started();
+    let (done_tx, _done_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let _ = tx.try_send(done_tx);
 
-    let response = with_runtime_result(async {
-        let (handle, request_id) = with_native_handle(|state| {
-            let handle = state
-                .client
-                .as_ref()
-                .map(RemoteAppServerClient::request_handle)
-                .context("remote app-server client is not initialized")?;
-            let request_id = next_request_id(state);
-            Ok::<_, anyhow::Error>((handle, request_id))
-        })?;
-
-        let params = ListMcpServerStatusParams {
-            cursor: request.cursor.filter(|value| !value.trim().is_empty()),
-            limit: request.limit,
-        };
-
-        let response: ListMcpServerStatusResponse = handle
-            .request_typed(ClientRequest::McpServerStatusList { request_id, params })
-            .await
-            .map_err(anyhow::Error::from)?;
-
-        Ok::<ListMcpServerStatusResponse, anyhow::Error>(response)
-    });
-
-    let json = match response {
-        Ok(response) => serde_json::to_string(&response)
-            .unwrap_or_else(|_| "{\"data\":[],\"nextCursor\":null}".to_string()),
-        Err(err) => {
-            set_host_message(format!("failed to list MCP status: {err}"));
-            "{\"data\":[],\"nextCursor\":null}".to_string()
-        }
-    };
+    // 立即返回缓存，不等待
+    let cached = MCP_STATUS_CACHE
+        .lock()
+        .expect("mcp status cache lock")
+        .clone();
+    let json = cached.unwrap_or_else(|| "{\"data\":[],\"nextCursor\":null}".to_string());
     write_cstring(&LAST_MCP_STATUS_JSON, &json)
 }
 
@@ -2438,7 +2512,7 @@ pub extern "C" fn codex_ohos_host_mcp_config_add(params_json: *const c_char) -> 
     let codex_home = resolve_codex_home(None);
     let config_path = codex_home.join("config.toml");
     let result = (|| -> Result<()> {
-        let mut servers = with_runtime_result(async {
+        let mut servers = with_config_result(async {
             load_global_mcp_servers(&codex_home)
                 .await
                 .map_err(anyhow::Error::from)
@@ -2486,7 +2560,7 @@ pub extern "C" fn codex_ohos_host_mcp_config_remove(params_json: *const c_char) 
     }
     let codex_home = resolve_codex_home(None);
     let result = (|| -> Result<()> {
-        let mut servers = with_runtime_result(async {
+        let mut servers = with_config_result(async {
             load_global_mcp_servers(&codex_home)
                 .await
                 .map_err(anyhow::Error::from)
@@ -2508,31 +2582,12 @@ pub extern "C" fn codex_ohos_host_mcp_config_remove(params_json: *const c_char) 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_mcp_reload() -> i32 {
-    let response = with_runtime_result(async {
-        let (handle, request_id) = with_native_handle(|state| {
-            let handle = state
-                .client
-                .as_ref()
-                .map(RemoteAppServerClient::request_handle)
-                .context("remote app-server client is not initialized")?;
-            let request_id = next_request_id(state);
-            Ok::<_, anyhow::Error>((handle, request_id))
-        })?;
-
-        let _response: McpServerRefreshResponse = handle
-            .request_typed(ClientRequest::McpServerRefresh {
-                request_id,
-                params: None,
-            })
-            .await
-            .map_err(anyhow::Error::from)?;
-        Ok::<(), anyhow::Error>(())
-    });
-
-    match response {
+    let tx = ensure_mcp_manager_started();
+    let (done_tx, _done_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    match tx.try_send(done_tx) {
         Ok(()) => 0,
-        Err(err) => {
-            set_host_message(format!("failed to reload MCP config: {err}"));
+        Err(_) => {
+            set_host_message("MCP refresh channel full".to_string());
             1
         }
     }
@@ -2561,10 +2616,13 @@ pub extern "C" fn codex_ohos_host_mcp_oauth_start(params_json: *const c_char) ->
             timeout_secs: request.timeout_secs,
         };
 
-        let response: McpServerOauthLoginResponse = handle
-            .request_typed(ClientRequest::McpServerOauthLogin { request_id, params })
-            .await
-            .map_err(anyhow::Error::from)?;
+        let response: McpServerOauthLoginResponse = tokio::time::timeout(
+            MCP_RPC_TIMEOUT,
+            handle.request_typed(ClientRequest::McpServerOauthLogin { request_id, params }),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("MCP OAuth login timed out after {MCP_RPC_TIMEOUT:?}"))?
+        .map_err(anyhow::Error::from)?;
 
         Ok::<McpServerOauthLoginResponse, anyhow::Error>(response)
     });
@@ -2703,6 +2761,33 @@ where
     runtime.block_on(future)
 }
 
+fn with_config_result<F, T>(future: F) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    let runtime = CONFIG_RUNTIME
+        .lock()
+        .expect("config runtime lock");
+    runtime.block_on(future)
+}
+
+fn ensure_mcp_manager_started() -> mpsc::Sender<std::sync::mpsc::SyncSender<()>> {
+    let mut started = MCP_MANAGER_STARTED.lock().expect("mcp manager started lock");
+    if !*started {
+        let tx = McpBackgroundManager::start();
+        *MCP_REFRESH_TX.lock().expect("mcp refresh tx lock") = Some(tx.clone());
+        *started = true;
+        tx
+    } else {
+        MCP_REFRESH_TX
+            .lock()
+            .expect("mcp refresh tx lock")
+            .as_ref()
+            .expect("mcp refresh tx should be set")
+            .clone()
+    }
+}
+
 fn with_native_state<T>(f: impl FnOnce(&mut NativeConversationState) -> T) -> T {
     let mut state = NATIVE_CONVERSATION_STATE
         .lock()
@@ -2823,7 +2908,7 @@ fn collaboration_mode_from_native_mask(
 }
 
 fn mcp_servers_to_config_json(codex_home: &Path) -> Result<String> {
-    let servers = with_runtime_result(async {
+    let servers = with_config_result(async {
         load_global_mcp_servers(codex_home)
             .await
             .map_err(anyhow::Error::from)
@@ -2846,7 +2931,7 @@ fn apply_mcp_batch_edits(
     codex_home: &Path,
     edits: Vec<NativeMcpConfigBatchEditRequest>,
 ) -> Result<()> {
-    let mut servers = with_runtime_result(async {
+    let mut servers = with_config_result(async {
         load_global_mcp_servers(codex_home)
             .await
             .map_err(anyhow::Error::from)
