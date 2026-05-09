@@ -1171,8 +1171,8 @@ class CodexThreadRecord {
   writableRoots: string[] = [];
   messages: CodexChatMessage[] = [];
   diffLines: CodexDiffLine[] = [];
-  summaryTitle: string = '等待 ArkPilot 响应';
-  summaryPoints: string[] = ['发送请求后会在这里显示计划、摘要和关键步骤。'];
+  summaryTitle: string = '';
+  summaryPoints: string[] = [];
   changedFiles: string = '尚未产生文件改动';
   diffStat: string = '+0 -0';
   activeTurn: PendingTurnState | null = null;
@@ -2488,8 +2488,8 @@ export class CodexBackend {
     thread.diffLines = [];
     thread.diffStat = '+0 -0';
     thread.changedFiles = 'å°šæœªäº§ç”Ÿæ–‡ä»¶æ”¹åŠ¨';
-    thread.summaryTitle = '正在等待 ArkPilot 响应';
-    thread.summaryPoints = ['已通过原生桥接发送请求，等待轮询结果。'];
+    thread.summaryTitle = '';
+    thread.summaryPoints = [];
     return this.snapshotForThread(thread, 'inProgress');
   }
 
