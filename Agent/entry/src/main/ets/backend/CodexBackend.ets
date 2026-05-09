@@ -1066,12 +1066,23 @@ export class CodexCompactionSnapshot {
   status: CodexCompactionStatus;
   errorMessage: string;
   savedTokens: number;
+  oldTotalTokens: number;
+  newTotalTokens: number;
 
-  constructor(threadId: string, status: CodexCompactionStatus, errorMessage: string = '', savedTokens: number = 0) {
+  constructor(
+    threadId: string,
+    status: CodexCompactionStatus,
+    errorMessage: string = '',
+    savedTokens: number = 0,
+    oldTotalTokens: number = 0,
+    newTotalTokens: number = 0
+  ) {
     this.threadId = threadId;
     this.status = status;
     this.errorMessage = errorMessage;
     this.savedTokens = savedTokens;
+    this.oldTotalTokens = oldTotalTokens;
+    this.newTotalTokens = newTotalTokens;
   }
 }
 
@@ -1153,6 +1164,7 @@ class CompactionRunState {
   baselineTurnId: string = '';
   turnId: string = '';
   oldTotalTokens: number = 0;
+  newTotalTokens: number = 0;
   status: CodexCompactionStatus = 'idle';
   errorMessage: string = '';
   savedTokens: number = 0;
@@ -1733,6 +1745,7 @@ export class CodexBackend {
       this.compactionState.baselineTurnId = baseline.lastTurnId;
       this.compactionState.turnId = '';
       this.compactionState.oldTotalTokens = thread.tokenUsage?.total.totalTokens ?? 0;
+      this.compactionState.newTotalTokens = 0;
       this.compactionState.status = 'starting';
       this.compactionState.errorMessage = '';
       this.compactionState.savedTokens = 0;
@@ -1807,7 +1820,9 @@ export class CodexBackend {
       this.compactionState.threadId,
       this.compactionState.status,
       this.compactionState.errorMessage,
-      this.compactionState.savedTokens
+      this.compactionState.savedTokens,
+      this.compactionState.oldTotalTokens,
+      this.compactionState.newTotalTokens
     );
   }
 
@@ -1816,6 +1831,7 @@ export class CodexBackend {
     this.compactionState.baselineTurnId = '';
     this.compactionState.turnId = '';
     this.compactionState.oldTotalTokens = 0;
+    this.compactionState.newTotalTokens = 0;
     this.compactionState.status = 'idle';
     this.compactionState.errorMessage = '';
     this.compactionState.savedTokens = 0;
@@ -1827,6 +1843,7 @@ export class CodexBackend {
     this.compactionState.threadId = normalizedThreadId;
     this.compactionState.status = status;
     this.compactionState.errorMessage = message;
+    this.compactionState.newTotalTokens = 0;
     this.compactionState.savedTokens = 0;
     this.notifyListeners();
   }
@@ -1837,6 +1854,7 @@ export class CodexBackend {
     this.compactionState.threadId = thread.remoteThreadId;
     this.compactionState.status = 'completed';
     this.compactionState.errorMessage = '';
+    this.compactionState.newTotalTokens = newTotal;
     this.compactionState.savedTokens = saved > 0 ? saved : 0;
     this.lastCompactError = '';
     this.notifyListeners();

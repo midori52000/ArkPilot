@@ -95,6 +95,37 @@ class CodeDiffFile {
   }
 }
 
+class CompactionNotice {
+  id: string;
+  threadId: string;
+  status: string;
+  errorMessage: string;
+  savedTokens: number;
+  oldTotalTokens: number;
+  newTotalTokens: number;
+  timestamp: string;
+
+  constructor(
+    id: string,
+    threadId: string,
+    status: string,
+    errorMessage: string,
+    savedTokens: number,
+    oldTotalTokens: number,
+    newTotalTokens: number,
+    timestamp: string
+  ) {
+    this.id = id;
+    this.threadId = threadId;
+    this.status = status;
+    this.errorMessage = errorMessage;
+    this.savedTokens = savedTokens;
+    this.oldTotalTokens = oldTotalTokens;
+    this.newTotalTokens = newTotalTokens;
+    this.timestamp = timestamp;
+  }
+}
+
 class MermaidNode {
   id: string;
   label: string;
@@ -296,8 +327,17 @@ struct Index {
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
   @State private expandedIntermediateMessageIds: string[] = [];
+  @State private expandedFileChangeIds: string[] = [];
+  @State private expandedCompactionIds: string[] = [];
   @State private rawMarkdownMessageIds: string[] = [];
   @State private rawMermaidBlockIds: string[] = [];
+  @State private compactionNotices: CompactionNotice[] = [];
+  @State private currentTurnId: string = '';
+  @State private messageAutoFollowToBottom: boolean = true;
+  private messageProgrammaticScroll: boolean = false;
+  private messageProgrammaticScrollTimerId: number = -1;
+  private messageUserScrollActive: boolean = false;
+  private messageUserScrollTimerId: number = -1;
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -320,6 +360,7 @@ struct Index {
   @State private tokenTrendRange: number = 0;
   @State private compacting: boolean = false;
   @State private compactError: string = '';
+  private activeCompactionNoticeId: string = '';
   @State private projects: ProjectRecord[] = [];
   @State private showCreateProjectDialog: boolean = false;
   @State private newProjectName: string = '';
@@ -375,6 +416,8 @@ struct Index {
       codexBackend.unsubscribe(this.backendSubscriptionId);
     }
     this.clearReconnectTimer();
+    this.clearMessageProgrammaticScrollTimer();
+    this.clearMessageUserScrollTimer();
   }
 
   private applyBackendSnapshot(snapshot: CodexBackendSnapshot): void {
@@ -404,6 +447,16 @@ struct Index {
     const isCurrentThread: boolean = currentThreadId.length > 0 && compaction.threadId === currentThreadId;
     const nextCompacting: boolean = isCurrentThread && (compaction.status === 'starting' || compaction.status === 'running');
     this.compacting = nextCompacting;
+    if (compaction.status !== 'idle' && compaction.threadId.trim().length > 0) {
+      this.upsertCompactionNotice(
+        compaction.threadId,
+        compaction.status,
+        compaction.errorMessage,
+        compaction.savedTokens,
+        compaction.oldTotalTokens,
+        compaction.newTotalTokens
+      );
+    }
     if (!isCurrentThread) {
       this.compactError = '';
       return;
@@ -427,6 +480,74 @@ struct Index {
     if (!nextCompacting) {
       this.compactError = '';
     }
+  }
+
+  private upsertCompactionNotice(
+    threadId: string,
+    status: string,
+    errorMessage: string,
+    savedTokens: number,
+    oldTotalTokens: number,
+    newTotalTokens: number
+  ): void {
+    let noticeId: string = this.activeCompactionNoticeId;
+    if (noticeId.length === 0 || this.compactionNoticeById(noticeId) === null) {
+      const latest: CompactionNotice | null = this.latestCompactionNoticeForThread(threadId);
+      if (
+        latest !== null &&
+        latest.status === status &&
+        latest.errorMessage === errorMessage &&
+        latest.savedTokens === savedTokens
+      ) {
+        noticeId = latest.id;
+      } else {
+        noticeId = `compaction:${threadId}:${Date.now().toString()}`;
+      }
+      this.activeCompactionNoticeId = noticeId;
+    }
+    const previous: CompactionNotice | null = this.compactionNoticeById(noticeId);
+    const next = new CompactionNotice(
+      noticeId,
+      threadId,
+      status,
+      errorMessage,
+      savedTokens,
+      oldTotalTokens,
+      newTotalTokens,
+      previous !== null ? previous.timestamp : this.currentClockLabel()
+    );
+    this.compactionNotices = [
+      ...this.compactionNotices.filter((item: CompactionNotice) => item.id !== noticeId),
+      next
+    ];
+    if (status === 'completed' || status === 'failed' || status === 'timeout') {
+      this.activeCompactionNoticeId = '';
+    }
+  }
+
+  private compactionNoticeById(id: string): CompactionNotice | null {
+    for (let index: number = 0; index < this.compactionNotices.length; index += 1) {
+      if (this.compactionNotices[index].id === id) {
+        return this.compactionNotices[index];
+      }
+    }
+    return null;
+  }
+
+  private latestCompactionNoticeForThread(threadId: string): CompactionNotice | null {
+    for (let index: number = this.compactionNotices.length - 1; index >= 0; index -= 1) {
+      if (this.compactionNotices[index].threadId === threadId) {
+        return this.compactionNotices[index];
+      }
+    }
+    return null;
+  }
+
+  private currentClockLabel(): string {
+    const date: Date = new Date();
+    const hours: string = date.getHours().toString().padStart(2, '0');
+    const minutes: string = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
   }
 
   private applyEmbeddedHostStatus(): void {
@@ -592,6 +713,11 @@ struct Index {
     this.summaryPoints = points ?? ['当前会话尚未产生历史消息。'];
     this.changedFiles = '尚未产生文件改动';
     this.diffStat = '+0 -0';
+    this.currentTurnId = '';
+    this.expandedFileChangeIds = [];
+    this.expandedCompactionIds = [];
+    this.resumeMessageAutoFollow();
+    this.scheduleMessageScrollToBottom(true);
   }
 
   private async restoreSessionsFromBackend(preferredThreadId?: string): Promise<void> {
@@ -746,6 +872,7 @@ struct Index {
   }
 
   private async loadSelectedWorkspaceHistory(): Promise<void> {
+    this.resumeMessageAutoFollow();
     if (this.workspaces.length === 0) {
       codexBackend.setActiveThread('');
       this.resetConversationSurface('当前目录下暂无会话', ['请先创建一个新会话。']);
@@ -1344,6 +1471,8 @@ struct Index {
     if (prompt.length === 0 || this.isRunning) {
       return;
     }
+    this.resumeMessageAutoFollow();
+    this.scheduleMessageScrollToBottom(true);
     this.savedDraft = this.draft;
     this.draft = '';
     void this.runTurn(prompt);
@@ -1409,6 +1538,7 @@ struct Index {
 
   private applyBackendResult(result: CodexTurnResult): void {
     this.syncWorkspaceWithRemoteThreadId(result.threadId);
+    this.currentTurnId = result.turnId;
     this.messages = result.messages.map((item) => {
       return new ChatMessage(item.messageId, item.author, item.role, item.content, item.timestamp, item.itemType, item.status, item.metadata);
     });
@@ -1434,20 +1564,134 @@ struct Index {
     this.scheduleMessageScrollToBottom();
   }
 
-  private scheduleMessageScrollToBottom(): void {
+  private scheduleMessageScrollToBottom(force: boolean = false): void {
+    if (!force && !this.messageAutoFollowToBottom) {
+      return;
+    }
     setTimeout(() => {
-      this.scrollMessagesToBottom();
+      this.scrollMessagesToBottom(force);
     }, 0);
     setTimeout(() => {
-      this.scrollMessagesToBottom();
+      this.scrollMessagesToBottom(force);
     }, 32);
   }
 
-  private scrollMessagesToBottom(): void {
+  private scrollMessagesToBottom(force: boolean = false): void {
+    if (!force && !this.messageAutoFollowToBottom) {
+      return;
+    }
+    this.beginMessageProgrammaticScroll();
     try {
       this.messageScroller.scrollEdge(Edge.Bottom);
+      this.messageAutoFollowToBottom = true;
     } catch (_err) {
     }
+  }
+
+  private clearMessageProgrammaticScrollTimer(): void {
+    if (this.messageProgrammaticScrollTimerId >= 0) {
+      clearTimeout(this.messageProgrammaticScrollTimerId);
+      this.messageProgrammaticScrollTimerId = -1;
+    }
+  }
+
+  private clearMessageUserScrollTimer(): void {
+    if (this.messageUserScrollTimerId >= 0) {
+      clearTimeout(this.messageUserScrollTimerId);
+      this.messageUserScrollTimerId = -1;
+    }
+  }
+
+  private beginMessageProgrammaticScroll(): void {
+    this.clearMessageProgrammaticScrollTimer();
+    this.messageProgrammaticScroll = true;
+    this.messageProgrammaticScrollTimerId = setTimeout(() => {
+      this.messageProgrammaticScroll = false;
+      this.messageProgrammaticScrollTimerId = -1;
+    }, 120);
+  }
+
+  private resumeMessageAutoFollow(): void {
+    this.messageUserScrollActive = false;
+    this.clearMessageUserScrollTimer();
+    this.messageAutoFollowToBottom = true;
+  }
+
+  private beginMessageUserScroll(): void {
+    this.clearMessageUserScrollTimer();
+    this.messageUserScrollActive = true;
+    this.messageUserScrollTimerId = setTimeout(() => {
+      this.messageUserScrollActive = false;
+      this.messageUserScrollTimerId = -1;
+    }, 240);
+  }
+
+  private isUserMessageScrollSource(source: ScrollSource): boolean {
+    return source === ScrollSource.DRAG ||
+      source === ScrollSource.FLING ||
+      source === ScrollSource.OTHER_USER_INPUT ||
+      source === ScrollSource.SCROLL_BAR ||
+      source === ScrollSource.SCROLL_BAR_FLING;
+  }
+
+  private isMessageScrollerAtEnd(): boolean {
+    try {
+      return this.messageScroller.isAtEnd();
+    } catch (_err) {
+      return true;
+    }
+  }
+
+  private handleMessageWillScroll(_xOffset: number, yOffset: number, _scrollState: ScrollState, scrollSource: ScrollSource): void {
+    if (!this.isUserMessageScrollSource(scrollSource)) {
+      return;
+    }
+    this.beginMessageUserScroll();
+    this.messageProgrammaticScroll = false;
+    if (yOffset < 0 || !this.isMessageScrollerAtEnd()) {
+      this.messageAutoFollowToBottom = false;
+    }
+  }
+
+  private handleMessageDidScroll(_xOffset: number, _yOffset: number, _scrollState: ScrollState): void {
+    const atEnd: boolean = this.isMessageScrollerAtEnd();
+    if (this.messageProgrammaticScroll) {
+      if (atEnd) {
+        this.messageAutoFollowToBottom = true;
+      }
+      return;
+    }
+    if (atEnd) {
+      this.resumeMessageAutoFollow();
+      return;
+    }
+    if (this.messageUserScrollActive) {
+      this.messageAutoFollowToBottom = false;
+    }
+  }
+
+  private handleMessageScrollEdge(side: Edge): void {
+    if (side === Edge.Bottom) {
+      this.messageAutoFollowToBottom = true;
+      return;
+    }
+    if (side === Edge.Top) {
+      this.messageAutoFollowToBottom = false;
+    }
+  }
+
+  private jumpToLatestMessage(): void {
+    this.resumeMessageAutoFollow();
+    this.scrollMessagesToBottom(true);
+  }
+
+  private handleMessageScrollStop(): void {
+    if (this.isMessageScrollerAtEnd()) {
+      this.resumeMessageAutoFollow();
+      return;
+    }
+    this.messageUserScrollActive = false;
+    this.clearMessageUserScrollTimer();
   }
 
   private messageRenderKey(item: ChatMessage): string {
@@ -1703,6 +1947,90 @@ struct Index {
       this.diffStat.trim() !== '+0 -0';
   }
 
+  private currentFileChangeEventId(): string {
+    const threadId: string = this.activeWorkspaceBindingId.trim().length > 0 ? this.activeWorkspaceBindingId.trim() : 'local';
+    const turnId: string = this.currentTurnId.trim().length > 0 ? this.currentTurnId.trim() : `${this.diffStat}:${this.changedFiles.length.toString()}`;
+    return `file-change:${threadId}:${turnId}`;
+  }
+
+  private isFileChangeExpanded(eventId: string): boolean {
+    return this.expandedFileChangeIds.indexOf(eventId) >= 0;
+  }
+
+  private toggleFileChangeExpanded(eventId: string): void {
+    if (this.isFileChangeExpanded(eventId)) {
+      this.expandedFileChangeIds = this.expandedFileChangeIds.filter((id: string) => id !== eventId);
+      return;
+    }
+    this.expandedFileChangeIds = [...this.expandedFileChangeIds, eventId];
+  }
+
+  private activeCompactionNotices(): CompactionNotice[] {
+    const currentThreadId: string = this.activeWorkspaceBindingId.trim();
+    if (currentThreadId.length === 0) {
+      return [];
+    }
+    const notices: CompactionNotice[] = this.compactionNotices.filter((item: CompactionNotice) => item.threadId === currentThreadId);
+    return notices.slice(Math.max(0, notices.length - 3));
+  }
+
+  private isCompactionNoticeExpanded(noticeId: string): boolean {
+    return this.expandedCompactionIds.indexOf(noticeId) >= 0;
+  }
+
+  private toggleCompactionNoticeExpanded(noticeId: string): void {
+    if (this.isCompactionNoticeExpanded(noticeId)) {
+      this.expandedCompactionIds = this.expandedCompactionIds.filter((id: string) => id !== noticeId);
+      return;
+    }
+    this.expandedCompactionIds = [...this.expandedCompactionIds, noticeId];
+  }
+
+  private retryCurrentCompaction(): void {
+    const threadId: string = this.activeWorkspaceBindingId.trim();
+    if (threadId.length === 0 || this.compacting) {
+      return;
+    }
+    this.compactError = '';
+    codexBackend.clearCompactionNotice(threadId);
+    void codexBackend.compactThread(threadId).catch((err: Error) => {
+      this.compactError = err.message.trim().length > 0 ? err.message : codexBackend.getLastCompactError();
+    });
+  }
+
+  private accentBorderColor(role: string): string {
+    switch (role) {
+      case 'reasoning': return '#F59E0B';
+      case 'command': return '#10B981';
+      case 'tool': return '#3B82F6';
+      case 'file': return '#A855F7';
+      case 'search': return '#14B8A6';
+      case 'plan': return '#F97316';
+      case 'image': return '#EC4899';
+      case 'hook': return '#EAB308';
+      case 'review': return '#FACC15';
+      case 'system': return '#6B7280';
+      case 'user': return '#3B82F6';
+      default: return '#D4D4D8';
+    }
+  }
+
+  private operationLabel(role: string): string {
+    switch (role) {
+      case 'reasoning': return '推理';
+      case 'command': return '命令';
+      case 'tool': return '工具';
+      case 'file': return '文件';
+      case 'search': return '搜索';
+      case 'plan': return '计划';
+      case 'image': return '图片';
+      case 'hook': return '钩子';
+      case 'review': return '审查';
+      case 'system': return '系统';
+      default: return role;
+    }
+  }
+
   private uniqueInputHints(values: string[], maxCount: number): string[] {
     const result: string[] = [];
     for (let index = 0; index < values.length; index += 1) {
@@ -1869,31 +2197,11 @@ struct Index {
     switch (role) {
       case 'assistant':
       case 'agent':
-        return '#FAFAFA';
-      case 'system':
-        return '#F4F4F5';
-      case 'reasoning':
-        return '#FFFBEB';
-      case 'command':
-        return '#F0FDF4';
-      case 'tool':
-        return '#EFF6FF';
-      case 'file':
-        return '#FAF5FF';
-      case 'search':
-        return '#ECFDF5';
-      case 'plan':
-        return '#FFF7ED';
-      case 'image':
-        return '#FDF2F8';
-      case 'hook':
-        return '#FEF3C7';
-      case 'review':
-        return '#FEF9C3';
+        return '#00000000';
       case 'user':
-        return '#E8F0FE';
+        return '#EFF6FF';
       default:
-        return '#F5F3FF';
+        return '#FFFFFF';
     }
   }
 
@@ -3173,40 +3481,295 @@ struct Index {
   }
 
   @Builder
-  private messageCard(item: ChatMessage) {
+  private fileChangesLine() {
+    Row() {
+      this.fileChangesBlock(this.currentFileChangeEventId())
+      Blank()
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ bottom: 8 })
+  }
+
+  @Builder
+  private fileChangesBlock(eventId: string) {
     Column() {
       Row() {
-        if (this.isCollapsibleMessage(item)) {
-          Row() {
-            Text(this.isMessageCollapsed(item) ? '▸' : '▾')
-              .copyOption(CopyOptions.None)
-              .fontSize(17)
-              .fontColor('#52525B')
-          }
-          .width(24)
-          .height(24)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(VerticalAlign.Center)
-          .backgroundColor('#FFFFFF')
-          .border({ width: 0.5, color: '#E4E4E7' })
-          .borderRadius(7)
-          .margin({ right: 6 })
+        Row() {
+          Text(this.isFileChangeExpanded(eventId) ? '\u2304' : '\u203A')
+            .copyOption(CopyOptions.None)
+            .fontSize(16)
+            .fontColor(this.accentBorderColor('file'))
         }
+        .width(20)
+        .height(20)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.eventSoftBackground('file'))
+        .border({ width: 0.5, color: this.eventBorderColor('file') })
+        .borderRadius(6)
+        .margin({ right: 8 })
+
+        Text('文件变更')
+          .copyOption(CopyOptions.None)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentBorderColor('file'))
+
+        Text(this.diffFiles.length > 0 ? `${this.diffFiles.length} 个文件` : '已检测到变更')
+          .copyOption(CopyOptions.None)
+          .fontSize(10)
+          .fontColor(this.accentBorderColor('file'))
+          .margin({ left: 8 })
+
+        Blank()
+
+        Text(this.diffStat)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(10)
+          .fontColor(this.accentBorderColor('file'))
+          .fontFamily('monospace')
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .backgroundColor(this.eventSoftBackground('file'))
+          .borderRadius(6)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.Block)
+      .onClick(() => {
+        this.toggleFileChangeExpanded(eventId);
+      })
+
+      Text(this.changedFiles)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor(this.accentBorderColor('file'))
+        .lineHeight(17)
+        .width('100%')
+        .margin({ top: 6, left: 28 })
+        .maxLines(this.isFileChangeExpanded(eventId) ? 4 : 1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.diffFiles.length > 0 && this.isFileChangeExpanded(eventId)) {
+        Column() {
+          ForEach(this.diffFiles, (file: CodeDiffFile) => {
+            Row() {
+              Column() {
+                Text(file.label)
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(10)
+                  .fontColor('#0F172A')
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily('monospace')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                Text(file.path)
+                  .copyOption(CopyOptions.LocalDevice)
+                  .fontSize(9)
+                  .fontColor(this.accentBorderColor('file'))
+                  .fontFamily('monospace')
+                  .margin({ top: 2 })
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              Text(file.diffStat)
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(9)
+                .fontColor(this.accentBorderColor('file'))
+                .fontFamily('monospace')
+            }
+            .width('100%')
+            .padding({ left: 8, right: 8, top: 7, bottom: 7 })
+            .backgroundColor(this.isDiffFileSelected(file) ? this.eventSoftBackground('file') : '#FFFFFF')
+            .borderRadius(7)
+            .onClick(() => {
+              this.selectDiffFile(file.path);
+            })
+          }, (file: CodeDiffFile) => file.path)
+        }
+        .width('100%')
+        .margin({ top: 8, left: 28 })
+      }
+    }
+    .width('92%')
+    .constraintSize({ maxWidth: '92%' })
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 10, top: 9, bottom: 9 })
+    .backgroundColor('#F8FAFC')
+    .borderRadius(8)
+  }
+
+  @Builder
+  private compactionNoticeLine(notice: CompactionNotice) {
+    Row() {
+      this.compactionNoticeBlock(notice)
+      Blank()
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ bottom: 8 })
+  }
+
+  @Builder
+  private compactionNoticeBlock(notice: CompactionNotice) {
+    Column() {
+      Row() {
+        Row() {
+          Text(this.isCompactionNoticeExpanded(notice.id) ? '\u2304' : '\u203A')
+            .copyOption(CopyOptions.None)
+            .fontSize(16)
+            .fontColor(this.compactionNoticeColor(notice.status))
+        }
+        .width(20)
+        .height(20)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.compactionNoticeSoftBackground(notice.status))
+        .border({ width: 0.5, color: this.compactionNoticeBorderColor(notice.status) })
+        .borderRadius(6)
+        .margin({ right: 8 })
+
+        Text('上下文压缩')
+          .copyOption(CopyOptions.None)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.compactionNoticeColor(notice.status))
+
+        Text(this.compactionNoticeStatusLabel(notice.status))
+          .copyOption(CopyOptions.None)
+          .fontSize(10)
+          .fontColor(this.compactionNoticeColor(notice.status))
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .backgroundColor(this.compactionNoticeSoftBackground(notice.status))
+          .borderRadius(6)
+          .margin({ left: 8 })
+
+        Blank()
+
+        Text(notice.timestamp)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(10)
+          .fontColor('#94A3B8')
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.Block)
+      .onClick(() => {
+        this.toggleCompactionNoticeExpanded(notice.id);
+      })
+
+      Text(this.compactionNoticeSummary(notice))
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(11)
+        .fontColor(this.compactionNoticeColor(notice.status))
+        .lineHeight(17)
+        .width('100%')
+        .margin({ top: 6, left: 28 })
+        .maxLines(this.isCompactionNoticeExpanded(notice.id) ? 3 : 1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.isCompactionNoticeExpanded(notice.id)) {
+        Column() {
+          this.compactionMetricRow('压缩前', notice.oldTotalTokens > 0 ? `${this.formatTokenCount(notice.oldTotalTokens)} tokens` : '未知')
+          this.compactionMetricRow('压缩后', notice.newTotalTokens > 0 ? `${this.formatTokenCount(notice.newTotalTokens)} tokens` : '未知')
+          this.compactionMetricRow('释放', notice.savedTokens > 0 ? `${this.formatTokenCount(notice.savedTokens)} tokens` : '0 tokens')
+          if (notice.errorMessage.trim().length > 0) {
+            Text(notice.errorMessage)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(10)
+              .fontColor('#DC2626')
+              .lineHeight(16)
+              .margin({ top: 6 })
+          }
+          if (notice.status === 'failed' || notice.status === 'timeout') {
+            Text('重试压缩')
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#4338CA')
+              .fontWeight(FontWeight.Medium)
+              .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+              .backgroundColor('#EEF2FF')
+              .borderRadius(6)
+              .margin({ top: 8 })
+              .onClick(() => {
+                this.retryCurrentCompaction();
+              })
+          }
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .margin({ top: 8, left: 28 })
+      }
+    }
+    .width('92%')
+    .constraintSize({ maxWidth: '92%' })
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 10, top: 9, bottom: 9 })
+    .backgroundColor('#F8FAFC')
+    .borderRadius(8)
+  }
+
+  @Builder
+  private compactionMetricRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .copyOption(CopyOptions.None)
+        .fontSize(10)
+        .fontColor('#64748B')
+        .width(56)
+
+      Text(value)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(10)
+        .fontColor('#0F172A')
+        .fontFamily('monospace')
+    }
+    .width('100%')
+    .margin({ top: 3 })
+  }
+
+  @Builder
+  private messageEventBlock(item: ChatMessage) {
+    Column() {
+      Row() {
+        Row() {
+          Text(this.isMessageCollapsed(item) ? '\u203A' : '\u2304')
+            .copyOption(CopyOptions.None)
+            .fontSize(16)
+            .fontColor(this.accentBorderColor(item.itemType ?? item.role))
+        }
+        .width(20)
+        .height(20)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.eventSoftBackground(item.itemType ?? item.role))
+        .border({ width: 0.5, color: this.eventBorderColor(item.itemType ?? item.role) })
+        .borderRadius(6)
+        .margin({ right: 8 })
 
         Text(this.messageIcon(item.itemType))
+          .copyOption(CopyOptions.None)
           .fontSize(12)
-          .margin({ right: 4 })
-
-        Text(item.author)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
+          .fontColor(this.accentBorderColor(item.itemType ?? item.role))
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.authorColor(item.itemType ?? item.role))
+          .width(22)
+
+        Text(this.operationLabel(item.itemType ?? item.role))
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentBorderColor(item.itemType ?? item.role))
 
         Text(item.timestamp)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#A1A1AA')
+          .fontColor('#94A3B8')
           .margin({ left: 8 })
 
         if (item.status && item.status !== 'completed') {
@@ -3219,22 +3782,80 @@ struct Index {
             .margin({ left: 8 })
         }
       }
-      .constraintSize({ maxWidth: '100%' })
+      .width('100%')
       .alignItems(VerticalAlign.Center)
       .hitTestBehavior(HitTestMode.Block)
       .onClick(() => {
-        if (this.isCollapsibleMessage(item)) {
-          this.toggleMessageExpanded(item.id);
-        }
+        this.toggleMessageExpanded(item.id);
       })
+
+      if (this.isMessageCollapsed(item)) {
+        Row() {
+          Text(this.collapsedMessagePreview(item))
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor(this.accentBorderColor(item.itemType ?? item.role))
+            .lineHeight(17)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+          .width('100%')
+          .padding({ left: 46 })
+          .margin({ top: 5 })
+          .hitTestBehavior(HitTestMode.Block)
+          .onClick(() => {
+            this.toggleMessageExpanded(item.id);
+          })
+      } else {
+        Column() {
+          this.messageBody(item)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 28 })
+      }
+    }
+    .width('92%')
+    .constraintSize({ maxWidth: '92%' })
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor('#F8FAFC')
+    .borderRadius(8)
+  }
+
+  @Builder
+  private messageCard(item: ChatMessage) {
+    Column() {
+      Row() {
+        Text(item.author)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.authorColor(item.itemType ?? item.role))
+
+        Text(item.timestamp)
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(10)
+          .fontColor('#A1A1AA')
+          .margin({ left: 8 })
+      }
+      .constraintSize({ maxWidth: '100%' })
+      .alignItems(VerticalAlign.Center)
 
       this.messageBody(item)
     }
     .alignItems(HorizontalAlign.Start)
     .constraintSize({ maxWidth: this.messageCardMaxWidth(item) })
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .padding({
+      left: this.isUserMessage(item) ? 12 : 4,
+      right: this.isUserMessage(item) ? 12 : 4,
+      top: this.isUserMessage(item) ? 9 : 4,
+      bottom: this.isUserMessage(item) ? 9 : 4
+    })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-    .borderRadius(10)
+    .border({ width: this.isUserMessage(item) ? 0.5 : 0, color: this.isUserMessage(item) ? '#BFDBFE' : 'transparent' })
+    .borderRadius(this.isUserMessage(item) ? 10 : 0)
   }
 
   @Builder
@@ -3244,6 +3865,10 @@ struct Index {
         Blank()
           .layoutWeight(1)
         this.messageCard(item)
+      } else if (this.isCollapsibleMessage(item)) {
+        this.messageEventBlock(item)
+        Blank()
+          .layoutWeight(1)
       } else {
         this.messageCard(item)
         Blank()
@@ -3252,7 +3877,7 @@ struct Index {
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
-    .margin({ bottom: 8 })
+    .margin({ bottom: this.isCollapsibleMessage(item) ? 6 : 10 })
   }
 
   private isUserMessage(item: ChatMessage): boolean {
@@ -3301,7 +3926,7 @@ struct Index {
     if (this.isUserMessage(item)) {
       return this.hasWideMarkdownContent(item.content) ? '82%' : '72%';
     }
-    return this.hasWideMarkdownContent(item.content) ? '88%' : '78%';
+    return this.hasWideMarkdownContent(item.content) ? '94%' : '90%';
   }
 
   private hasWideMarkdownContent(content: string): boolean {
@@ -4927,6 +5552,124 @@ struct Index {
     }
   }
 
+  private eventSoftBackground(role: string): string {
+    switch (role) {
+      case 'reasoning': return '#FFFBEB';
+      case 'command': return '#ECFDF5';
+      case 'tool': return '#EFF6FF';
+      case 'file': return '#F5F3FF';
+      case 'search': return '#F0FDFA';
+      case 'plan': return '#FFF7ED';
+      case 'image': return '#FDF2F8';
+      case 'hook': return '#FEFCE8';
+      case 'review': return '#FEF9C3';
+      case 'system': return '#F8FAFC';
+      default: return '#F8FAFC';
+    }
+  }
+
+  private eventBorderColor(role: string): string {
+    switch (role) {
+      case 'reasoning': return '#FDE68A';
+      case 'command': return '#A7F3D0';
+      case 'tool': return '#BFDBFE';
+      case 'file': return '#DDD6FE';
+      case 'search': return '#99F6E4';
+      case 'plan': return '#FED7AA';
+      case 'image': return '#FBCFE8';
+      case 'hook': return '#FDE68A';
+      case 'review': return '#FACC15';
+      case 'system': return '#CBD5E1';
+      default: return '#E2E8F0';
+    }
+  }
+
+  private collapsedMessagePreview(item: ChatMessage): string {
+    const text: string = item.content.replace(/\s+/g, ' ').trim();
+    if (text.length > 0) {
+      return text;
+    }
+    if (item.status === 'inProgress') {
+      return '正在执行，等待输出。';
+    }
+    return '没有可展示的输出。';
+  }
+
+  private compactionNoticeStatusLabel(status: string): string {
+    switch (status) {
+      case 'starting':
+        return '启动中';
+      case 'running':
+        return '压缩中';
+      case 'completed':
+        return '已完成';
+      case 'failed':
+        return '失败';
+      case 'timeout':
+        return '超时';
+      default:
+        return status;
+    }
+  }
+
+  private compactionNoticeColor(status: string): string {
+    switch (status) {
+      case 'failed':
+      case 'timeout':
+        return '#DC2626';
+      case 'starting':
+      case 'running':
+        return '#2563EB';
+      case 'completed':
+        return '#4338CA';
+      default:
+        return '#64748B';
+    }
+  }
+
+  private compactionNoticeSoftBackground(status: string): string {
+    switch (status) {
+      case 'failed':
+      case 'timeout':
+        return '#FEF2F2';
+      case 'starting':
+      case 'running':
+        return '#EFF6FF';
+      case 'completed':
+        return '#EEF2FF';
+      default:
+        return '#F8FAFC';
+    }
+  }
+
+  private compactionNoticeBorderColor(status: string): string {
+    switch (status) {
+      case 'failed':
+      case 'timeout':
+        return '#FECACA';
+      case 'starting':
+      case 'running':
+        return '#BFDBFE';
+      case 'completed':
+        return '#C7D2FE';
+      default:
+        return '#CBD5E1';
+    }
+  }
+
+  private compactionNoticeSummary(notice: CompactionNotice): string {
+    if (notice.status === 'starting' || notice.status === 'running') {
+      return '正在压缩当前线程上下文。';
+    }
+    if (notice.errorMessage.trim().length > 0) {
+      return notice.errorMessage.trim();
+    }
+    if (notice.savedTokens > 0) {
+      return `释放 ${this.formatTokenCount(notice.savedTokens)} tokens。`;
+    }
+    return '压缩完成，token 用量暂无明显变化。';
+  }
+
   private statusLabel(status: string): string {
     switch (status) {
       case 'inProgress':
@@ -5060,6 +5803,31 @@ struct Index {
       .onClick(() => {
         this.draft = label;
       })
+  }
+
+  @Builder
+  private messageJumpToLatestButton() {
+    Row() {
+      Blank()
+        .layoutWeight(1)
+      Row() {
+        Text('回到底部')
+          .copyOption(CopyOptions.None)
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#18181B')
+      }
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .backgroundColor('#FFFFFF')
+      .border({ width: 0.5, color: '#D4D4D8' })
+      .borderRadius(8)
+      .shadow({ radius: 8, color: '#1A000000', offsetY: 2 })
+      .onClick(() => {
+        this.jumpToLatestMessage();
+      })
+    }
+    .width('100%')
+    .margin({ top: 6 })
   }
 
   @Builder
@@ -5887,6 +6655,12 @@ struct Index {
           ForEach(this.visibleMessages(), (item: ChatMessage) => {
             this.messageLine(item)
           }, (item: ChatMessage) => this.messageRenderKey(item))
+          if (this.hasDiffSignal()) {
+            this.fileChangesLine()
+          }
+          ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
+            this.compactionNoticeLine(notice)
+          }, (notice: CompactionNotice) => notice.id)
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
@@ -5895,6 +6669,25 @@ struct Index {
       .width('100%')
       .margin({ top: 10 })
       .scrollBar(BarState.Off)
+      .onWillScroll((xOffset: number, yOffset: number, scrollState: ScrollState, scrollSource: ScrollSource) => {
+        this.handleMessageWillScroll(xOffset, yOffset, scrollState, scrollSource);
+      })
+      .onDidScroll((xOffset: number, yOffset: number, scrollState: ScrollState) => {
+        this.handleMessageDidScroll(xOffset, yOffset, scrollState);
+      })
+      .onScrollEdge((side: Edge) => {
+        this.handleMessageScrollEdge(side);
+      })
+      .onScrollStop(() => {
+        this.handleMessageScrollStop();
+      })
+      .onReachEnd(() => {
+        this.resumeMessageAutoFollow();
+      })
+
+      if (!this.messageAutoFollowToBottom) {
+        this.messageJumpToLatestButton()
+      }
 
       Column() {
         Row() {
@@ -6702,15 +7495,7 @@ struct Index {
                       .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
                       .margin({ left: 6 })
                       .onClick(() => {
-                        if (this.compacting) {
-                          return;
-                        }
-                        const threadId: string = this.activeWorkspaceBindingId.trim();
-                        this.compactError = '';
-                        codexBackend.clearCompactionNotice(threadId);
-                        void codexBackend.compactThread(threadId).catch((err: Error) => {
-                          this.compactError = err.message.trim().length > 0 ? err.message : codexBackend.getLastCompactError();
-                        });
+                        this.retryCurrentCompaction();
                       })
                   }
                 }
