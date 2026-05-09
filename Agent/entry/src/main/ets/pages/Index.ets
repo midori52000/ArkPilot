@@ -541,18 +541,6 @@ struct Index {
     this.workspaceStatusText = 'å½“å‰æœªé…ç½®å·¥ä½œåŒº';
   }
 
-  private initializeDefaultWorkspace(): void {
-    const defaultWorkspaceRoot: string = AppStorage.get('defaultWorkspaceRoot') as string ?? '';
-    if (this.workspaceRoot.trim().length === 0 && defaultWorkspaceRoot.trim().length > 0) {
-      this.workspaceRoot = defaultWorkspaceRoot;
-      this.workspaceRoots.set(this.activeWorkspaceId, defaultWorkspaceRoot);
-    }
-    if (this.workspaceDraftText.trim().length === 0) {
-      this.workspaceDraftText = this.workspaceRoot;
-    }
-    this.refreshWorkspaceBindingState();
-  }
-
   private nextWorkspaceId(): number {
     let nextId: number = this.activeWorkspaceId > 0 ? this.activeWorkspaceId + 1 : 1;
     for (let index: number = 0; index < this.workspaces.length; index += 1) {
@@ -566,25 +554,6 @@ struct Index {
       }
     });
     return nextId;
-  }
-
-  private ensurePlaceholderWorkspace(preferredId?: number): WorkspaceItem {
-    if (this.workspaces.length > 0) {
-      return this.workspaces[0];
-    }
-    const workspaceId: number = preferredId !== undefined && preferredId > 0 ? preferredId : this.nextWorkspaceId();
-    const workspace: WorkspaceItem = new WorkspaceItem(
-      workspaceId,
-      `新会话 ${workspaceId}`,
-      '等待通过 app-server 创建真实会话',
-      `session:${workspaceId.toString()}`
-    );
-    this.workspaces = [workspace];
-    this.syncRecentWorkspaces();
-    this.workspaceIds.set(workspace.id, workspace.workspaceId);
-    this.currentWorkspaceTitle = workspace.title;
-    this.currentWorkspaceDescription = workspace.description;
-    return workspace;
   }
 
   private isRemoteThreadId(workspaceId: string): boolean {
@@ -838,9 +807,12 @@ struct Index {
     }
 
     if (restoredItems.length === 0) {
-      this.activeWorkspaceId = snapshot.activeWorkspaceId > 0 ? snapshot.activeWorkspaceId : 1;
-      this.ensurePlaceholderWorkspace(this.activeWorkspaceId);
-      this.initializeDefaultWorkspace();
+      this.workspaces = [];
+      this.activeWorkspaceId = 0;
+      this.workspaceRoot = '';
+      this.workspaceDraftText = '';
+      this.currentWorkspaceTitle = '';
+      this.currentWorkspaceDescription = '';
       this.syncWorkspaceSelectionText();
       this.syncCurrentWorkspaceState();
       this.persistWorkspaceBindings();
@@ -6164,11 +6136,11 @@ struct Index {
         .alignItems(VerticalAlign.Center)
 
         Column() {
-          Text('暂无会话')
+          Text('当前暂无项目')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(16)
             .fontColor('#A1A1AA')
-          Text('请在左侧项目中新建会话')
+          Text('请新建项目')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
             .fontColor('#D4D4D8')

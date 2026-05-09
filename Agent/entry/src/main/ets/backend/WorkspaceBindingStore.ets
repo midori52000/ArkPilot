@@ -29,13 +29,6 @@ function storeFilePath(): string {
   if (codexHome.trim().length > 0) {
     return `${codexHome}/${STORE_FILE_NAME}`;
   }
-  const defaultWorkspaceRoot: string = (AppStorage.get('defaultWorkspaceRoot') as string) ?? '';
-  if (defaultWorkspaceRoot.trim().length > 0) {
-    const slashIndex: number = defaultWorkspaceRoot.lastIndexOf('/');
-    if (slashIndex > 0) {
-      return `${defaultWorkspaceRoot.substring(0, slashIndex)}/${STORE_FILE_NAME}`;
-    }
-  }
   return STORE_FILE_NAME;
 }
 

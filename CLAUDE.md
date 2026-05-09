@@ -92,7 +92,6 @@ CMake 在 `Agent/entry/src/main/cpp/CMakeLists.txt` 中条件链接 `libcodex_oh
 ## AppStorage Keys
 
 - `codexHome` — 应用数据根目录，`EntryAbility.onCreate` 中设置为 `${filesDir}/codex-home`
-- `defaultWorkspaceRoot` — 默认工作区路径，`${filesDir}/workspace-default`
 
 ## Error Experience
 
