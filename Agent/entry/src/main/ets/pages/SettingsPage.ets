@@ -1420,7 +1420,7 @@ struct SettingsPage {
         Column() {
           Row() {
             Text('端点测速结果')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontColor('#0F172A')
@@ -1429,7 +1429,7 @@ struct SettingsPage {
               .layoutWeight(1)
 
             Text(this.speedTestingLabel())
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(11)
               .fontColor('#2563EB')
 
@@ -1463,20 +1463,20 @@ struct SettingsPage {
                 Column() {
                   Row() {
                     Text(r.endpointUrl)
-                      .copyOption(CopyOptions.LocalDevice)
+                      .copyOption(CopyOptions.None)
                       .fontSize(11)
                       .fontColor('#334155')
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .layoutWeight(1)
                     Text(r.success ? `${r.latencyMs}ms` : '失败')
-                      .copyOption(CopyOptions.LocalDevice)
+                      .copyOption(CopyOptions.None)
                       .fontSize(11)
                       .fontWeight(FontWeight.Medium)
                       .fontColor(r.success ? '#166534' : '#B91C1C')
                       .margin({ left: 8, right: 8 })
                     Text(r.success ? '正常' : '错误')
-                      .copyOption(CopyOptions.LocalDevice)
+                      .copyOption(CopyOptions.None)
                       .fontSize(10)
                       .fontWeight(FontWeight.Medium)
                       .fontColor(r.success ? '#166534' : '#B91C1C')
@@ -1498,7 +1498,7 @@ struct SettingsPage {
                       .fontColor(this.chatProbeColor(r.chatProbe))
                       .margin({ left: 6 })
                     Text(this.speedProbeDetail(r))
-                      .copyOption(CopyOptions.LocalDevice)
+                      .copyOption(CopyOptions.None)
                       .fontSize(this.speedProbeDetailSize(r))
                       .fontColor(this.speedProbeDetailColor(r))
                       .margin({ left: 4 })
@@ -1596,7 +1596,7 @@ struct SettingsPage {
       .onClick(() => { router.back(); })
 
       Text('设置')
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
@@ -1690,7 +1690,7 @@ struct SettingsPage {
   private sidebarHero() {
     Column() {
       Text('设置')
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
@@ -1720,7 +1720,7 @@ struct SettingsPage {
             .fontColor(this.activeTab === item.tab ? '#0F172A' : '#374151')
 
           Text(item.subtitle)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor(this.activeTab === item.tab ? '#4B5563' : '#9CA3AF')
             .margin({ top: 2 })
@@ -1806,13 +1806,13 @@ struct SettingsPage {
   private contentHero() {
     Column() {
       Text(this.heroTitle())
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
       if (this.heroSubtitle().length > 0) {
         Text(this.heroSubtitle())
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(12)
           .fontColor('#6B7280')
           .margin({ top: 4 })
@@ -1854,13 +1854,13 @@ struct SettingsPage {
   private sectionCard(title: string, subtitle: string) {
     Column() {
       Text(title)
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
       if (subtitle.length > 0) {
         Text(subtitle)
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(11)
           .fontColor('#64748B')
           .margin({ top: 4 })
@@ -1972,12 +1972,12 @@ struct SettingsPage {
   private skillsEmptyState(title: string, subtitle: string) {
     Column() {
       Text(title)
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
         .fontColor('#0F172A')
       Text(subtitle)
-        .copyOption(CopyOptions.LocalDevice)
+        .copyOption(CopyOptions.None)
         .fontSize(11)
         .fontColor('#64748B')
         .lineHeight(17)
@@ -2003,14 +2003,14 @@ struct SettingsPage {
               Row() {
                 Column() {
                   Text(skill.name)
-                    .copyOption(CopyOptions.LocalDevice)
+                    .copyOption(CopyOptions.None)
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor('#0F172A')
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                   Text(skill.description)
-                    .copyOption(CopyOptions.LocalDevice)
+                    .copyOption(CopyOptions.None)
                     .fontSize(11)
                     .fontColor('#64748B')
                     .lineHeight(17)
@@ -2030,11 +2030,11 @@ struct SettingsPage {
               .width('100%')
               Row() {
                 Text(this.skillSourceText(skill))
-                  .copyOption(CopyOptions.LocalDevice)
+                  .copyOption(CopyOptions.None)
                   .fontSize(10)
                   .fontColor('#94A3B8')
                 Text(this.skillMetaText(skill))
-                  .copyOption(CopyOptions.LocalDevice)
+                  .copyOption(CopyOptions.None)
                   .fontSize(10)
                   .fontColor('#94A3B8')
                   .margin({ left: 10 })
@@ -2063,7 +2063,7 @@ struct SettingsPage {
       if (this.selectedSkill() === null) {
         Column() {
           Text('选择一个 Skill 查看详情')
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(14)
             .fontColor('#9CA3AF')
         }
@@ -2187,9 +2187,9 @@ struct SettingsPage {
             Row() {
               Column() {
                 Text(`${repo.owner}/${repo.name}`)
-                  .copyOption(CopyOptions.LocalDevice).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                  .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
                 Text(`分支: ${repo.branch}`)
-                  .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 5 })
+                  .copyOption(CopyOptions.None).fontSize(10).fontColor('#64748B').margin({ top: 5 })
               }
               .alignItems(HorizontalAlign.Start)
               Blank().layoutWeight(1)
@@ -2220,9 +2220,9 @@ struct SettingsPage {
       if (this.skillBackups.length === 0) {
         Column() {
           Text('暂无备份')
-            .copyOption(CopyOptions.LocalDevice).fontSize(16).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(16).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Text('这里将用于展示原生卸载动作留下的历史快照。')
-            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 6 })
+            .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 6 })
         }
         .width('100%').padding(28).backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(22).margin({ top: 12 })
@@ -2232,16 +2232,16 @@ struct SettingsPage {
             Row() {
               Column() {
                 Text(backup.skill.name)
-                  .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                  .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
                 Text(backup.backupPath)
-                  .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 6 })
+                  .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 6 })
               }
               .alignItems(HorizontalAlign.Start).layoutWeight(1)
               this.pill('归档', '#FFFBEB', '#B45309')
             }
             .width('100%')
             Text(`创建时间 ${this.formatTimestamp(backup.createdAt)}`)
-              .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 12 })
+              .copyOption(CopyOptions.None).fontSize(10).fontColor('#64748B').margin({ top: 12 })
             Row() {
               this.actionButton('删除备份', `backup-remove-${backup.backupId}`, true, () => { this.removeSkillBackup(backup.backupId); })
             }
@@ -2270,7 +2270,7 @@ struct SettingsPage {
           }
           .width('100%').alignItems(VerticalAlign.Center).margin({ bottom: 12 })
           Text(this.skillsStatusText)
-            .copyOption(CopyOptions.LocalDevice).fontSize(11)
+            .copyOption(CopyOptions.None).fontSize(11)
             .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
             .margin({ bottom: 8 })
             .visibility(this.skillsStatusText.length > 0 ? Visibility.Visible : Visibility.None)
@@ -2313,11 +2313,11 @@ struct SettingsPage {
           .onClick(() => { this.cancelUninstallSkill(); })
         Column() {
           Text('确认删除 Skill')
-            .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
           Text(`删除后将从当前前端列表中移除 "${this.pendingDeleteSkillName}"。`)
-            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
           Text('当前仍为前端模拟，但危险操作需要确认。')
-            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#B45309').margin({ top: 8 })
+            .copyOption(CopyOptions.None).fontSize(11).fontColor('#B45309').margin({ top: 8 })
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
@@ -2410,9 +2410,9 @@ struct SettingsPage {
       Row() {
         Column() {
           Text(server.name)
-            .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
           Text(server.id)
-            .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 4 })
+            .copyOption(CopyOptions.None).fontSize(10).fontColor('#64748B').margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
         Blank().layoutWeight(1)
@@ -2430,7 +2430,7 @@ struct SettingsPage {
       }
       .width('100%').margin({ top: 10 }).alignItems(VerticalAlign.Center)
       Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
-        .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 10 })
+        .copyOption(CopyOptions.None).fontSize(10).fontColor('#64748B').margin({ top: 10 })
     }
     .width('100%').padding(16)
     .width('100%').margin({ top: 10 })
@@ -2457,7 +2457,7 @@ struct SettingsPage {
         }
         .width('100%')
         Text(this.mcpStatusText)
-          .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#334155').margin({ top: 14 })
+          .copyOption(CopyOptions.None).fontSize(12).fontColor('#334155').margin({ top: 14 })
         this.formLabel('传输方式')
         Row() {
           this.optionChip('stdio', this.mcpTransportTypeDraft === 'stdio', 'transport-stdio', () => { this.mcpTransportTypeDraft = 'stdio'; })
@@ -2561,9 +2561,9 @@ struct SettingsPage {
           .onClick(() => { this.cancelMcpAdd(); })
         Column() {
           Text('新增 MCP 服务')
-            .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
           Text('粘贴 JSON 配置即可添加，兼容 Claude Desktop / Cursor 格式。')
-            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
           TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 字段时自动识别）' })
             .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
             .padding({ left: 12, right: 12 }).margin({ top: 12 })
@@ -2574,7 +2574,7 @@ struct SettingsPage {
             .onChange((value: string) => { this.mcpJsonPasteInput = value; })
           Column() {
             Text(this.mcpAddPreviewText())
-              .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#475569').lineHeight(18)
+              .copyOption(CopyOptions.None).fontSize(11).fontColor('#475569').lineHeight(18)
           }
           .width('100%').padding(10).margin({ top: 8 })
           .backgroundColor('#F1F5F9').borderRadius(12)
@@ -2613,9 +2613,9 @@ struct SettingsPage {
           .onClick(() => { this.cancelMcpDelete(); })
         Column() {
           Text('确认删除 MCP 服务')
-            .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
           Text(`将从配置中移除 "${this.pendingDeleteMcpName}"，此操作不可撤销。`)
-            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
@@ -2712,12 +2712,12 @@ struct SettingsPage {
         Row() {
           Column() {
             Text(prompt.name)
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
             Text(prompt.description)
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(11)
               .fontColor('#64748B')
               .lineHeight(18)
@@ -2732,7 +2732,7 @@ struct SettingsPage {
 
         Row() {
           Text(`更新于 ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(10)
             .fontColor('#64748B')
             .layoutWeight(1)
@@ -2801,7 +2801,7 @@ struct SettingsPage {
         .width('100%')
 
         Text(this.promptsStatusText)
-          .copyOption(CopyOptions.LocalDevice)
+          .copyOption(CopyOptions.None)
           .fontSize(11)
           .fontColor('#64748B')
           .margin({ top: 10 })
@@ -2840,7 +2840,7 @@ struct SettingsPage {
         if (this.promptLiveContent.trim().length > 0) {
           this.formLabel('当前 AGENTS.md')
           Text(this.promptLiveContent)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .width('100%')
             .fontSize(11)
             .fontColor('#475569')
@@ -3013,7 +3013,7 @@ struct SettingsPage {
         Column() {
           Row() {
             Text(provider.name.length > 0 ? provider.name : '未命名')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor('#111827')
@@ -3035,7 +3035,7 @@ struct SettingsPage {
           .width('100%')
 
           Text(this.apiProviderSecondaryText(provider))
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#9CA3AF')
             .margin({ top: 2 })
@@ -3110,12 +3110,12 @@ struct SettingsPage {
       Row() {
         Column() {
           Text('服务商列表')
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
             .fontColor('#111827')
           Text('长按卡片拖动可调整顺序')
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor('#9CA3AF')
             .margin({ top: 2 })
@@ -3173,19 +3173,19 @@ struct SettingsPage {
 
         Column() {
           Text(preset.name)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor('#0F172A')
           Text(preset.baseUrl)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor('#2563EB')
             .margin({ top: 4 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(preset.description)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor('#64748B')
             .lineHeight(18)
@@ -3262,13 +3262,13 @@ struct SettingsPage {
         Row() {
           Column() {
             Text('服务商工作区')
-              .copyOption(CopyOptions.LocalDevice)
+              .copyOption(CopyOptions.None)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#0F172A')
             if (apiManagementVM.state.errorText.trim().length > 0) {
               Text(apiManagementVM.state.errorText)
-                .copyOption(CopyOptions.LocalDevice)
+                .copyOption(CopyOptions.None)
                 .fontSize(11)
                 .fontColor('#B91C1C')
                 .margin({ top: 4 })
@@ -3329,7 +3329,7 @@ struct SettingsPage {
             .borderRadius(8)
 
           Text(toast.message)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor('#0F172A')
             .margin({ left: 10 })
@@ -3400,7 +3400,7 @@ struct SettingsPage {
         Column() {
         Row() {
           Text(this.validationTitleText())
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor(this.validationTitleColor())

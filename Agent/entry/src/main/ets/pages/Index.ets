@@ -506,14 +506,26 @@ struct Index {
       this.activeCompactionNoticeId = noticeId;
     }
     const previous: CompactionNotice | null = this.compactionNoticeById(noticeId);
+    const effectiveOldTotal: number = oldTotalTokens > 0
+      ? oldTotalTokens
+      : (previous !== null ? previous.oldTotalTokens : 0);
+    const effectiveNewTotal: number = newTotalTokens > 0
+      ? newTotalTokens
+      : (previous !== null ? previous.newTotalTokens : 0);
+    const computedSaved: number = effectiveOldTotal > 0 && effectiveNewTotal > 0 && effectiveOldTotal > effectiveNewTotal
+      ? effectiveOldTotal - effectiveNewTotal
+      : 0;
+    const effectiveSaved: number = savedTokens > 0
+      ? savedTokens
+      : (computedSaved > 0 ? computedSaved : (previous !== null ? previous.savedTokens : 0));
     const next = new CompactionNotice(
       noticeId,
       threadId,
       status,
       errorMessage,
-      savedTokens,
-      oldTotalTokens,
-      newTotalTokens,
+      effectiveSaved,
+      effectiveOldTotal,
+      effectiveNewTotal,
       previous !== null ? previous.timestamp : this.currentClockLabel()
     );
     this.compactionNotices = [
@@ -3678,7 +3690,7 @@ struct Index {
         Column() {
           this.compactionMetricRow('压缩前', notice.oldTotalTokens > 0 ? `${this.formatTokenCount(notice.oldTotalTokens)} tokens` : '未知')
           this.compactionMetricRow('压缩后', notice.newTotalTokens > 0 ? `${this.formatTokenCount(notice.newTotalTokens)} tokens` : '未知')
-          this.compactionMetricRow('释放', notice.savedTokens > 0 ? `${this.formatTokenCount(notice.savedTokens)} tokens` : '0 tokens')
+          this.compactionMetricRow('释放', this.compactionSavedText(notice))
           if (notice.errorMessage.trim().length > 0) {
             Text(notice.errorMessage)
               .copyOption(CopyOptions.LocalDevice)
@@ -5659,6 +5671,9 @@ struct Index {
 
   private compactionNoticeSummary(notice: CompactionNotice): string {
     if (notice.status === 'starting' || notice.status === 'running') {
+      if (notice.savedTokens > 0) {
+        return `已释放 ${this.formatTokenCount(notice.savedTokens)} tokens，正在同步最终结果。`;
+      }
       return '正在压缩当前线程上下文。';
     }
     if (notice.errorMessage.trim().length > 0) {
@@ -5668,6 +5683,16 @@ struct Index {
       return `释放 ${this.formatTokenCount(notice.savedTokens)} tokens。`;
     }
     return '压缩完成，token 用量暂无明显变化。';
+  }
+
+  private compactionSavedText(notice: CompactionNotice): string {
+    if (notice.savedTokens > 0) {
+      return `${this.formatTokenCount(notice.savedTokens)} tokens`;
+    }
+    if (notice.status === 'starting' || notice.status === 'running') {
+      return '计算中';
+    }
+    return '0 tokens';
   }
 
   private statusLabel(status: string): string {

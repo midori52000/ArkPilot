@@ -1849,7 +1849,11 @@ export class CodexBackend {
   }
 
   private completeCompaction(thread: CodexThreadRecord): void {
-    const newTotal: number = thread.tokenUsage?.total.totalTokens ?? this.compactionState.oldTotalTokens;
+    this.updateCompactionTokenDelta(thread);
+    const observedTotal: number = thread.tokenUsage?.total.totalTokens ?? 0;
+    const newTotal: number = this.compactionState.newTotalTokens > 0
+      ? this.compactionState.newTotalTokens
+      : (observedTotal > 0 ? observedTotal : this.compactionState.oldTotalTokens);
     const saved: number = this.compactionState.oldTotalTokens - newTotal;
     this.compactionState.threadId = thread.remoteThreadId;
     this.compactionState.status = 'completed';
@@ -1922,6 +1926,23 @@ export class CodexBackend {
     const ctxWindow = typeof tu['modelContextWindow'] === 'number' ? (tu['modelContextWindow'] as number) : 0;
     const ctxRemainingPct = typeof tu['contextRemainingPercent'] === 'number' ? (tu['contextRemainingPercent'] as number) : -1;
     thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow, ctxRemainingPct);
+    this.updateCompactionTokenDelta(thread);
+  }
+
+  private updateCompactionTokenDelta(thread: CodexThreadRecord): void {
+    if (this.compactionState.threadId.trim().length === 0 || thread.remoteThreadId !== this.compactionState.threadId) {
+      return;
+    }
+    if (this.compactionState.oldTotalTokens <= 0 || thread.tokenUsage === null) {
+      return;
+    }
+    const newTotal: number = thread.tokenUsage.total.totalTokens;
+    if (typeof newTotal !== 'number' || newTotal !== newTotal || newTotal <= 0) {
+      return;
+    }
+    this.compactionState.newTotalTokens = newTotal;
+    const saved: number = this.compactionState.oldTotalTokens - newTotal;
+    this.compactionState.savedTokens = saved > 0 ? saved : 0;
   }
 
   private async pollCompactionUntilCompleted(thread: CodexThreadRecord, baselineTurnId: string, timeoutMs: number): Promise<void> {
@@ -1964,7 +1985,8 @@ export class CodexBackend {
 
   private async drainCompactionTokenUsage(thread: CodexThreadRecord): Promise<void> {
     for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
-      if (thread.tokenUsage !== null && thread.tokenUsage.total.totalTokens !== this.compactionState.oldTotalTokens) {
+      this.updateCompactionTokenDelta(thread);
+      if (this.compactionState.newTotalTokens > 0 && this.compactionState.newTotalTokens !== this.compactionState.oldTotalTokens) {
         return;
       }
       await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
@@ -1974,7 +1996,8 @@ export class CodexBackend {
       ) as Record<string, Object>;
       this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
       this.notifyListeners();
-      if (thread.tokenUsage !== null && thread.tokenUsage.total.totalTokens !== this.compactionState.oldTotalTokens) {
+      this.updateCompactionTokenDelta(thread);
+      if (this.compactionState.newTotalTokens > 0 && this.compactionState.newTotalTokens !== this.compactionState.oldTotalTokens) {
         return;
       }
     }
