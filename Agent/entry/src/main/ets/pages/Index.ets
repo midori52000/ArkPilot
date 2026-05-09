@@ -359,6 +359,7 @@ struct Index {
   @State private rawMarkdownMessageIds: string[] = [];
   @State private rawMermaidBlockIds: string[] = [];
   @State private compactionNotices: CompactionNotice[] = [];
+  @State private compactionNoticeVersion: number = 0;
   @State private currentTurnId: string = '';
   @State private currentTurnStatus: string = '';
   @State private thinkingPulseIndex: number = 0;
@@ -565,11 +566,9 @@ struct Index {
       ...this.compactionNotices.filter((item: CompactionNotice) => item.id !== noticeId),
       next
     ];
-    if (this.isTerminalCompactionStatus(status)) {
-      this.activeCompactionNoticeId = '';
-    } else {
-      this.activeCompactionNoticeId = noticeId;
-    }
+    this.activeCompactionNoticeId = noticeId;
+    this.compactionNoticeVersion += 1;
+    this.scheduleMessageScrollToBottom();
   }
 
   private isTerminalCompactionStatus(status: string): boolean {
@@ -604,16 +603,24 @@ struct Index {
   }
 
   private latestActiveCompactionNotice(): CompactionNotice | null {
+    this.compactionNoticeVersion;
     const threadIds: string[] = this.currentCompactionThreadIds();
     if (threadIds.length === 0) {
-      return null;
+      return this.activeCompactionNoticeById();
     }
     for (let index: number = this.compactionNotices.length - 1; index >= 0; index -= 1) {
       if (threadIds.indexOf(this.compactionNotices[index].threadId) >= 0) {
         return this.compactionNotices[index];
       }
     }
-    return null;
+    return this.activeCompactionNoticeById();
+  }
+
+  private activeCompactionNoticeById(): CompactionNotice | null {
+    if (this.activeCompactionNoticeId.length === 0) {
+      return null;
+    }
+    return this.compactionNoticeById(this.activeCompactionNoticeId);
   }
 
   private finishLocalCompactionNotice(threadId: string): void {
@@ -1535,9 +1542,8 @@ struct Index {
   }
 
   private visibleMessages(): ChatMessage[] {
-    const hideCompactionSystemMessages: boolean = this.latestActiveCompactionNotice() !== null;
     let visible: ChatMessage[] = this.messages.filter((item: ChatMessage) => {
-      return !(hideCompactionSystemMessages && this.isCompactionSystemMessage(item));
+      return !this.isCompactionSystemMessage(item);
     });
     if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
       visible = [...visible, this.pendingUserMessage()];
@@ -1627,8 +1633,7 @@ struct Index {
       type === 'plan' ||
       type === 'image' ||
       type === 'hook' ||
-      type === 'review' ||
-      type === 'system';
+      type === 'review';
   }
 
   private thinkingPlaceholderMessage(): ChatMessage {
@@ -2264,6 +2269,7 @@ struct Index {
   }
 
   private async selectWorkspace(item: WorkspaceItem): Promise<void> {
+    this.activeCompactionNoticeId = '';
     this.activeWorkspaceId = item.id;
     this.syncSelectedCollaborationMode();
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
@@ -2338,6 +2344,10 @@ struct Index {
     return latest === null ? [] : [latest];
   }
 
+  private compactionNoticeRenderKey(notice: CompactionNotice): string {
+    return `${notice.id}:${notice.status}:${notice.savedTokens}:${notice.oldTotalTokens}:${notice.newTotalTokens}:${this.compactionNoticeVersion}`;
+  }
+
   private isCompactionNoticeExpanded(noticeId: string): boolean {
     return this.expandedCompactionIds.indexOf(noticeId) >= 0;
   }
@@ -2355,8 +2365,17 @@ struct Index {
     if (threadId.length === 0 || this.compacting) {
       return;
     }
+    this.resumeMessageAutoFollow();
     this.compactError = '';
     codexBackend.clearCompactionNotice(threadId);
+    this.upsertCompactionNotice(
+      threadId,
+      'starting',
+      '',
+      0,
+      this.tokenUsage !== null ? this.tokenUsage.total.totalTokens : 0,
+      0
+    );
     void codexBackend.compactThread(threadId).catch((err: Error) => {
       this.compactError = err.message.trim().length > 0 ? err.message : codexBackend.getLastCompactError();
     });
@@ -2373,7 +2392,6 @@ struct Index {
       case 'image': return '#EC4899';
       case 'hook': return '#EAB308';
       case 'review': return '#FACC15';
-      case 'system': return '#6B7280';
       case 'user': return '#3B82F6';
       default: return '#D4D4D8';
     }
@@ -2390,7 +2408,6 @@ struct Index {
       case 'image': return '图片';
       case 'hook': return '钩子';
       case 'review': return '审查';
-      case 'system': return '系统';
       default: return role;
     }
   }
@@ -5950,8 +5967,6 @@ struct Index {
         return '🪝';
       case 'review':
         return '👁️';
-      case 'system':
-        return '⚙️';
       default:
         return '';
     }
@@ -5968,7 +5983,6 @@ struct Index {
       case 'image': return '#FDF2F8';
       case 'hook': return '#FEFCE8';
       case 'review': return '#FEF9C3';
-      case 'system': return '#F8FAFC';
       default: return '#F8FAFC';
     }
   }
@@ -5984,7 +5998,6 @@ struct Index {
       case 'image': return '#FBCFE8';
       case 'hook': return '#FDE68A';
       case 'review': return '#FACC15';
-      case 'system': return '#CBD5E1';
       default: return '#E2E8F0';
     }
   }
@@ -7078,7 +7091,7 @@ struct Index {
           }
           ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
             this.compactionNoticeLine(notice)
-          }, (notice: CompactionNotice) => notice.id)
+          }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
           ForEach(this.activeThinkingPlaceholders(), (item: ChatMessage) => {
             this.messageLine(item)
           }, (item: ChatMessage) => this.messageRenderKey(item))
