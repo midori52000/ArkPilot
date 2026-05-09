@@ -264,7 +264,7 @@ struct Index {
   @State private authStatusText: string = '未登录';
   @State private connectionState: CodexConnectionState = 'disconnected';
   @State private connectionText: string = '未连接';
-  @State private summaryTitle: string = '等待连接原生桥接后端';
+  @State private summaryTitle: string = '';
   @State private summaryPoints: string[] = [
     '应用启动时会自动拉起内置 Rust ArkPilot host。',
     '这里通过 libentry.so 同步调用原生桥接层，而不是本地 mock。',
@@ -2513,25 +2513,6 @@ struct Index {
   }
 
 
-  @Builder
-  private summaryBullet(text: string) {
-    Row() {
-      Text('•')
-        .copyOption(CopyOptions.None)
-        .fontSize(12)
-        .fontColor('#A1A1AA')
-        .margin({ right: 6 })
-
-      Text(text)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .fontColor('#27272A')
-        .layoutWeight(1)
-        .lineHeight(18)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
-  }
 
   @Builder
   private markdownModeChip(label: string) {
@@ -5920,46 +5901,6 @@ struct Index {
         }
       }
       .width('100%')
-
-      Column() {
-        Text(this.summaryTitle)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#18181B')
-
-        Column() {
-          ForEach(this.summaryPoints, (item: string) => {
-            this.summaryBullet(item)
-          }, (item: string) => item)
-        }
-        .width('100%')
-        .margin({ top: 10 })
-
-        Row() {
-          Text(this.changedFiles)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#71717A')
-            .layoutWeight(1)
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text(this.diffStat)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#16A34A')
-        }
-        .width('100%')
-        .margin({ top: 10 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-      .padding(14)
-      .margin({ top: 10 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 0.5, color: '#E4E4E7' })
-      .borderRadius(12)
 
       if (this.pendingApproval !== null) {
         this.approvalCard(this.pendingApproval!)
