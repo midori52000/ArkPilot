@@ -22,8 +22,10 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::user_input::UserInput;
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
+use codex_utils_output_truncation::truncate_function_output_items_with_policy;
 use codex_utils_output_truncation::truncate_text;
 use futures::prelude::*;
 use tracing::error;
@@ -31,6 +33,7 @@ use tracing::error;
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
+const COMPACT_TOOL_OUTPUT_MAX_TOKENS: usize = 500;
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -115,9 +118,10 @@ async fn run_compact_task_inner(
 
     loop {
         // Clone is required because of the loop
-        let turn_input = history
+        let mut turn_input = history
             .clone()
             .for_prompt(&turn_context.model_info.input_modalities);
+        pre_compress_tool_outputs(&mut turn_input, COMPACT_TOOL_OUTPUT_MAX_TOKENS);
         let turn_input_len = turn_input.len();
         let prompt = Prompt {
             input: turn_input,
@@ -268,6 +272,36 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
 
 pub(crate) fn is_summary_message(message: &str) -> bool {
     message.starts_with(format!("{SUMMARY_PREFIX}\n").as_str())
+}
+
+fn truncate_payload(body: &mut FunctionCallOutputBody, policy: &TruncationPolicy) {
+    match body {
+        FunctionCallOutputBody::Text(text) => {
+            let truncated = truncate_text(text, *policy);
+            if truncated.len() < text.len() {
+                *text = truncated;
+            }
+        }
+        FunctionCallOutputBody::ContentItems(items) => {
+            let truncated = truncate_function_output_items_with_policy(items, *policy);
+            *items = truncated;
+        }
+    }
+}
+
+fn pre_compress_tool_outputs(items: &mut [ResponseItem], max_tokens: usize) {
+    let policy = TruncationPolicy::Tokens(max_tokens);
+    for item in items.iter_mut() {
+        match item {
+            ResponseItem::FunctionCallOutput { output, .. } => {
+                truncate_payload(&mut output.body, &policy);
+            }
+            ResponseItem::CustomToolCallOutput { output, .. } => {
+                truncate_payload(&mut output.body, &policy);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Inserts canonical initial context into compacted replacement history at the

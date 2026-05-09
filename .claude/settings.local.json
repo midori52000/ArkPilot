@@ -33,7 +33,15 @@
       "PowerShell($lines = Get-Content 'C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\src\\\\main\\\\ets\\\\pages\\\\Index.ets' | Select-Object -Skip 4312 -First 300; $braceCount = 0; $lineNum = 4313; $foundIssue = $false; foreach \\($line in $lines\\) { $opens = \\([regex]::Matches\\($line, '\\\\{'\\)\\).Count; $closes = \\([regex]::Matches\\($line, '\\\\}'\\)\\).Count; $braceCount += $opens - $closes; if \\($braceCount -lt 0 -and -not $foundIssue\\) { Write-Output \"ISSUE at line $lineNum : brace=$braceCount\"; $foundIssue = $true; break }; $lineNum++ }; if \\(-not $foundIssue\\) { Write-Output \"No brace issue found in build\\(\\)\" })",
       "PowerShell($lines = Get-Content 'C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\src\\\\main\\\\ets\\\\pages\\\\Index.ets' | Select-Object -Skip 4312 -First 120; $braceCount = 0; $lineNum = 4313; foreach \\($line in $lines\\) { $opens = \\([regex]::Matches\\($line, '\\\\{'\\)\\).Count; $closes = \\([regex]::Matches\\($line, '\\\\}'\\)\\).Count; $braceCount += $opens - $closes; if \\($opens -gt 0 -or $closes -gt 0\\) { Write-Output \"$lineNum : brace=$braceCount\" }; $lineNum++ })",
       "PowerShell($lines = Get-Content 'C:\\\\Users\\\\asus\\\\Desktop\\\\OpenHarmony\\\\Agent\\\\entry\\\\src\\\\main\\\\ets\\\\pages\\\\Index.ets' | Select-Object -Skip 4312 -First 120; $braceCount = 1; $lineNum = 4313; foreach \\($line in $lines\\) { $opens = \\([regex]::Matches\\($line, '\\\\{'\\)\\).Count; $closes = \\([regex]::Matches\\($line, '\\\\}'\\)\\).Count; $braceCount += $opens - $closes; if \\($opens -gt 0 -or $closes -gt 0\\) { Write-Output \"$lineNum : brace=$braceCount\" }; $lineNum++ })",
-      "WebFetch(domain:developer.huawei.com)"
+      "WebFetch(domain:developer.huawei.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/Aider-AI/aider/main/aider/coders/base_coder.py\")",
+      "Bash(curl -sL \"https://api.github.com/search/code?q=compact+repo:openai/codex+filename:compact\" -H \"Accept: application/vnd.github.v3+json\")",
+      "Bash(curl -sL \"https://api.github.com/repos/openai/codex/git/trees/main?recursive=1\" -H \"Accept: application/vnd.github.v3+json\")",
+      "Bash(curl *)",
+      "WebFetch(domain:aider.chat)",
+      "WebFetch(domain:docs.anthropic.com)"
     ]
   }
 }
