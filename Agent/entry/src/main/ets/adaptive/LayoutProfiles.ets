@@ -32,12 +32,12 @@ export function getArkPilotLayoutProfile(breakpoint: ArkPilotBreakpoint): ArkPil
     return new ArkPilotLayoutProfile('desktop', true, true, 300, 360, 480);
   }
   if (breakpoint === 'md') {
-    return new ArkPilotLayoutProfile('tablet', true, false, 280, 0, 420);
+    return new ArkPilotLayoutProfile('tablet', true, false, 280, 360, 420);
   }
   if (breakpoint === 'xs') {
-    return new ArkPilotLayoutProfile('phone', false, false, 0, 0, 288);
+    return new ArkPilotLayoutProfile('phone', false, false, 288, 288, 288);
   }
-  return new ArkPilotLayoutProfile('phone', false, false, 0, 0, 360);
+  return new ArkPilotLayoutProfile('phone', false, false, 300, 320, 360);
 }
 
 export function getArkPilotLayoutMode(breakpoint: ArkPilotBreakpoint): ArkPilotLayoutMode {

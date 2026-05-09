@@ -1,3 +1,6 @@
+import { breakpointManager } from '../adaptive/BreakpointManager';
+import { getArkPilotLayoutProfile } from '../adaptive/LayoutProfiles';
+import { ArkPilotBreakpoint } from '../adaptive/BreakpointTypes';
 import {
   codexBackend,
   CodexApprovalRequest,
@@ -205,6 +208,10 @@ class FormulaParseResult {
 @Entry
 @Component
 struct Index {
+  @StorageProp('arkPilotBreakpoint')
+  @Watch('onBreakpointChanged')
+  currentBreakpoint: ArkPilotBreakpoint = 'sm';
+
   private readonly quickActions: string[] = [
     '检查当前工作目录的变更',
     '总结最近一次改动',
@@ -340,9 +347,14 @@ struct Index {
   @State private showDeleteProjectDialog: boolean = false;
   @State private deleteProjectDialogId: string = '';
   @State private deleteProjectDialogName: string = '';
+  @State private lastAppliedBreakpoint: ArkPilotBreakpoint = 'sm';
 
 
   aboutToAppear(): void {
+    const mediaQuery = this.getUIContext().getMediaQuery();
+    breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
+    this.applyResponsiveLayoutProfile(true);
+
     this.backendSubscriptionId = codexBackend.subscribe((snapshot: CodexBackendSnapshot) => {
       this.applyBackendSnapshot(snapshot);
     });
@@ -1979,6 +1991,30 @@ struct Index {
     this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
       this.showRightDrawer = !this.showRightDrawer;
     });
+  }
+
+  private applyResponsiveLayoutProfile(force: boolean = false): void {
+    if (!force && this.lastAppliedBreakpoint === this.currentBreakpoint) {
+      return;
+    }
+    const profile = getArkPilotLayoutProfile(this.currentBreakpoint);
+    if (profile.leftPanelWidth > 0) {
+      this.leftPanelWidth = profile.leftPanelWidth;
+    }
+    if (profile.rightPanelWidth > 0) {
+      this.rightPanelWidth = profile.rightPanelWidth;
+    }
+    this.showLeftDrawer = profile.leftPanelPersistent;
+    this.showRightDrawer = profile.rightPanelPersistent;
+    this.lastAppliedBreakpoint = this.currentBreakpoint;
+  }
+
+  private onBreakpointChanged(): void {
+    this.applyResponsiveLayoutProfile();
+  }
+
+  private isPhoneBreakpoint(): boolean {
+    return this.currentBreakpoint === 'xs' || this.currentBreakpoint === 'sm';
   }
 
   private describeError(err: Object): string {
@@ -5738,83 +5774,89 @@ struct Index {
   @Builder
   private chatCenterView() {
     Column() {
-      Row() {
-        Button() {
-          Stack() {
-            Column()
-              .width(16)
-              .height(12)
-              .borderRadius(3)
-              .border({ width: 1.5, color: '#71717A' })
-              .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
-            Column()
-              .width(1.5)
-              .height(8)
-              .backgroundColor('#71717A')
-              .position({ x: 4, y: 2 })
-          }
-          .width(16)
-          .height(12)
-        }
-        .type(ButtonType.Normal)
-        .width(32)
-        .height(28)
-        .backgroundColor('#FAFAFA')
-        .borderRadius(8)
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .onClick(() => {
-          this.toggleLeftDrawer();
-        })
-
-        Blank()
-          .width(6)
-
-        Column() {
-          Text(this.currentWorkspaceTitle)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-
-          Text(this.currentWorkspaceDescription)
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#A1A1AA')
-            .margin({ top: 4 })
-        }
-        .alignItems(HorizontalAlign.Start)
-
-        Blank()
-          .layoutWeight(1)
-
+      Column() {
         Row() {
-          Text(this.currentCollaborationModeLabel())
-            .copyOption(CopyOptions.None)
-            .fontSize(10)
-            .fontColor('#C2410C')
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#FFF7ED')
-            .borderRadius(6)
+          Button() {
+            Stack() {
+              Column()
+                .width(16)
+                .height(12)
+                .borderRadius(3)
+                .border({ width: 1.5, color: '#71717A' })
+                .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
+              Column()
+                .width(1.5)
+                .height(8)
+                .backgroundColor('#71717A')
+                .position({ x: 4, y: 2 })
+            }
+            .width(16)
+            .height(12)
+          }
+          .type(ButtonType.Normal)
+          .width(32)
+          .height(28)
+          .backgroundColor('#FAFAFA')
+          .borderRadius(8)
+          .border({ width: 0.5, color: '#E4E4E7' })
+          .onClick(() => {
+            this.toggleLeftDrawer();
+          })
+
           Blank()
             .width(6)
-          Text(this.currentModelLabel())
-            .copyOption(CopyOptions.None)
-            .fontSize(10)
-            .fontColor('#2563EB')
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#EFF6FF')
-            .borderRadius(6)
+
+          Column() {
+            Text(this.currentWorkspaceTitle)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#18181B')
+
+            Text(this.currentWorkspaceDescription)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(10)
+              .fontColor('#A1A1AA')
+              .margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+
           Blank()
-            .width(6)
-          Text(this.currentEffortLabel())
-            .copyOption(CopyOptions.None)
-            .fontSize(10)
-            .fontColor('#71717A')
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor('#F4F4F5')
-            .borderRadius(6)
-          Blank()
-            .width(6)
+            .layoutWeight(1)
+
+          if (!this.isPhoneBreakpoint()) {
+            Row() {
+              Text(this.currentCollaborationModeLabel())
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#C2410C')
+                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                .backgroundColor('#FFF7ED')
+                .borderRadius(6)
+              Blank()
+                .width(6)
+              Text(this.currentModelLabel())
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#2563EB')
+                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                .backgroundColor('#EFF6FF')
+                .borderRadius(6)
+              Blank()
+                .width(6)
+              Text(this.currentEffortLabel())
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#71717A')
+                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                .backgroundColor('#F4F4F5')
+                .borderRadius(6)
+              Blank()
+                .width(6)
+            }
+            .alignItems(VerticalAlign.Center)
+          }
+
           Button() {
             Stack() {
               Column()
@@ -5842,10 +5884,42 @@ struct Index {
             this.toggleRightDrawer();
           })
         }
+        .width('100%')
         .alignItems(VerticalAlign.Center)
+
+        if (this.isPhoneBreakpoint()) {
+          Row() {
+            Text(this.currentCollaborationModeLabel())
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#C2410C')
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .backgroundColor('#FFF7ED')
+              .borderRadius(6)
+            Blank()
+              .width(6)
+            Text(this.currentModelLabel())
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#2563EB')
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .backgroundColor('#EFF6FF')
+              .borderRadius(6)
+            Blank()
+              .width(6)
+            Text(this.currentEffortLabel())
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor('#71717A')
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .backgroundColor('#F4F4F5')
+              .borderRadius(6)
+          }
+          .width('100%')
+          .margin({ top: 8 })
+        }
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
 
       Column() {
         Text(this.summaryTitle)
@@ -6262,14 +6336,12 @@ struct Index {
   @Builder
   private rightPanel() {
     Column() {
-      // 主内容区
       Column() {
         this.chatContextPanel()
       }
       .layoutWeight(1)
       .width('100%')
 
-      // Token 用量卡片（底部）
       this.tokenUsageCard()
     }
     .height('100%')
@@ -6278,6 +6350,169 @@ struct Index {
     .backgroundColor('#FAFAFA')
     .border({ width: 0.5, color: '#E4E4E7' })
     .borderRadius(20)
+  }
+
+  @Builder
+  private phoneWorkspace() {
+    Column() {
+      this.centerPanel()
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private tabletWorkspace() {
+    Row() {
+      if (this.showLeftDrawer) {
+        Row() {
+          this.leftPanel()
+
+          Column() {
+            Column()
+              .width(2)
+              .height('60%')
+              .backgroundColor('#CBD5E1')
+              .borderRadius(1)
+          }
+          .width(8)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#F4F4F5')
+          .borderRadius(4)
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.dragStartLeftW = this.leftPanelWidth;
+                this.dragStartRightW = this.rightPanelWidth;
+                this.leftHiding = false;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                if (this.leftHiding) return;
+                const newLeft = this.dragStartLeftW + event.offsetX;
+                if (newLeft <= this.leftDrawerMinWidth - 20) {
+                  this.leftHiding = true;
+                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                    this.showLeftDrawer = false;
+                  });
+                  setTimeout(() => {
+                    this.leftPanelWidth = 280;
+                  }, 350);
+                } else if (newLeft >= this.leftDrawerMinWidth) {
+                  this.leftPanelWidth = newLeft;
+                }
+              })
+          )
+        }
+        .height('100%')
+        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+      }
+      this.centerPanel()
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private desktopWorkspace() {
+    Row() {
+      if (this.showLeftDrawer) {
+        Row() {
+          this.leftPanel()
+
+          Column() {
+            Column()
+              .width(2)
+              .height('60%')
+              .backgroundColor('#CBD5E1')
+              .borderRadius(1)
+          }
+          .width(8)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#F4F4F5')
+          .borderRadius(4)
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.dragStartLeftW = this.leftPanelWidth;
+                this.dragStartRightW = this.rightPanelWidth;
+                this.leftHiding = false;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                if (this.leftHiding) return;
+                const newLeft = this.dragStartLeftW + event.offsetX;
+                if (newLeft <= this.leftDrawerMinWidth - 20) {
+                  this.leftHiding = true;
+                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                    this.showLeftDrawer = false;
+                  });
+                  setTimeout(() => {
+                    this.leftPanelWidth = 280;
+                  }, 350);
+                } else if (newLeft >= this.leftDrawerMinWidth) {
+                  this.leftPanelWidth = newLeft;
+                }
+              })
+          )
+        }
+        .height('100%')
+        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+      }
+
+      this.centerPanel()
+
+      if (this.showRightDrawer) {
+        Row() {
+          Column() {
+            Column()
+              .width(2)
+              .height('60%')
+              .backgroundColor('#CBD5E1')
+              .borderRadius(1)
+          }
+          .width(8)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#F4F4F5')
+          .borderRadius(4)
+          .hitTestBehavior(HitTestMode.Block)
+          .gesture(
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.dragStartLeftW = this.leftPanelWidth;
+                this.dragStartRightW = this.rightPanelWidth;
+                this.rightHiding = false;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                if (this.rightHiding) return;
+                const newRight = this.dragStartRightW - event.offsetX;
+                if (newRight <= this.rightDrawerMinWidth - 20) {
+                  this.rightHiding = true;
+                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                    this.showRightDrawer = false;
+                  });
+                  setTimeout(() => {
+                    this.rightPanelWidth = 360;
+                  }, 350);
+                } else if (newRight >= this.rightDrawerMinWidth) {
+                  this.rightPanelWidth = newRight;
+                }
+              })
+          )
+
+          Column() {
+            this.rightPanel()
+          }
+          .height('100%')
+        }
+        .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: 300, curve: Curve.EaseOut }))
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   // ── 上下文助手（Rust 侧预计算 blendedTotal / contextRemainingPercent，前端仅展示）──
@@ -6920,104 +7155,56 @@ struct Index {
         .height('100%')
         .backgroundColor('#EEF2F7')
 
-      Row() {
-        if (this.showLeftDrawer) {
-          Row() {
-            this.leftPanel()
-
-            Column() {
-              Column()
-                .width(2)
-                .height('60%')
-                .backgroundColor('#CBD5E1')
-                .borderRadius(1)
-            }
-            .width(8)
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .backgroundColor('#F4F4F5')
-            .borderRadius(4)
-            .hitTestBehavior(HitTestMode.Block)
-            .gesture(
-              PanGesture({ direction: PanDirection.Horizontal })
-                .onActionStart(() => {
-                  this.dragStartLeftW = this.leftPanelWidth;
-                  this.dragStartRightW = this.rightPanelWidth;
-                  this.leftHiding = false;
-                })
-                .onActionUpdate((event: GestureEvent) => {
-                  if (this.leftHiding) return;
-                  const newLeft = this.dragStartLeftW + event.offsetX;
-                  if (newLeft <= this.leftDrawerMinWidth - 20) {
-                    this.leftHiding = true;
-                    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-                      this.showLeftDrawer = false;
-                    });
-                    setTimeout(() => {
-                      this.leftPanelWidth = 280;
-                    }, 350);
-                  } else if (newLeft >= this.leftDrawerMinWidth) {
-                    this.leftPanelWidth = newLeft;
-                  }
-                })
-            )
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        Column() {
+          if (this.currentBreakpoint === 'lg') {
+            this.desktopWorkspace()
+          } else if (this.currentBreakpoint === 'md') {
+            this.tabletWorkspace()
+          } else {
+            this.phoneWorkspace()
           }
+        }
+        .width('100%')
+        .height('100%')
+        .padding(10)
+
+        if (this.isPhoneBreakpoint() && this.showLeftDrawer) {
+          Stack({ alignContent: Alignment.TopStart }) {
+            Row() {
+              this.leftPanel()
+            }
+            .height('100%')
+          }
+          .width('100%')
           .height('100%')
-          .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+          .padding({ top: 12, bottom: 12, left: 12, right: 48 })
+          .backgroundColor('#66000000')
+          .onClick(() => {
+            this.showLeftDrawer = false;
+          })
         }
 
-        this.centerPanel()
-
-        if (this.showRightDrawer) {
-          Row() {
-            Column() {
-              Column()
-                .width(2)
-                .height('60%')
-                .backgroundColor('#CBD5E1')
-                .borderRadius(1)
-            }
-            .width(8)
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .backgroundColor('#F4F4F5')
-            .borderRadius(4)
-            .hitTestBehavior(HitTestMode.Block)
-            .gesture(
-              PanGesture({ direction: PanDirection.Horizontal })
-                .onActionStart(() => {
-                  this.dragStartLeftW = this.leftPanelWidth;
-                  this.dragStartRightW = this.rightPanelWidth;
-                  this.rightHiding = false;
-                })
-                .onActionUpdate((event: GestureEvent) => {
-                  if (this.rightHiding) return;
-                  const newRight = this.dragStartRightW - event.offsetX;
-                  if (newRight <= this.rightDrawerMinWidth - 20) {
-                    this.rightHiding = true;
-                    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-                      this.showRightDrawer = false;
-                    });
-                    setTimeout(() => {
-                      this.rightPanelWidth = 360;
-                    }, 350);
-                  } else if (newRight >= this.rightDrawerMinWidth) {
-                    this.rightPanelWidth = newRight;
-                  }
-                })
-            )
-
+        if (this.currentBreakpoint !== 'lg' && this.showRightDrawer) {
+          Stack({ alignContent: Alignment.BottomEnd }) {
             Column() {
               this.rightPanel()
             }
-            .height('100%')
+            .width(this.rightPanelWidth)
+            .height(this.currentBreakpoint === 'md' ? '78%' : '88%')
+            .padding(4)
           }
-          .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: 300, curve: Curve.EaseOut }))
+          .width('100%')
+          .height('100%')
+          .padding({ left: 24, right: 12, top: 24, bottom: 12 })
+          .backgroundColor('#66000000')
+          .onClick(() => {
+            this.showRightDrawer = false;
+          })
         }
       }
       .width('100%')
       .height('100%')
-      .padding(10)
     }
     .width('100%')
     .height('100%')
