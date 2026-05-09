@@ -248,6 +248,31 @@ struct Index {
     '总结最近一次改动',
     '解释右侧 diff'
   ];
+  private readonly thinkingStatusPhrases: string[] = [
+    '正在厘清问题',
+    '正在读取上下文',
+    '正在规划下一步',
+    '正在组织回答'
+  ];
+  private readonly longThinkingStatusPhrases: string[] = [
+    '摸鱼中',
+    '泡咖啡中',
+    '炒股中',
+    '灵感加载中',
+    '翻资料中',
+    '灵感排队中',
+    '给脑子预热中',
+    '和 bug 讲道理中',
+    '整理灵感碎片中'
+  ];
+  private readonly longThinkingPulseThreshold: number = 50;
+  private readonly thinkingPhrasePulseSpan: number = 30;
+  private readonly thinkingLogoFrames: string[] = [
+    '◎>_',
+    '◎>=',
+    '◎>-',
+    '◎>·'
+  ];
   private readonly effortOptions: SelectorOption[] = [
     new SelectorOption('默认', 'default'),
     new SelectorOption('minimal', 'minimal'),
@@ -259,6 +284,7 @@ struct Index {
   private backendSubscriptionId: number = -1;
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
+  private thinkingTimerId: number = -1;
   private readonly workspaceRoots: Map<number, string> = new Map();
   private readonly workspaceIds: Map<number, string> = new Map();
   private readonly workspaceUris: Map<number, string> = new Map();
@@ -269,6 +295,7 @@ struct Index {
   @State private workspaces: WorkspaceItem[] = [];
   @State private activeWorkspaceId: number = 1;
   @State private activeWorkspaceBindingId: string = 'session:1';
+  @State private backendActiveThreadId: string = '';
   @State private currentWorkspaceTitle: string = '新会话 1';
   @State private currentWorkspaceDescription: string = '等待通过 app-server 创建真实会话';
   @State private activeWorkspacePermissionState: WorkspacePermissionState = 'unavailable';
@@ -333,6 +360,14 @@ struct Index {
   @State private rawMermaidBlockIds: string[] = [];
   @State private compactionNotices: CompactionNotice[] = [];
   @State private currentTurnId: string = '';
+  @State private currentTurnStatus: string = '';
+  @State private thinkingPulseIndex: number = 0;
+  @State private thinkingSessionId: number = 0;
+  @State private thinkingNormalPhrase: string = '';
+  @State private thinkingFunPhrase: string = '';
+  @State private pendingUserPrompt: string = '';
+  private thinkingNormalPhraseBucket: number = -1;
+  private thinkingFunPhraseBucket: number = -1;
   @State private messageAutoFollowToBottom: boolean = true;
   private messageProgrammaticScroll: boolean = false;
   private messageProgrammaticScrollTimerId: number = -1;
@@ -361,6 +396,7 @@ struct Index {
   @State private compacting: boolean = false;
   @State private compactError: string = '';
   private activeCompactionNoticeId: string = '';
+  private compactionClearTimerId: number = -1;
   @State private projects: ProjectRecord[] = [];
   @State private showCreateProjectDialog: boolean = false;
   @State private newProjectName: string = '';
@@ -416,6 +452,8 @@ struct Index {
       codexBackend.unsubscribe(this.backendSubscriptionId);
     }
     this.clearReconnectTimer();
+    this.stopThinkingAnimation();
+    this.clearCompactionClearTimer();
     this.clearMessageProgrammaticScrollTimer();
     this.clearMessageUserScrollTimer();
   }
@@ -435,18 +473,26 @@ struct Index {
       this.requestUserInputVersion += 1;
     }
     this.syncSelectedCollaborationMode();
+    this.backendActiveThreadId = snapshot.activeThreadId.trim();
     this.tokenUsage = snapshot.tokenUsage;
     this.applyCompactionSnapshot(snapshot);
   }
 
   private applyCompactionSnapshot(snapshot: CodexBackendSnapshot): void {
-    const currentThreadId: string = this.activeWorkspaceBindingId.trim();
     const compaction = snapshot.compaction;
     const hadError: boolean = this.compactError.length > 0;
     const wasCompacting: boolean = this.compacting;
-    const isCurrentThread: boolean = currentThreadId.length > 0 && compaction.threadId === currentThreadId;
+    const isCurrentThread: boolean = this.isCurrentCompactionThreadId(compaction.threadId);
     const nextCompacting: boolean = isCurrentThread && (compaction.status === 'starting' || compaction.status === 'running');
     this.compacting = nextCompacting;
+    if (compaction.status === 'idle') {
+      const activeNotice: CompactionNotice | null = this.latestActiveCompactionNotice();
+      if (activeNotice !== null && !this.isTerminalCompactionStatus(activeNotice.status)) {
+        this.finishLocalCompactionNotice(activeNotice.threadId);
+        this.compactError = '';
+        return;
+      }
+    }
     if (compaction.status !== 'idle' && compaction.threadId.trim().length > 0) {
       this.upsertCompactionNotice(
         compaction.threadId,
@@ -474,7 +520,7 @@ struct Index {
           promptAction.showToast({ message: '压缩完成', duration: 2000 });
         }
       }
-      codexBackend.clearCompactionNotice(currentThreadId);
+      this.scheduleBackendCompactionClear(compaction.threadId);
       return;
     }
     if (!nextCompacting) {
@@ -490,34 +536,21 @@ struct Index {
     oldTotalTokens: number,
     newTotalTokens: number
   ): void {
-    let noticeId: string = this.activeCompactionNoticeId;
-    if (noticeId.length === 0 || this.compactionNoticeById(noticeId) === null) {
-      const latest: CompactionNotice | null = this.latestCompactionNoticeForThread(threadId);
-      if (
-        latest !== null &&
-        latest.status === status &&
-        latest.errorMessage === errorMessage &&
-        latest.savedTokens === savedTokens
-      ) {
-        noticeId = latest.id;
-      } else {
-        noticeId = `compaction:${threadId}:${Date.now().toString()}`;
-      }
-      this.activeCompactionNoticeId = noticeId;
-    }
+    const noticeId: string = `compaction:${threadId}`;
     const previous: CompactionNotice | null = this.compactionNoticeById(noticeId);
+    const isNewRun: boolean = previous === null || (this.isTerminalCompactionStatus(previous.status) && (status === 'starting' || status === 'running'));
     const effectiveOldTotal: number = oldTotalTokens > 0
       ? oldTotalTokens
-      : (previous !== null ? previous.oldTotalTokens : 0);
+      : (!isNewRun && previous !== null ? previous.oldTotalTokens : 0);
     const effectiveNewTotal: number = newTotalTokens > 0
       ? newTotalTokens
-      : (previous !== null ? previous.newTotalTokens : 0);
+      : (!isNewRun && previous !== null ? previous.newTotalTokens : 0);
     const computedSaved: number = effectiveOldTotal > 0 && effectiveNewTotal > 0 && effectiveOldTotal > effectiveNewTotal
       ? effectiveOldTotal - effectiveNewTotal
       : 0;
     const effectiveSaved: number = savedTokens > 0
       ? savedTokens
-      : (computedSaved > 0 ? computedSaved : (previous !== null ? previous.savedTokens : 0));
+      : (computedSaved > 0 ? computedSaved : (!isNewRun && previous !== null ? previous.savedTokens : 0));
     const next = new CompactionNotice(
       noticeId,
       threadId,
@@ -526,14 +559,90 @@ struct Index {
       effectiveSaved,
       effectiveOldTotal,
       effectiveNewTotal,
-      previous !== null ? previous.timestamp : this.currentClockLabel()
+      isNewRun || previous === null ? this.currentClockLabel() : previous.timestamp
     );
     this.compactionNotices = [
       ...this.compactionNotices.filter((item: CompactionNotice) => item.id !== noticeId),
       next
     ];
-    if (status === 'completed' || status === 'failed' || status === 'timeout') {
+    if (this.isTerminalCompactionStatus(status)) {
       this.activeCompactionNoticeId = '';
+    } else {
+      this.activeCompactionNoticeId = noticeId;
+    }
+  }
+
+  private isTerminalCompactionStatus(status: string): boolean {
+    return status === 'completed' || status === 'failed' || status === 'timeout';
+  }
+
+  private currentCompactionThreadIds(): string[] {
+    const threadIds: string[] = [];
+    this.pushUniqueCompactionThreadId(threadIds, this.activeWorkspaceBindingId);
+    this.pushUniqueCompactionThreadId(threadIds, this.backendActiveThreadId);
+    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (workspace !== undefined) {
+      this.pushUniqueCompactionThreadId(threadIds, workspace.workspaceId);
+    }
+    return threadIds;
+  }
+
+  private pushUniqueCompactionThreadId(threadIds: string[], threadId: string): void {
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0 || threadIds.indexOf(trimmedThreadId) >= 0) {
+      return;
+    }
+    threadIds.push(trimmedThreadId);
+  }
+
+  private isCurrentCompactionThreadId(threadId: string): boolean {
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0) {
+      return false;
+    }
+    return this.currentCompactionThreadIds().indexOf(trimmedThreadId) >= 0;
+  }
+
+  private latestActiveCompactionNotice(): CompactionNotice | null {
+    const threadIds: string[] = this.currentCompactionThreadIds();
+    if (threadIds.length === 0) {
+      return null;
+    }
+    for (let index: number = this.compactionNotices.length - 1; index >= 0; index -= 1) {
+      if (threadIds.indexOf(this.compactionNotices[index].threadId) >= 0) {
+        return this.compactionNotices[index];
+      }
+    }
+    return null;
+  }
+
+  private finishLocalCompactionNotice(threadId: string): void {
+    const latest: CompactionNotice | null = this.latestCompactionNoticeForThread(threadId);
+    if (latest === null || this.isTerminalCompactionStatus(latest.status)) {
+      return;
+    }
+    this.upsertCompactionNotice(
+      threadId,
+      'completed',
+      '',
+      latest.savedTokens,
+      latest.oldTotalTokens,
+      latest.newTotalTokens
+    );
+  }
+
+  private scheduleBackendCompactionClear(threadId: string): void {
+    this.clearCompactionClearTimer();
+    this.compactionClearTimerId = setTimeout(() => {
+      codexBackend.clearCompactionNotice(threadId);
+      this.compactionClearTimerId = -1;
+    }, 800);
+  }
+
+  private clearCompactionClearTimer(): void {
+    if (this.compactionClearTimerId >= 0) {
+      clearTimeout(this.compactionClearTimerId);
+      this.compactionClearTimerId = -1;
     }
   }
 
@@ -1426,19 +1535,231 @@ struct Index {
   }
 
   private visibleMessages(): ChatMessage[] {
-    if (this.pendingRequestUserInput === null) {
-      return this.messages;
+    const hideCompactionSystemMessages: boolean = this.latestActiveCompactionNotice() !== null;
+    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage) => {
+      return !(hideCompactionSystemMessages && this.isCompactionSystemMessage(item));
+    });
+    if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
+      visible = [...visible, this.pendingUserMessage()];
     }
-    const request: CodexRequestUserInput = this.pendingRequestUserInput;
-    const promptMessage = new ChatMessage(
-      `request-user-input:${request.requestId}`,
+    if (this.pendingRequestUserInput !== null) {
+      const request: CodexRequestUserInput = this.pendingRequestUserInput;
+      const promptMessage = new ChatMessage(
+        `request-user-input:${request.requestId}`,
+        'ArkPilot',
+        'plan',
+        request.detail.trim().length > 0 ? request.detail : request.title,
+        '刚刚',
+        'plan'
+      );
+      visible = [...visible, promptMessage];
+    }
+    return visible;
+  }
+
+  private isCompactionSystemMessage(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    if (type !== 'system' && item.role !== 'system') {
+      return false;
+    }
+    const content: string = item.content.trim();
+    return content.indexOf('上下文已压缩') >= 0 ||
+      content.toLowerCase().indexOf('context has been compacted') >= 0;
+  }
+
+  private activeThinkingPlaceholders(): ChatMessage[] {
+    if (!this.shouldAppendThinkingPlaceholder()) {
+      return [];
+    }
+    return [this.thinkingPlaceholderMessage()];
+  }
+
+  private shouldAppendThinkingPlaceholder(): boolean {
+    if (!this.isRunning) {
+      return false;
+    }
+    if (this.pendingApproval !== null || this.pendingRequestUserInput !== null) {
+      return false;
+    }
+    return !this.currentTurnHasAssistantOutput();
+  }
+
+  private currentTurnHasAssistantOutput(): boolean {
+    if (this.pendingUserPrompt.trim().length > 0) {
+      return false;
+    }
+    const lastUserIndex: number = this.latestUserMessageIndex();
+    const startIndex: number = lastUserIndex >= 0 ? lastUserIndex + 1 : 0;
+    for (let index: number = startIndex; index < this.messages.length; index += 1) {
+      if (this.isAssistantOutputMessage(this.messages[index])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private latestUserMessageIndex(): number {
+    for (let index: number = this.messages.length - 1; index >= 0; index -= 1) {
+      if (this.messages[index].role === 'user') {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private isAssistantOutputMessage(item: ChatMessage): boolean {
+    if (item.content.trim().length === 0) {
+      return false;
+    }
+    const type: string = item.itemType ?? item.role;
+    if (this.isIntermediateMessageType(type)) {
+      return false;
+    }
+    return item.role === 'assistant' || item.role === 'agent';
+  }
+
+  private isIntermediateMessageType(type: string): boolean {
+    return type === 'reasoning' ||
+      type === 'command' ||
+      type === 'tool' ||
+      type === 'file' ||
+      type === 'search' ||
+      type === 'plan' ||
+      type === 'image' ||
+      type === 'hook' ||
+      type === 'review' ||
+      type === 'system';
+  }
+
+  private thinkingPlaceholderMessage(): ChatMessage {
+    return new ChatMessage(
+      `turn-thinking-placeholder:${this.thinkingSessionId}`,
       'ArkPilot',
-      'plan',
-      request.detail.trim().length > 0 ? request.detail : request.title,
+      'reasoning',
+      '',
       '刚刚',
-      'plan'
+      'reasoning',
+      'inProgress'
     );
-    return [...this.messages, promptMessage];
+  }
+
+  private pendingUserMessage(): ChatMessage {
+    return new ChatMessage(
+      `pending-user:${this.thinkingSessionId}`,
+      '你',
+      'user',
+      this.pendingUserPrompt,
+      '刚刚'
+    );
+  }
+
+  private startThinkingAnimation(): void {
+    if (this.thinkingTimerId >= 0) {
+      return;
+    }
+    this.thinkingTimerId = setInterval(() => {
+      this.thinkingPulseIndex = (this.thinkingPulseIndex + 1) % 144;
+      this.refreshThinkingNormalPhrase();
+      this.refreshThinkingFunPhrase();
+    }, 500);
+  }
+
+  private stopThinkingAnimation(): void {
+    if (this.thinkingTimerId >= 0) {
+      clearInterval(this.thinkingTimerId);
+      this.thinkingTimerId = -1;
+    }
+  }
+
+  private syncThinkingAnimation(): void {
+    if (this.isRunning) {
+      this.startThinkingAnimation();
+      return;
+    }
+    this.stopThinkingAnimation();
+  }
+
+  private thinkingStatusText(): string {
+    const isLongThinking: boolean = this.thinkingPulseIndex >= this.longThinkingPulseThreshold;
+    if (isLongThinking) {
+      const phrase: string = this.thinkingFunPhrase.length > 0 ? this.thinkingFunPhrase : '思考中';
+      return `${this.thinkingLogoText()} ${phrase}${this.thinkingDots()}`;
+    }
+    const phrase: string = this.thinkingNormalPhrase.length > 0 ? this.thinkingNormalPhrase : this.thinkingStatusPhrases[0];
+    return `${this.thinkingLogoText()} ${phrase}${this.thinkingDots()}`;
+  }
+
+  private refreshThinkingNormalPhrase(): void {
+    if (this.thinkingPulseIndex >= this.longThinkingPulseThreshold) {
+      this.thinkingNormalPhraseBucket = -1;
+      return;
+    }
+    const bucket: number = Math.floor(this.thinkingPulseIndex / this.thinkingPhrasePulseSpan);
+    if (bucket === this.thinkingNormalPhraseBucket && this.thinkingNormalPhrase.length > 0) {
+      return;
+    }
+    this.thinkingNormalPhraseBucket = bucket;
+    this.thinkingNormalPhrase = this.randomThinkingPhrase(this.thinkingStatusPhrases, this.thinkingNormalPhrase, '');
+  }
+
+  private refreshThinkingFunPhrase(): void {
+    if (this.thinkingPulseIndex < this.longThinkingPulseThreshold) {
+      if (this.thinkingFunPhrase.length > 0) {
+        this.thinkingFunPhrase = '';
+      }
+      this.thinkingFunPhraseBucket = -1;
+      return;
+    }
+    const bucket: number = Math.floor((this.thinkingPulseIndex - this.longThinkingPulseThreshold) / this.thinkingPhrasePulseSpan);
+    if (bucket === this.thinkingFunPhraseBucket && this.thinkingFunPhrase.length > 0) {
+      return;
+    }
+    this.thinkingFunPhraseBucket = bucket;
+    this.thinkingFunPhrase = this.randomThinkingLongPhrase(this.thinkingFunPhrase);
+  }
+
+  private randomThinkingPhrase(phrases: string[], previousPhrase: string, fallbackPhrase: string): string {
+    if (phrases.length === 0) {
+      return fallbackPhrase;
+    }
+    if (phrases.length === 1) {
+      return phrases[0];
+    }
+    let phraseIndex: number = Math.floor(Math.random() * phrases.length);
+    if (phrases[phraseIndex] === previousPhrase) {
+      phraseIndex = (phraseIndex + 1 + Math.floor(Math.random() * (phrases.length - 1))) % phrases.length;
+    }
+    return phrases[phraseIndex];
+  }
+
+  private randomThinkingLongPhrase(previousPhrase: string): string {
+    const defaultPhrase: string = '思考中';
+    if (Math.random() < 0.75) {
+      return defaultPhrase;
+    }
+    const phrases: string[] = this.longThinkingStatusPhrases;
+    if (phrases.length === 1) {
+      return phrases[0];
+    }
+    return this.randomThinkingPhrase(phrases, previousPhrase !== defaultPhrase ? previousPhrase : '', defaultPhrase);
+  }
+
+  private thinkingLogoText(): string {
+    const frameIndex: number = Math.floor(this.thinkingPulseIndex / 2) % this.thinkingLogoFrames.length;
+    return this.thinkingLogoFrames[frameIndex];
+  }
+
+  private thinkingDots(): string {
+    switch (Math.floor(this.thinkingPulseIndex / 2) % 4) {
+      case 0:
+        return '…';
+      case 1:
+        return '.';
+      case 2:
+        return '..';
+      default:
+        return '...';
+    }
   }
 
   private requestUserInputAnswer(questionId: string): string {
@@ -1499,6 +1820,16 @@ struct Index {
       return;
     }
     this.isRunning = true;
+    this.currentTurnStatus = 'inProgress';
+    this.pendingUserPrompt = prompt;
+    this.thinkingPulseIndex = 0;
+    this.thinkingNormalPhrase = '';
+    this.thinkingNormalPhraseBucket = -1;
+    this.thinkingFunPhrase = '';
+    this.thinkingFunPhraseBucket = -1;
+    this.thinkingSessionId += 1;
+    this.refreshThinkingNormalPhrase();
+    this.startThinkingAnimation();
     if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
       this.applyWorkspaceRootBinding();
     }
@@ -1509,6 +1840,9 @@ struct Index {
     const workspace: WorkspaceItem | undefined = this.activeWorkspace();
     if (workspace === undefined) {
       this.isRunning = false;
+      this.currentTurnStatus = '';
+      this.pendingUserPrompt = '';
+      this.syncThinkingAnimation();
       return;
     }
     const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
@@ -1539,18 +1873,26 @@ struct Index {
       }
       this.savedDraft = '';
     } catch (err) {
+      this.currentTurnStatus = 'failed';
       this.summaryTitle = '调用失败';
       this.summaryPoints = [this.describeError(err)];
       this.draft = this.savedDraft;
       this.savedDraft = '';
     } finally {
       this.isRunning = false;
+      this.pendingUserPrompt = '';
+      this.syncThinkingAnimation();
     }
   }
 
   private applyBackendResult(result: CodexTurnResult): void {
     this.syncWorkspaceWithRemoteThreadId(result.threadId);
     this.currentTurnId = result.turnId;
+    this.currentTurnStatus = result.status;
+    this.syncThinkingAnimation();
+    if (this.backendResultContainsPendingPrompt(result)) {
+      this.pendingUserPrompt = '';
+    }
     this.messages = result.messages.map((item) => {
       return new ChatMessage(item.messageId, item.author, item.role, item.content, item.timestamp, item.itemType, item.status, item.metadata);
     });
@@ -1574,6 +1916,20 @@ struct Index {
     }
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
     this.scheduleMessageScrollToBottom();
+  }
+
+  private backendResultContainsPendingPrompt(result: CodexTurnResult): boolean {
+    const prompt: string = this.pendingUserPrompt.trim();
+    if (prompt.length === 0) {
+      return false;
+    }
+    for (let index: number = result.messages.length - 1; index >= 0; index -= 1) {
+      const item = result.messages[index];
+      if (item.role === 'user' && item.content.trim() === prompt) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private scheduleMessageScrollToBottom(force: boolean = false): void {
@@ -1978,12 +2334,8 @@ struct Index {
   }
 
   private activeCompactionNotices(): CompactionNotice[] {
-    const currentThreadId: string = this.activeWorkspaceBindingId.trim();
-    if (currentThreadId.length === 0) {
-      return [];
-    }
-    const notices: CompactionNotice[] = this.compactionNotices.filter((item: CompactionNotice) => item.threadId === currentThreadId);
-    return notices.slice(Math.max(0, notices.length - 3));
+    const latest: CompactionNotice | null = this.latestActiveCompactionNotice();
+    return latest === null ? [] : [latest];
   }
 
   private isCompactionNoticeExpanded(noticeId: string): boolean {
@@ -2820,7 +3172,15 @@ struct Index {
 
   @Builder
   private messageBody(item: ChatMessage) {
-    if (this.isMessageCollapsed(item)) {
+    if (item.status === 'inProgress' && item.content.trim().length === 0) {
+      Text(this.thinkingStatusText())
+        .copyOption(CopyOptions.None)
+        .fontSize(12)
+        .lineHeight(19)
+        .fontColor(this.messageContentColor(item.itemType))
+        .fontWeight(FontWeight.Medium)
+        .margin({ top: 6 })
+    } else if (this.isMessageCollapsed(item)) {
       Text(item.content)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(12)
@@ -2849,17 +3209,7 @@ struct Index {
 
   @Builder
   private inlineMessageMarkdownBody(item: ChatMessage) {
-    Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-      ForEach(this.inlineMarkdownSegments(item.content.trim(), `${item.id}:inline`), (segment: MathSegment) => {
-        if (segment.kind === 'math') {
-          this.inlineMathSegment(segment, 12, 19)
-        } else {
-          this.inlineMarkdownTextSegment(segment, this.messageContentColor(item.itemType), 12, 19)
-        }
-      }, (segment: MathSegment) => segment.id)
-    }
-    .constraintSize({ maxWidth: '100%' })
-    .margin({ top: 6 })
+    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType), 12, 19, undefined, 6)
   }
 
   @Builder
@@ -2915,7 +3265,11 @@ struct Index {
               .fontSize(12)
               .fontColor('#64748B')
               .width(24)
-            this.inlineMarkdownContent(messageId, `${block.id}-${index}`, this.markdownListText(line), '#27272A')
+            Column() {
+              this.inlineMarkdownContent(messageId, `${block.id}-${index}`, this.markdownListText(line), '#27272A')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
           }
           .width('100%')
           .alignItems(VerticalAlign.Top)
@@ -3054,17 +3408,7 @@ struct Index {
             .width('100%')
             .height(8)
         } else {
-          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-            ForEach(this.inlineMarkdownSegments(line, `${messageId}:${blockId}:${lineIndex}`), (segment: MathSegment) => {
-              if (segment.kind === 'math') {
-                this.inlineMathSegment(segment, fontSize ?? 12, lineHeight ?? 19)
-              } else {
-                this.inlineMarkdownTextSegment(segment, color, fontSize ?? 12, lineHeight ?? 19, weight)
-              }
-            }, (segment: MathSegment) => segment.id)
-          }
-          .width('100%')
-          .margin({ top: lineIndex === 0 ? 0 : 2 })
+          this.inlineMarkdownLine(`${messageId}:${blockId}:${lineIndex}`, line, color, fontSize ?? 12, lineHeight ?? 19, weight, lineIndex === 0 ? 0 : 2)
         }
       })
     }
@@ -3095,6 +3439,64 @@ struct Index {
         .fontWeight(segment.kind === 'strong' ? FontWeight.Medium : (weight ?? FontWeight.Regular))
         .margin({ bottom: 2 })
     }
+  }
+
+  @Builder
+  private inlineMarkdownLine(baseId: string, text: string, color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number) {
+    if (this.hasInlineMathText(text)) {
+      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+        ForEach(this.inlineMarkdownSegments(text, baseId), (segment: MathSegment) => {
+          if (segment.kind === 'math') {
+            this.inlineMathSegment(segment, fontSize, lineHeight)
+          } else {
+            this.inlineMarkdownTextSegment(segment, color, fontSize, lineHeight, weight)
+          }
+        }, (segment: MathSegment) => segment.id)
+      }
+      .width('100%')
+      .margin({ top: topMargin })
+    } else {
+      this.inlineMarkdownTextLine(this.inlineMarkdownSegments(text, baseId), color, fontSize, lineHeight, weight, topMargin)
+    }
+  }
+
+  @Builder
+  private inlineMarkdownTextLine(segments: MathSegment[], color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number) {
+    Text() {
+      ForEach(segments, (segment: MathSegment) => {
+        if (segment.kind === 'code') {
+          Span(this.inlineCodeSpanText(segment.text))
+            .fontColor('#0F172A')
+            .fontWeight(FontWeight.Medium)
+        } else {
+          Span(segment.text)
+            .fontColor(segment.kind === 'link' ? '#2563EB' : color)
+            .fontWeight(segment.kind === 'strong' ? FontWeight.Medium : (weight ?? FontWeight.Regular))
+        }
+      }, (segment: MathSegment) => segment.id)
+    }
+    .copyOption(CopyOptions.LocalDevice)
+    .fontSize(fontSize)
+    .lineHeight(lineHeight)
+    .width('100%')
+    .margin({ top: topMargin })
+  }
+
+  private hasInlineMathSegment(segments: MathSegment[]): boolean {
+    for (let index: number = 0; index < segments.length; index += 1) {
+      if (segments[index].kind === 'math') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasInlineMathText(text: string): boolean {
+    return this.hasInlineMathSegment(this.inlineMarkdownSegments(text, 'inline-math-probe'));
+  }
+
+  private inlineCodeSpanText(text: string): string {
+    return ` ${text} `;
   }
 
   @Builder
@@ -3952,16 +4354,7 @@ struct Index {
 
   private isCollapsibleMessage(item: ChatMessage): boolean {
     const type: string = item.itemType ?? item.role;
-    return type === 'reasoning' ||
-      type === 'command' ||
-      type === 'tool' ||
-      type === 'file' ||
-      type === 'search' ||
-      type === 'plan' ||
-      type === 'image' ||
-      type === 'hook' ||
-      type === 'review' ||
-      type === 'system';
+    return this.isIntermediateMessageType(type);
   }
 
   private isMessageCollapsed(item: ChatMessage): boolean {
@@ -5602,7 +5995,7 @@ struct Index {
       return text;
     }
     if (item.status === 'inProgress') {
-      return '正在执行，等待输出。';
+      return this.thinkingStatusText();
     }
     return '没有可展示的输出。';
   }
@@ -6686,6 +7079,9 @@ struct Index {
           ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
             this.compactionNoticeLine(notice)
           }, (notice: CompactionNotice) => notice.id)
+          ForEach(this.activeThinkingPlaceholders(), (item: ChatMessage) => {
+            this.messageLine(item)
+          }, (item: ChatMessage) => this.messageRenderKey(item))
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)

@@ -1960,8 +1960,18 @@ export class CodexBackend {
       if (this.compactionState.turnId.trim().length === 0) {
         const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
         if (snapshot.lastTurnId.trim().length > 0 && snapshot.lastTurnId !== baselineTurnId) {
+          const snapshotStatus: CodexTurnStatus = this.mapTurnStatus(snapshot.lastTurnStatus);
           this.compactionState.turnId = snapshot.lastTurnId;
-          this.compactionState.status = snapshot.lastTurnStatus === 'failed' ? 'failed' : 'running';
+          if (snapshotStatus === 'completed') {
+            await this.drainCompactionTokenUsage(thread);
+            this.completeCompaction(thread);
+            return;
+          }
+          if (snapshotStatus === 'failed' || snapshotStatus === 'interrupted') {
+            this.failCompaction('压缩失败', thread.remoteThreadId);
+            return;
+          }
+          this.compactionState.status = 'running';
           this.notifyListeners();
         }
       }
