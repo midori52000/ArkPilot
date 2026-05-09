@@ -3,7 +3,7 @@ import { SettingsTab, ProviderRecord, ProviderCategory, ApiWireFormat, McpServer
 import { BUILTIN_PROVIDER_PRESETS, EndpointSpeedResult, ChatProbeResult, ApiValidationResult } from '../apim/ApiTypes';
 import { apiManagementVM } from '../apim/ApiManagementViewModel';
 import { codexBackend } from '../backend/CodexBackend';
-import { InstalledSkill, SkillRepo, SkillBackupEntry, DiscoverableSkill, SkillsShItem, SkillsShSearchResult } from '../skills/SkillTypes';
+import { InstalledSkill, SkillRepo, DiscoverableSkill, SkillsShItem, SkillsShSearchResult } from '../skills/SkillTypes';
 import { skillsVM } from '../skills/SkillsViewModel';
 import { PromptsViewModel } from '../prompts/PromptsViewModel';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
@@ -16,7 +16,7 @@ import uri from '@ohos.uri';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 type ApiSubTab = 'providers' | 'presets';
-type SkillsSubTab = 'installed' | 'install' | 'backups';
+type SkillsSubTab = 'installed' | 'install';
 
 class SettingsNavItem {
   tab: SettingsTab;
@@ -75,6 +75,18 @@ class ApiPresetMockItem {
   }
 }
 
+class ParsedGithubUrl {
+  owner: string;
+  name: string;
+  branch: string;
+
+  constructor(owner: string, name: string, branch: string) {
+    this.owner = owner;
+    this.name = name;
+    this.branch = branch;
+  }
+}
+
 @Entry
 @Component
 struct SettingsPage {
@@ -98,7 +110,6 @@ struct SettingsPage {
 
   @State private installedSkills: InstalledSkill[] = [];
   @State private skillRepos: SkillRepo[] = [];
-  @State private skillBackups: SkillBackupEntry[] = [];
   @State private skillsActiveSubTabIndex: number = 0;
   @State private newRepoOwner: string = 'anthropics';
   @State private newRepoName: string = 'skills';
@@ -276,9 +287,6 @@ struct SettingsPage {
     skillsVM.loadRepos()
       .then(() => { this.syncSkillsStateFromViewModel(); })
       .catch((err: Object) => { this.skillsStatusText = this.describeRuntimeError(err); this.triggerFeedback(this.skillsStatusText, 'error'); });
-    skillsVM.loadBackups()
-      .then(() => { this.syncSkillsStateFromViewModel(); })
-      .catch((err: Object) => { this.skillsStatusText = this.describeRuntimeError(err); this.triggerFeedback(this.skillsStatusText, 'error'); });
   }
 
   private selectedSkill(): InstalledSkill | null {
@@ -296,7 +304,6 @@ struct SettingsPage {
   private syncSkillsStateFromViewModel(): void {
     this.installedSkills = [...skillsVM.state.installed];
     this.skillRepos = [...skillsVM.state.repos];
-    this.skillBackups = [...skillsVM.state.backups];
     if (skillsVM.state.statusText.trim().length > 0) {
       this.skillsStatusText = skillsVM.state.statusText;
     } else if (skillsVM.state.errorText.trim().length > 0) {
@@ -471,28 +478,13 @@ struct SettingsPage {
       });
   }
 
-  private removeSkillBackup(backupId: string): void {
-    skillsVM.deleteBackup(backupId)
-      .then(() => {
-        this.syncSkillsStateFromViewModel();
-        this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
-          ? skillsVM.state.errorText
-          : skillsVM.state.statusText;
-        this.triggerFeedback(this.skillsStatusText, skillsVM.state.errorText.trim().length > 0 ? 'warning' : 'success');
-      })
-      .catch((err: Object) => {
-        this.skillsStatusText = this.describeRuntimeError(err);
-        this.triggerFeedback(this.skillsStatusText, 'error');
-      });
-  }
-
-  private parseGithubUrl(url: string): { owner: string; name: string; branch: string } | null {
+  private parseGithubUrl(url: string): ParsedGithubUrl | null {
     const trimmed = url.trim();
     const match = trimmed.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/\?#]+)(?:\/tree\/([^\/\?#]+))?/);
     if (match === null) {
       return null;
     }
-    return { owner: match[1], name: match[2].replace(/\.git$/, ''), branch: match[3] ?? 'main' };
+    return new ParsedGithubUrl(match[1], match[2].replace(/\.git$/, ''), match[3] ?? 'main');
   }
 
   private scanGithubRepo(): void {
@@ -636,13 +628,11 @@ struct SettingsPage {
 
   private skillsSubTabIndex(tab: SkillsSubTab): number {
     if (tab === 'install') return 1;
-    if (tab === 'backups') return 2;
     return 0;
   }
 
   private skillsSubTabByIndex(index: number): SkillsSubTab {
     if (index === 1) return 'install';
-    if (index === 2) return 'backups';
     return 'installed';
   }
 
@@ -661,13 +651,8 @@ struct SettingsPage {
       this.skillsStatusText = '';
       return;
     }
-    this.skillsStatusText = tab === 'installed'
-      ? '正在刷新已安装 Skills...'
-      : '正在刷新备份...';
-    const action = tab === 'installed'
-      ? skillsVM.loadInstalled(true)
-      : skillsVM.loadBackups();
-    action
+    this.skillsStatusText = '正在刷新已安装 Skills...';
+    skillsVM.loadInstalled(true)
       .then(() => {
         this.syncSkillsStateFromViewModel();
         this.skillsStatusText = skillsVM.state.errorText.trim().length > 0
@@ -962,6 +947,10 @@ struct SettingsPage {
         this.mcpJsonPasteInput = '';
         this.syncMcpStateFromBackend();
         this.triggerFeedback(`已添加 MCP 服务：${name}`, 'success');
+        // 后台刷新可能尚未完成，轮询等待状态数据
+        if (this.mcpServers.length === 0) {
+          this.startMcpPolling();
+        }
       })
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
@@ -1016,7 +1005,8 @@ struct SettingsPage {
       case 'warning': return '无工具';
       case 'degraded': return '需关注';
       case 'error': return '错误';
-      default: return '草稿';
+      case 'unknown': return '连接中';
+      default: return '未知';
     }
   }
 
@@ -1156,12 +1146,45 @@ struct SettingsPage {
     if (tab === 'mcp' && this.mcpServers.length === 0 && !this.mcpLoading) {
       this.mcpLoading = true;
       codexBackend.refreshMcpServers()
-        .then(() => { this.syncMcpStateFromBackend(); })
+        .then(() => {
+          this.syncMcpStateFromBackend();
+          // 如果缓存为空（后台刷新尚未完成），轮询等待数据就绪
+          if (this.mcpServers.length === 0) {
+            this.startMcpPolling();
+          }
+        })
         .catch((err: Object) => {
           this.mcpStatusText = this.describeRuntimeError(err);
           this.triggerFeedback(this.mcpStatusText, 'error');
         })
         .finally(() => { this.mcpLoading = false; });
+    }
+  }
+
+  private mcpPollTimer: number = -1;
+
+  private startMcpPolling(): void {
+    this.stopMcpPolling();
+    let elapsed: number = 0;
+    this.mcpPollTimer = setInterval(() => {
+      elapsed += 2;
+      codexBackend.refreshMcpServers()
+        .then(() => {
+          this.syncMcpStateFromBackend();
+          if (this.mcpServers.length > 0 || elapsed >= 30) {
+            this.stopMcpPolling();
+          }
+        })
+        .catch(() => {
+          this.stopMcpPolling();
+        });
+    }, 2000);
+  }
+
+  private stopMcpPolling(): void {
+    if (this.mcpPollTimer >= 0) {
+      clearInterval(this.mcpPollTimer);
+      this.mcpPollTimer = -1;
     }
   }
 
@@ -1995,7 +2018,7 @@ struct SettingsPage {
       case 'mcp':
         return 'MCP 通道与工具源管理';
       case 'skills':
-        return 'Skills 目录、仓库与备份控制';
+        return 'Skills 目录与安装管理';
       case 'prompts':
         return 'Prompt 套件与会话前置约束';
       default:
@@ -2071,24 +2094,6 @@ struct SettingsPage {
       .onClick(onClick)
   }
 
-  @Builder
-  private optionChip(label: string, selected: boolean, key: string, onClick: () => void) {
-    Button(label)
-      .type(ButtonType.Normal)
-      .fontSize(11)
-      .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(selected ? '#0A84FF' : '#475569')
-      .backgroundColor(selected ? '#EAF3FF' : '#F8FAFC')
-      .borderRadius(12)
-      .border({ width: 1, color: selected ? '#BFDBFE' : '#DCE5EF' })
-      .height(32)
-      .padding({ left: 14, right: 14 })
-      .margin({ right: 8 })
-      .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
-      .onClick(onClick)
-  }
 
   @Builder
   private formLabel(label: string, color: string = '#000000') {
@@ -2324,9 +2329,100 @@ struct SettingsPage {
   @Builder
   private skillInstallPanel() {
     Column() {
-      // 卡片 1：从 GitHub 安装
+      // 卡片 1：从 ZIP 安装
+      Row() {
+        Column() {
+          Text('从 ZIP 安装')
+            .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+          Text('选择包含 SKILL.md 的 ZIP 文件')
+            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+        }
+        .alignItems(HorizontalAlign.Start).layoutWeight(1)
+        this.actionButton('选择 ZIP 文件', 'zip-install', true, () => { this.pickAndInstallZip(); })
+      }
+      .width('100%').alignItems(VerticalAlign.Center).padding(18)
+      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .margin({ top: 16 })
+
+      // 卡片 2：从本地目录安装
+      Row() {
+        Column() {
+          Text('从本地目录安装')
+            .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+          Text('选择包含 SKILL.md 的目录')
+            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+        }
+        .alignItems(HorizontalAlign.Start).layoutWeight(1)
+        this.actionButton('选择目录', 'dir-install', true, () => { this.pickAndInstallDirectory(); })
+      }
+      .width('100%').alignItems(VerticalAlign.Center).padding(18)
+      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .margin({ top: 16 })
+
+      // 卡片 3：从 skills.sh 搜索
       Column() {
-        this.sectionCard('从 GitHub 安装', '粘贴仓库 URL，扫描并安装 Skill')
+        Row() {
+          Column() {
+            Text('从 skills.sh 搜索')
+              .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            Text('搜索公开 Skill 目录')
+              .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%').alignItems(VerticalAlign.Center).margin({ bottom: 12 })
+        Row() {
+          TextInput({ text: this.skillsShQuery, placeholder: '搜索 Skill...' })
+            .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .padding({ left: 12, right: 12 })
+            .onChange((value: string) => { this.skillsShQuery = value; })
+          Column() {
+            this.actionButton(this.skillsShSearching ? '搜索中...' : '搜索', 'skillsh-search', !this.skillsShSearching, () => { this.searchSkillsShAction(); })
+          }
+          .margin({ left: 10 })
+        }
+        .width('100%')
+        if (this.skillsShResults.length > 0) {
+          Column() {
+            ForEach(this.skillsShResults, (item: SkillsShItem) => {
+              Row() {
+                Column() {
+                  Text(item.name)
+                    .copyOption(CopyOptions.LocalDevice).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
+                    .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+                }
+                .alignItems(HorizontalAlign.Start).layoutWeight(1)
+                Column() {
+                  this.actionButton('安装', `skillsh-install-${item.key}`, true, () => { this.installFromSkillsSh(item); })
+                }
+                .margin({ left: 12 })
+              }
+              .width('100%').padding(14).backgroundColor('#FFFFFF')
+              .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
+            }, (item: SkillsShItem) => `${item.key}`)
+          }
+          .width('100%')
+          .margin({ top: 8 })
+        }
+      }
+      .width('100%').padding(18)
+      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .margin({ top: 16 })
+
+      // 卡片 4：从 GitHub 安装
+      Column() {
+        Row() {
+          Column() {
+            Text('从 GitHub 安装')
+              .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            Text('粘贴仓库 URL，扫描并安装 Skill')
+              .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+          }
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%').alignItems(VerticalAlign.Center).margin({ bottom: 12 })
         Row() {
           TextInput({ text: this.githubRepoUrl, placeholder: 'https://github.com/owner/repo' })
             .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
@@ -2338,7 +2434,6 @@ struct SettingsPage {
           .margin({ left: 10 })
         }
         .width('100%')
-        .margin({ top: 12 })
         if (this.githubScanResults.length > 0) {
           Column() {
             ForEach(this.githubScanResults, (skill: DiscoverableSkill) => {
@@ -2367,115 +2462,9 @@ struct SettingsPage {
           .margin({ top: 8 })
         }
       }
-      .width('100%')
-
-      // 卡片 2：从 ZIP 安装
-      Column() {
-        this.sectionCard('从 ZIP 安装', '选择包含 SKILL.md 的 ZIP 文件')
-        Row() {
-          this.actionButton('选择 ZIP 文件', 'zip-install', true, () => { this.pickAndInstallZip(); })
-        }
-        .width('100%')
-        .margin({ top: 12 })
-      }
-      .width('100%')
+      .width('100%').padding(18)
+      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
       .margin({ top: 16 })
-
-      // 卡片 3：从本地目录安装
-      Column() {
-        this.sectionCard('从本地目录安装', '选择包含 SKILL.md 的目录')
-        Row() {
-          this.actionButton('选择目录', 'dir-install', true, () => { this.pickAndInstallDirectory(); })
-        }
-        .width('100%')
-        .margin({ top: 12 })
-      }
-      .width('100%')
-      .margin({ top: 16 })
-
-      // 卡片 4：从 skills.sh 搜索
-      Column() {
-        this.sectionCard('从 skills.sh 搜索', '搜索公开 Skill 目录')
-        Row() {
-          TextInput({ text: this.skillsShQuery, placeholder: '搜索 Skill...' })
-            .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .onChange((value: string) => { this.skillsShQuery = value; })
-          Column() {
-            this.actionButton(this.skillsShSearching ? '搜索中...' : '搜索', 'skillsh-search', !this.skillsShSearching, () => { this.searchSkillsShAction(); })
-          }
-          .margin({ left: 10 })
-        }
-        .width('100%')
-        .margin({ top: 12 })
-        if (this.skillsShResults.length > 0) {
-          Column() {
-            ForEach(this.skillsShResults, (item: SkillsShItem) => {
-              Row() {
-                Column() {
-                  Text(item.name)
-                    .copyOption(CopyOptions.LocalDevice).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
-                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
-                    .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
-                }
-                .alignItems(HorizontalAlign.Start).layoutWeight(1)
-                Column() {
-                  this.actionButton('安装', `skillsh-install-${item.key}`, true, () => { this.installFromSkillsSh(item); })
-                }
-                .margin({ left: 12 })
-              }
-              .width('100%').padding(14).backgroundColor('#FFFFFF')
-              .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
-            }, (item: SkillsShItem) => `${item.key}`)
-          }
-          .width('100%')
-          .margin({ top: 8 })
-        }
-      }
-      .width('100%')
-      .margin({ top: 16 })
-    }
-    .width('100%').alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private skillBackupsPanel() {
-    Column() {
-      if (this.skillBackups.length === 0) {
-        Column() {
-          Text('暂无备份')
-            .copyOption(CopyOptions.LocalDevice).fontSize(16).fontWeight(FontWeight.Medium).fontColor('#0F172A')
-          Text('这里将用于展示原生卸载动作留下的历史快照。')
-            .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 6 })
-        }
-        .width('100%').padding(28).backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' }).borderRadius(22).margin({ top: 12 })
-      } else {
-        ForEach(this.skillBackups, (backup: SkillBackupEntry) => {
-          Column() {
-            Row() {
-              Column() {
-                Text(backup.skill.name)
-                  .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
-                Text(backup.backupPath)
-                  .copyOption(CopyOptions.LocalDevice).fontSize(11).fontColor('#64748B').margin({ top: 6 })
-              }
-              .alignItems(HorizontalAlign.Start).layoutWeight(1)
-              this.pill('归档', '#FFFBEB', '#B45309')
-            }
-            .width('100%')
-            Text(`创建时间 ${this.formatTimestamp(backup.createdAt)}`)
-              .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 12 })
-            Row() {
-              this.actionButton('删除备份', `backup-remove-${backup.backupId}`, true, () => { this.removeSkillBackup(backup.backupId); })
-            }
-            .width('100%').justifyContent(FlexAlign.End).margin({ top: 16 })
-          }
-          .width('100%').padding(18).backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E2EAF3' }).borderRadius(22).margin({ top: 12 })
-        }, (backup: SkillBackupEntry) => backup.backupId)
-      }
     }
     .width('100%').alignItems(HorizontalAlign.Start)
   }
@@ -2508,10 +2497,6 @@ struct SettingsPage {
               this.skillInstallPanel()
             }
             .tabBar(this.tabBarBuilder('安装', 1))
-            TabContent() {
-              this.skillBackupsPanel()
-            }
-            .tabBar(this.tabBarBuilder('备份', 2))
           }
           .barMode(BarMode.Fixed)
           .onChange((index: number) => { this.switchSkillsSubTab(this.skillsSubTabByIndex(index)); })
@@ -2698,8 +2683,29 @@ struct SettingsPage {
           Divider().margin({ top: 14 }).color('#F1F5F9')
           this.formLabel('传输方式')
           Row() {
-            this.optionChip('stdio', this.mcpTransportTypeDraft === 'stdio', 'transport-stdio', () => { this.mcpTransportTypeDraft = 'stdio'; })
-            this.optionChip('http', this.mcpTransportTypeDraft === 'http', 'transport-http', () => { this.mcpTransportTypeDraft = 'http'; })
+            Button('stdio')
+              .type(ButtonType.Normal)
+              .fontSize(11)
+              .fontWeight(this.mcpTransportTypeDraft === 'stdio' ? FontWeight.Medium : FontWeight.Regular)
+              .fontColor(this.mcpTransportTypeDraft === 'stdio' ? '#0A84FF' : '#475569')
+              .backgroundColor(this.mcpTransportTypeDraft === 'stdio' ? '#EAF3FF' : '#F8FAFC')
+              .borderRadius(12)
+              .border({ width: 1, color: this.mcpTransportTypeDraft === 'stdio' ? '#BFDBFE' : '#DCE5EF' })
+              .height(32)
+              .padding({ left: 14, right: 14 })
+              .margin({ right: 8 })
+              .onClick(() => { this.mcpTransportTypeDraft = 'stdio'; })
+            Button('http')
+              .type(ButtonType.Normal)
+              .fontSize(11)
+              .fontWeight(this.mcpTransportTypeDraft === 'http' ? FontWeight.Medium : FontWeight.Regular)
+              .fontColor(this.mcpTransportTypeDraft === 'http' ? '#0A84FF' : '#475569')
+              .backgroundColor(this.mcpTransportTypeDraft === 'http' ? '#EAF3FF' : '#F8FAFC')
+              .borderRadius(12)
+              .border({ width: 1, color: this.mcpTransportTypeDraft === 'http' ? '#BFDBFE' : '#DCE5EF' })
+              .height(32)
+              .padding({ left: 14, right: 14 })
+              .onClick(() => { this.mcpTransportTypeDraft = 'http'; })
           }
           if (this.mcpTransportTypeDraft === 'stdio') {
             this.formLabel('命令')
@@ -2733,12 +2739,12 @@ struct SettingsPage {
           Divider().margin({ top: 16 }).color('#F1F5F9')
           Row() {
             this.actionButton('删除服务', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
-            this.actionButton('还原', 'mcp-revert', false, () => { this.revertMcpDraft(); })
             this.actionButton('OAuth 登录', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
-            this.actionButton('重载 MCP', 'mcp-reload', false, () => { this.reloadMcpDraft(); })
+            Blank()
+            this.actionButton('放弃更改', 'mcp-revert', false, () => { this.revertMcpDraft(); })
             this.actionButton('保存配置', 'mcp-save', true, () => { this.saveMcpDraft(); })
           }
-          .width('100%').justifyContent(FlexAlign.End).margin({ top: 16 })
+          .width('100%').margin({ top: 16 })
         }
         .width('100%').padding(18)
         .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(22)
@@ -2790,8 +2796,20 @@ struct SettingsPage {
             .onClick(() => { this.openMcpAddDialog(); })
         }
         .width('34%')
-        Column() { this.mcpEditorCard() }
-          .layoutWeight(1).margin({ left: 16 })
+        Column() {
+          Row() {
+            Blank()
+            Button('重载 MCP')
+              .height(32).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#F8FAFC')
+              .borderRadius(12).border({ width: 1, color: '#DCE5EF' })
+              .padding({ left: 12, right: 12 })
+              .onClick(() => { this.reloadMcpDraft(); })
+          }
+          .width('100%').margin({ bottom: 10 })
+          this.mcpEditorCard()
+        }
+        .layoutWeight(1).margin({ left: 16 })
       }
       .width('100%').alignItems(VerticalAlign.Top)
       }

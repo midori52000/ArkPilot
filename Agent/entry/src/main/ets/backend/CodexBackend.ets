@@ -1965,17 +1965,31 @@ export class CodexBackend {
   async refreshMcpServers(): Promise<McpServerRecord[]> {
     await this.ensureConnected();
     this.readMcpConfig();
+
+    // 构建状态索引（非阻塞，可能为空）
+    const statusMap: Map<string, McpServerStatusPayload> = new Map();
     const statusListRequest: McpStatusListRequestPayload = new McpStatusListRequestPayload();
     const rawStatusJson: string = mcpStatusListNative(JSON.stringify(statusListRequest));
     const response: McpStatusListResponsePayload = parseJsonText(rawStatusJson, new McpStatusListResponsePayload()) as McpStatusListResponsePayload;
-    this.mcpServersCache = response.data.map((item: McpServerStatusPayload) => this.buildMcpServerRecord(item));
-    if (this.mcpServersCache.length === 0 && this.mcpConfigByName.size > 0) {
-      this.mcpStatusText = `配置中有 ${this.mcpConfigByName.size} 个 MCP server，但运行时状态获取失败`;
-      this.mcpErrorText = '无法获取 MCP server 运行状态，请尝试 Reload';
-    } else {
-      this.mcpStatusText = this.mcpServersCache.length > 0 ? `已加载 ${this.mcpServersCache.length} 个 MCP server` : '当前没有已配置的 MCP server';
-      this.mcpErrorText = '';
+    for (const item of response.data) {
+      statusMap.set(item.name, item);
     }
+
+    // 基于配置构建服务器列表（始终有数据），叠加可用的状态信息
+    const servers: McpServerRecord[] = [];
+    this.mcpConfigByName.forEach((config: Object, name: string) => {
+      const status: McpServerStatusPayload | undefined = statusMap.get(name);
+      if (status !== undefined) {
+        servers.push(this.buildMcpServerRecord(status));
+      } else {
+        servers.push(this.buildMcpServerRecordFromConfig(name, config));
+      }
+    });
+    this.mcpServersCache = servers;
+    this.mcpStatusText = servers.length > 0
+      ? `已加载 ${servers.length} 个 MCP server`
+      : '当前没有已配置的 MCP server';
+    this.mcpErrorText = '';
     this.notifyListeners();
     return this.mcpServers();
   }
@@ -2101,6 +2115,8 @@ export class CodexBackend {
   private async ensureConnected(): Promise<void> {
     if (!this.initialized) {
       await this.connect();
+      // 预热 MCP 状态缓存（非阻塞，后台刷新）
+      this.refreshMcpServers().catch(() => {});
     }
   }
 
@@ -3091,6 +3107,18 @@ export class CodexBackend {
     const resourceCount: number = status.resources.length + status.resourceTemplates.length;
     const inferredHealth: McpHealthStatus = toolCount > 0 ? 'ok' : 'warning';
     return new McpServerRecord(status.name, status.name, enabled, transportType, command, argsText, url, envText, httpHeadersText, toolCount, resourceCount, inferredHealth, this.normalizeMcpAuthStatus(status.authStatus), '', 'synced', currentTimestamp());
+  }
+
+  private buildMcpServerRecordFromConfig(name: string, config: Object): McpServerRecord {
+    const cfg: Record<string, Object> = config as Record<string, Object>;
+    const command: string = this.readStringField(cfg, 'command');
+    const url: string = this.readStringField(cfg, 'url');
+    const argsText: string = this.stringifyJsonField(cfg['args']);
+    const envText: string = this.stringifyJsonField(cfg['env']);
+    const httpHeadersText: string = this.stringifyJsonField(cfg['http_headers']);
+    const enabled: boolean = this.readBooleanField(cfg, 'enabled', true);
+    const transportType: string = url.trim().length > 0 ? 'http' : (command.trim().length > 0 ? 'stdio' : 'unknown');
+    return new McpServerRecord(name, name, enabled, transportType, command, argsText, url, envText, httpHeadersText, 0, 0, 'unknown', 'notRequired', '', 'synced', currentTimestamp());
   }
 
   private normalizeMcpAuthStatus(rawStatus: string): McpAuthStatus {

@@ -6,6 +6,7 @@
 
 # Local working directories
 /ccmanage/
+/test-mcp/
 
 # Design directory
 /design/
