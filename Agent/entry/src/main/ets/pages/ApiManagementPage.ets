@@ -1,3 +1,4 @@
+import router from '@ohos.router';
 import { apiManagementVM, ApiManagementState } from '../apim/ApiManagementViewModel';
 import { ProviderRecord, ProviderPreset, EndpointSpeedResult, ChatProbeResult, BUILTIN_PROVIDER_PRESETS, ApiWireFormat, ProviderCategory } from '../apim/ApiTypes';
 
@@ -20,7 +21,6 @@ export struct ApiManagementPage {
   @State private vm: ApiManagementState = apiManagementVM.state;
   @State private activeSubTab: string = 'providers';
   @State private filterCategory: string = 'all';
-  @State private editorExpanded: boolean = false;
   @State private showSpeedResults: boolean = false;
   @State private showDiscoveredModels: boolean = false;
   @State private showUsageResult: boolean = false;
@@ -32,47 +32,12 @@ export struct ApiManagementPage {
   @State private toastIdSeed: number = 1;
   @State private sparkSeed: number = 0;
   @State private selectedProviderId: string = '';
-  // Editor fields — isolated from full-page re-renders via local @State
-  @State private editorName: string = '';
-  @State private editorBaseUrl: string = '';
-  @State private editorApiKey: string = '';
-  @State private editorModel: string = '';
-  @State private editorDescription: string = '';
-  @State private editorWebsiteUrl: string = '';
-  @State private editorWireApi: ApiWireFormat = 'responses';
-  @State private editorCategory: ProviderCategory = 'custom';
-  @State private editorIdForEdit: string = '';
 
   aboutToAppear(): void {
     apiManagementVM.loadProviders();
     if (this.vm.providers.length > 0 && this.selectedProviderId.length === 0) {
       this.selectedProviderId = this.vm.providers[0].id;
     }
-  }
-
-  private syncEditorFromProvider(provider: ProviderRecord): void {
-    this.editorName = provider.name;
-    this.editorBaseUrl = provider.baseUrl;
-    this.editorApiKey = provider.apiKey;
-    this.editorModel = provider.model;
-    this.editorDescription = provider.description;
-    this.editorWebsiteUrl = provider.websiteUrl;
-    this.editorWireApi = provider.wireApi;
-    this.editorCategory = provider.category;
-    this.editorIdForEdit = provider.id;
-  }
-
-  private syncEditorToProvider(): void {
-    const editing = this.vm.editingProvider;
-    if (editing === null) return;
-    editing.name = this.editorName;
-    editing.baseUrl = this.editorBaseUrl;
-    editing.apiKey = this.editorApiKey;
-    editing.model = this.editorModel;
-    editing.description = this.editorDescription;
-    editing.websiteUrl = this.editorWebsiteUrl;
-    editing.wireApi = this.editorWireApi;
-    editing.category = this.editorCategory;
   }
 
   private categoryLabel(category: string): string {
@@ -726,15 +691,7 @@ export struct ApiManagementPage {
             .border({ width: 1, color: '#D9E2EE' })
             .padding({ left: 12, right: 12 })
             .onClick(() => {
-              this.selectedProviderId = provider.id;
-              apiManagementVM.startEditing(provider);
-              const editing = this.vm.editingProvider;
-              if (editing !== null) {
-                this.syncEditorFromProvider(editing);
-              }
-              this.editorExpanded = true;
-              this.activeSubTab = 'providers';
-              this.triggerFeedback(`正在编辑 ${provider.name.length > 0 ? provider.name : 'Provider'}`, 'info');
+              router.pushUrl({ url: 'pages/AddProviderPage', params: { editId: provider.id } });
             })
 
           Button('复制')
@@ -817,118 +774,6 @@ export struct ApiManagementPage {
     .borderRadius(20)
     .margin({ bottom: 12 })
     .onClick(() => { this.selectedProviderId = provider.id; })
-  }
-
-  // ── Editor panel ──
-
-  @Builder
-  private editorPanel() {
-    Column() {
-      if (this.vm.editingProvider !== null) {
-        this.sectionTitle(
-          '编辑 Provider',
-          '修改后点击保存'
-        )
-
-        TextInput({ text: this.editorName, placeholder: 'Provider 名称' })
-          .width('100%').height(36).margin({ top: 8 }).fontSize(11)
-          .backgroundColor('#FFFFFF').borderRadius(10)
-          .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { this.editorName = value; })
-
-        TextInput({ text: this.editorBaseUrl, placeholder: 'https://api.openai.com/v1' })
-          .width('100%').height(36).margin({ top: 8 }).fontSize(11)
-          .backgroundColor('#FFFFFF').borderRadius(10)
-          .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { this.editorBaseUrl = value; })
-
-        TextInput({ text: this.editorApiKey, placeholder: 'sk-...' })
-          .width('100%').height(36).margin({ top: 8 }).fontSize(11)
-          .backgroundColor('#FFFFFF').borderRadius(10)
-          .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { this.editorApiKey = value; })
-
-        TextInput({ text: this.editorModel, placeholder: '模型 ID（如 gpt-5.1）' })
-          .width('100%').height(36).margin({ top: 8 }).fontSize(11)
-          .backgroundColor('#FFFFFF').borderRadius(10)
-          .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { this.editorModel = value; })
-
-        Text('API 格式')
-          .copyOption(CopyOptions.None)
-          .fontSize(10).fontColor('#64748B').margin({ top: 10 })
-        Row() {
-          this.optionChip('Responses', this.editorWireApi === 'responses', () => { this.editorWireApi = 'responses'; })
-          this.optionChip('Chat', this.editorWireApi === 'chat', () => { this.editorWireApi = 'chat'; })
-          this.optionChip('Anthropic', this.editorWireApi === 'anthropic', () => { this.editorWireApi = 'anthropic'; })
-        }
-
-        Text('分类')
-          .copyOption(CopyOptions.None)
-          .fontSize(10).fontColor('#64748B').margin({ top: 8 })
-        Row() {
-          this.optionChip('官方', this.editorCategory === 'official', () => { this.editorCategory = 'official'; })
-          this.optionChip('第三方', this.editorCategory === 'third_party', () => { this.editorCategory = 'third_party'; })
-          this.optionChip('聚合', this.editorCategory === 'aggregator', () => { this.editorCategory = 'aggregator'; })
-          this.optionChip('自定义', this.editorCategory === 'custom', () => { this.editorCategory = 'custom'; })
-        }
-
-        TextInput({ text: this.editorDescription, placeholder: '描述/备注' })
-          .width('100%').height(36).margin({ top: 8 }).fontSize(11)
-          .backgroundColor('#FFFFFF').borderRadius(10)
-          .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { this.editorDescription = value; })
-
-        TextInput({ text: this.editorWebsiteUrl, placeholder: '获取 API Key 的网址' })
-          .width('100%').height(36).margin({ top: 8 }).fontSize(11)
-          .backgroundColor('#FFFFFF').borderRadius(10)
-          .padding({ left: 10, right: 10 })
-          .onChange((value: string) => { this.editorWebsiteUrl = value; })
-
-        Row() {
-          Button('保存')
-            .height(32).fontSize(11)
-            .backgroundColor('#111827').fontColor('#FFFFFF').borderRadius(12)
-            .onClick(() => {
-              this.syncEditorToProvider();
-              apiManagementVM.saveEditing();
-              if (this.showVmFeedback('Provider 已保存')) {
-                this.editorExpanded = false;
-              }
-            })
-
-          Button('取消')
-            .height(32).fontSize(11).margin({ left: 8 })
-            .backgroundColor('#FFFFFF').fontColor('#334155').borderRadius(12)
-            .border({ width: 1, color: '#CBD5E1' })
-            .onClick(() => {
-              apiManagementVM.cancelEditing();
-              this.editorExpanded = false;
-            })
-        }
-        .width('100%').margin({ top: 12 })
-      }
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .padding(12)
-    .backgroundColor('#F8FAFC')
-    .border({ width: 1, color: '#E2E8F0' })
-    .borderRadius(14)
-  }
-
-  @Builder
-  private optionChip(label: string, selected: boolean, onClick: () => void) {
-    Text(label)
-      .copyOption(CopyOptions.None)
-      .fontSize(10)
-      .fontColor(selected ? '#1D4ED8' : '#64748B')
-      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-      .backgroundColor(selected ? '#EEF4FF' : '#F8FAFC')
-      .border({ width: 1, color: selected ? '#BFDBFE' : '#E5E7EB' })
-      .borderRadius(8)
-      .margin({ right: 6 })
-      .onClick(onClick)
   }
 
   // ── Dialogs ──
@@ -1355,12 +1200,6 @@ export struct ApiManagementPage {
             } else {
               Column() {
                 this.providersPanel()
-                if (this.editorExpanded) {
-                  Column() {
-                    this.editorPanel()
-                  }
-                  .margin({ top: 10 })
-                }
               }
               .width('100%')
             }

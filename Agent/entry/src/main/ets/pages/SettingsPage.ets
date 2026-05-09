@@ -39,18 +39,6 @@ class UiToastItem {
   }
 }
 
-class ApiEndpointMockItem {
-  label: string;
-  value: string;
-  status: string;
-
-  constructor(label: string, value: string, status: string) {
-    this.label = label;
-    this.value = value;
-    this.status = status;
-  }
-}
-
 class ApiPresetMockItem {
   id: string;
   name: string;
@@ -141,17 +129,10 @@ struct SettingsPage {
   @State private promptLiveContent: string = '';
   @State private promptsStatusText: string = '';
 
-  @State private apiProviderName: string = '';
-  @State private apiBaseUrl: string = '';
-  @State private apiModel: string = '';
-  @State private apiWireApi: ApiWireFormat = 'responses';
-  @State private apiAuthState: string = '';
-  @State private apiEndpoints: ApiEndpointMockItem[] = [];
   @State private apiProviders: ProviderRecord[] = [];
   @State private apiPresets: ApiPresetMockItem[] = [];
   @State private apiActiveSubTab: ApiSubTab = 'providers';
   @State private selectedApiProviderId: string = '';
-  @State private apiEditorExpanded: boolean = false;
   @State private apiPresetCategory: string = 'all';
   @State private apiSpeedTesting: boolean = false;
   @State private apiSpeedResults: EndpointSpeedResult[] = [];
@@ -214,24 +195,10 @@ struct SettingsPage {
     this.apiProviders = [...apiManagementVM.state.providers];
     if (this.apiProviders.length === 0) {
       this.selectedApiProviderId = '';
-      this.apiEditorExpanded = false;
-      this.apiProviderName = '';
-      this.apiBaseUrl = '';
-      this.apiModel = '';
-      this.apiWireApi = 'responses';
-      this.apiAuthState = '';
-      this.apiEndpoints = [];
       return;
     }
     if (this.selectedApiProviderId.length > 0) {
       this.syncApiDraftFromProvider(this.selectedApiProviderId);
-    } else {
-      this.apiProviderName = '';
-      this.apiBaseUrl = '';
-      this.apiModel = '';
-      this.apiWireApi = 'responses';
-      this.apiAuthState = '';
-      this.apiEndpoints = [];
     }
   }
 
@@ -638,6 +605,26 @@ struct SettingsPage {
       .then(() => {
         this.syncMcpStateFromBackend();
         this.triggerFeedback(`已保存 ${server.name} 的 MCP 配置。`, 'success');
+      })
+      .catch((err: Object) => {
+        this.mcpStatusText = this.describeRuntimeError(err);
+        this.triggerFeedback(this.mcpStatusText, 'error');
+      });
+  }
+
+  private toggleMcpEnabled(serverId: string): void {
+    const server = this.mcpServers.find((s: McpServerRecord) => s.id === serverId);
+    if (server === null || server === undefined) {
+      return;
+    }
+    codexBackend.saveMcpServerConfig(
+      server.name, !server.enabled, server.transportType,
+      server.command, server.argsText, server.url,
+      server.envText, server.httpHeadersText
+    )
+      .then(() => {
+        this.syncMcpStateFromBackend();
+        this.triggerFeedback(`已${server.enabled ? '禁用' : '启用'} ${server.name}。`, 'success');
       })
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
@@ -1220,12 +1207,6 @@ struct SettingsPage {
     return 'P';
   }
 
-  private maskApiKey(key: string): string {
-    const trimmed = key.trim();
-    if (trimmed.length <= 8) return '***';
-    return trimmed.substring(0, 4) + '****' + trimmed.substring(trimmed.length - 4);
-  }
-
   private apiProviderSecondaryText(provider: ProviderRecord): string {
     if (provider.baseUrl.trim().length > 0) {
       return provider.baseUrl;
@@ -1256,52 +1237,16 @@ struct SettingsPage {
 
   private syncApiDraftFromProvider(providerId: string): void {
     for (let index = 0; index < this.apiProviders.length; index += 1) {
-      const provider = this.apiProviders[index];
-      if (provider.id !== providerId) {
-        continue;
+      if (this.apiProviders[index].id === providerId) {
+        this.selectedApiProviderId = providerId;
+        return;
       }
-      this.selectedApiProviderId = provider.id;
-      this.apiProviderName = provider.name;
-      this.apiBaseUrl = provider.baseUrl;
-      this.apiModel = provider.model;
-      this.apiWireApi = provider.wireApi;
-      this.apiAuthState = this.maskApiKey(provider.apiKey);
-      if (provider.endpoints.length > 0) {
-        const endpoints: ApiEndpointMockItem[] = [];
-        for (let endpointIndex = 0; endpointIndex < provider.endpoints.length; endpointIndex += 1) {
-          const endpoint = provider.endpoints[endpointIndex];
-          endpoints.push(new ApiEndpointMockItem(
-            endpointIndex === 0 ? '主端点' : (endpoint.isActive ? '备用端点' : '预览端点'),
-            endpoint.url,
-            endpoint.isActive ? '正常' : (endpoint.latencyMs > 0 ? '待命' : '草稿')
-          ));
-        }
-        this.apiEndpoints = endpoints;
-      } else {
-        this.apiEndpoints = [];
-      }
-      return;
     }
     this.selectedApiProviderId = '';
-    this.apiProviderName = '';
-    this.apiBaseUrl = '';
-    this.apiModel = '';
-    this.apiAuthState = '';
-    this.apiEndpoints = [];
   }
 
   private selectApiProvider(providerId: string): void {
-    this.syncApiDraftFromProvider(providerId);
-    this.apiEditorExpanded = false;
-  }
-
-  private startEditingApiProvider(providerId: string): void {
-    this.syncApiDraftFromProvider(providerId);
-    this.apiEditorExpanded = true;
-    const provider = this.selectedApiProvider();
-    if (provider !== null) {
-      this.triggerFeedback(`正在编辑 ${provider.name} 的前端草稿。`, 'info');
-    }
+    this.selectedApiProviderId = providerId;
   }
 
   private activateApiProvider(providerId: string): void {
@@ -1324,7 +1269,6 @@ struct SettingsPage {
     if (this.selectedApiProviderId === providerId) {
       this.selectedApiProviderId = this.apiProviders.length > 0 ? this.apiProviders[0].id : '';
     }
-    this.apiEditorExpanded = false;
 
     apiManagementVM.deleteProvider(providerId);
 
@@ -1332,33 +1276,6 @@ struct SettingsPage {
       this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
     }
-    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
-  }
-
-  private startNewApiProvider(): void {
-    apiManagementVM.startEditing(null);
-    const editing = apiManagementVM.state.editingProvider;
-    if (editing === null) {
-      return;
-    }
-    editing.name = '新服务商草稿';
-    editing.baseUrl = 'https://your-provider.example.com/v1';
-    editing.apiKey = 'sk-draft-************************';
-    editing.model = 'gpt-5.1';
-    editing.description = '等待接入真实后端前的本地草稿。';
-    editing.icon = 'N';
-    editing.iconColor = '#6366F1';
-    apiManagementVM.saveEditing();
-    this.syncApiStateFromViewModel();
-    if (apiManagementVM.state.errorText.trim().length > 0) {
-      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
-      return;
-    }
-    if (apiManagementVM.state.providers.length > 0) {
-      const created = apiManagementVM.state.providers[apiManagementVM.state.providers.length - 1];
-      this.syncApiDraftFromProvider(created.id);
-    }
-    this.apiEditorExpanded = true;
     this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
@@ -1373,10 +1290,9 @@ struct SettingsPage {
     }
     if (apiManagementVM.state.providers.length > 0) {
       const created = apiManagementVM.state.providers[apiManagementVM.state.providers.length - 1];
-      this.syncApiDraftFromProvider(created.id);
+      this.selectedApiProviderId = created.id;
     }
     this.apiActiveSubTab = 'providers';
-    this.apiEditorExpanded = true;
     this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
@@ -1391,30 +1307,6 @@ struct SettingsPage {
       }
     }
     return result;
-  }
-
-  private saveApiDraft(): void {
-    const provider = this.selectedApiProvider();
-    if (provider === null) {
-      return;
-    }
-    apiManagementVM.startEditing(provider);
-    const editing = apiManagementVM.state.editingProvider;
-    if (editing === null) {
-      return;
-    }
-    editing.name = this.apiProviderName;
-    editing.baseUrl = this.apiBaseUrl;
-    editing.model = this.apiModel;
-    editing.wireApi = this.apiWireApi;
-    editing.apiKey = this.apiAuthState;
-    apiManagementVM.saveEditing();
-    this.syncApiStateFromViewModel();
-    if (apiManagementVM.state.errorText.trim().length > 0) {
-      this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
-      return;
-    }
-    this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
   private validateApiDraft(): void {
@@ -1959,75 +1851,22 @@ struct SettingsPage {
   }
 
   @Builder
-  private skillsSummaryCard(title: string, value: string, color: string, background: string, tab: SkillsSubTab) {
+  private tabBarBuilder(title: string, index: number) {
     Column() {
       Text(title)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#64748B')
-      Text(value)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
-        .margin({ top: 6 })
-      Row() {
-        Column()
-          .width(8)
-          .height(8)
-          .backgroundColor(color)
-          .borderRadius(10)
-        Text(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '当前' : '就绪')
-          .copyOption(CopyOptions.None)
-          .fontSize(10)
-          .fontColor(color)
-          .margin({ left: 6 })
-      }
-      .margin({ top: 10 })
+        .fontSize(13)
+        .fontWeight(this.skillsActiveSubTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.skillsActiveSubTabIndex === index ? '#0A84FF' : '#475569')
+        .margin({ bottom: 6 })
+      Column()
+        .width(24)
+        .height(2)
+        .borderRadius(1)
+        .backgroundColor(this.skillsActiveSubTabIndex === index ? '#0A84FF' : 'transparent')
     }
-    .alignItems(HorizontalAlign.Start)
-    .layoutWeight(1)
-    .height(112)
-    .padding(16)
-    .backgroundColor(background)
-    .border({
-      width: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? 1.6 : 1,
-      color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? color : '#DCE7F3'
-    })
-    .borderRadius(20)
-    .margin({ right: 12 })
-    .scale({ x: this.pressScale(`skill-summary-${tab}`), y: this.pressScale(`skill-summary-${tab}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
-    .onTouch((event: TouchEvent) => { this.updatePressed(`skill-summary-${tab}`, event); })
-    .onClick(() => { this.switchSkillsSubTab(tab); })
-  }
-
-  @Builder
-  private skillsSubTabButton(label: string, tab: SkillsSubTab) {
-    Button(label)
-      .height(32)
-      .fontSize(11)
-      .fontWeight(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#0A84FF' : '#475569')
-      .backgroundColor(this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#EAF3FF' : '#F8FAFC')
-      .border({ width: 1, color: this.skillsActiveSubTabIndex === this.skillsSubTabIndex(tab) ? '#BFDBFE' : '#DCE5EF' })
-      .borderRadius(12)
-      .padding({ left: 12, right: 12 })
-      .margin({ right: 8 })
-      .scale({ x: this.pressScale(`skill-tab-${tab}`), y: this.pressScale(`skill-tab-${tab}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-      .onTouch((event: TouchEvent) => { this.updatePressed(`skill-tab-${tab}`, event); })
-      .onClick(() => { this.switchSkillsSubTab(tab); })
-  }
-
-  @Builder
-  private skillInlineTag(label: string, accent: boolean = false) {
-    Text(label)
-      .copyOption(CopyOptions.None)
-      .fontSize(10)
-      .fontWeight(FontWeight.Medium)
-      .fontColor(accent ? '#94A3B8' : '#A3AFBF')
-      .margin({ left: 6 })
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 8, bottom: 8 })
   }
 
   @Builder
@@ -2072,94 +1911,6 @@ struct SettingsPage {
   }
 
   @Builder
-  private installedSkillsPanel() {
-    Column() {
-      if (this.installedSkills.length === 0) {
-        this.skillsEmptyState('暂无已安装 Skills', '点击刷新当前重新扫描本机 Skills 目录。')
-      } else {
-        ForEach(this.installedSkills, (skill: InstalledSkill) => {
-          Row() {
-            Column() {
-              Row() {
-                Text(skill.name)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#111827')
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                if (skill.enabled) {
-                  Text('启用')
-                    .copyOption(CopyOptions.None)
-                    .fontSize(9)
-                    .fontColor('#16A34A')
-                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                    .backgroundColor('#DCFCE7')
-                    .borderRadius(8)
-                    .margin({ left: 8 })
-                }
-              }
-              .width('100%')
-              .alignItems(VerticalAlign.Center)
-              Text(skill.description)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(11)
-                .fontColor('#667085')
-                .lineHeight(17)
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .margin({ top: 6 })
-              Row() {
-                Text(this.skillSourceText(skill))
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#94A3B8')
-                Text(this.skillMetaText(skill))
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#94A3B8')
-                  .margin({ left: 10 })
-              }
-              .width('100%')
-              .margin({ top: 8 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-            .padding({ right: 12 })
-            Row() {
-              this.skillActionButton(
-                skill.enabled ? '启用中' : '禁用中', `skill-toggle-${skill.id}`,
-                skill.enabled ? '#16A34A' : '#94A3B8', skill.enabled ? '#DCFCE7' : '#F5F7FA',
-                skill.enabled ? '#BBF7D0' : '#E5EAF1', () => { this.toggleSkillEnabled(skill.id); }
-              )
-              this.skillActionButton(
-                '打开', `skill-open-${skill.id}`, '#6366F1', '#EEF2FF', '#C7D2FE',
-                () => { this.showSkillDetail(skill); }
-              )
-              this.skillActionButton(
-                '删除', `skill-delete-${skill.id}`, '#EF4444', '#FEF2F2', '#FECACA',
-                () => { this.requestUninstallSkill(skill.id); }
-              )
-            }
-            .justifyContent(FlexAlign.End)
-            .alignItems(VerticalAlign.Center)
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .border({ width: 1, color: skill.enabled ? '#D1FAE5' : '#E7ECF3' })
-        }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
-      }
-    }
-    .width('100%')
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E6EBF2' })
-    .borderRadius(18)
-    .clip(true)
-  }
-
-  @Builder
   private installedSkillsList() {
     Column() {
       if (this.installedSkills.length === 0) {
@@ -2188,7 +1939,12 @@ struct SettingsPage {
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
-                this.pill(skill.enabled ? '启用中' : '禁用中', skill.enabled ? '#DCFCE7' : '#F1F5F9', skill.enabled ? '#166534' : '#64748B')
+                Toggle({ type: ToggleType.Switch, isOn: skill.enabled })
+                  .selectedColor('#16A34A')
+                  .switchPointColor('#FFFFFF')
+                  .width(44)
+                  .height(22)
+                  .onChange((isOn: boolean) => { this.toggleSkillEnabled(skill.id); })
               }
               .width('100%')
               Row() {
@@ -2235,17 +1991,12 @@ struct SettingsPage {
         .justifyContent(FlexAlign.Center)
       } else {
         Column() {
-          Row() {
-            Text(this.selectedSkill()!.name)
-              .copyOption(CopyOptions.LocalDevice)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#0F172A')
-              .layoutWeight(1)
-            this.pill(this.selectedSkill()!.enabled ? '启用中' : '禁用中', this.selectedSkill()!.enabled ? '#DCFCE7' : '#F1F5F9', this.selectedSkill()!.enabled ? '#166534' : '#64748B')
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
+          Text(this.selectedSkill()!.name)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#0F172A')
+            .width('100%')
           Text(this.selectedSkill()!.description)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
@@ -2280,11 +2031,6 @@ struct SettingsPage {
           .backgroundColor('#F8FAFC')
           .borderRadius(12)
           Row() {
-            this.skillActionButton(
-              this.selectedSkill()!.enabled ? '启用中' : '禁用中', `skill-preview-toggle-${this.selectedSkill()!.id}`,
-              this.selectedSkill()!.enabled ? '#16A34A' : '#94A3B8', this.selectedSkill()!.enabled ? '#DCFCE7' : '#F5F7FA',
-              this.selectedSkill()!.enabled ? '#BBF7D0' : '#E5EAF1', () => { this.toggleSkillEnabled(this.selectedSkill()!.id); }
-            )
             this.skillActionButton(
               '删除', `skill-preview-delete-${this.selectedSkill()!.id}`, '#EF4444', '#FEF2F2', '#FECACA',
               () => { this.requestUninstallSkill(this.selectedSkill()!.id); }
@@ -2434,9 +2180,10 @@ struct SettingsPage {
       Row() {
         Column() {
           Row() {
-            this.skillsSubTabButton('已安装', 'installed')
-            this.skillsSubTabButton('来源', 'repos')
-            this.skillsSubTabButton('备份', 'backups')
+            Text('Skills 管理')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
             Blank().layoutWeight(1)
             this.actionButton('刷新', 'skill-refresh-current', false, () => { this.refreshActiveSkillsSubTab(); })
           }
@@ -2446,14 +2193,25 @@ struct SettingsPage {
             .fontColor(skillsVM.state.errorText.trim().length > 0 ? '#B91C1C' : '#64748B')
             .margin({ bottom: 8 })
             .visibility(this.skillsStatusText.length > 0 ? Visibility.Visible : Visibility.None)
-          Column() {
-            Column() { this.installedSkillsList() }
-              .width('100%').visibility(this.skillsActiveSubTabIndex === 0 ? Visibility.Visible : Visibility.None)
-            Column() { this.skillReposPanel() }
-              .width('100%').visibility(this.skillsActiveSubTabIndex === 1 ? Visibility.Visible : Visibility.None)
-            Column() { this.skillBackupsPanel() }
-              .width('100%').visibility(this.skillsActiveSubTabIndex === 2 ? Visibility.Visible : Visibility.None)
+          Tabs({ barPosition: BarPosition.Start, index: this.skillsActiveSubTabIndex }) {
+            TabContent() {
+              Column() { this.installedSkillsList() }
+                .width('100%')
+            }
+            .tabBar(this.tabBarBuilder('已安装', 0))
+            TabContent() {
+              Column() { this.skillReposPanel() }
+                .width('100%')
+            }
+            .tabBar(this.tabBarBuilder('来源', 1))
+            TabContent() {
+              Column() { this.skillBackupsPanel() }
+                .width('100%')
+            }
+            .tabBar(this.tabBarBuilder('备份', 2))
           }
+          .barMode(BarMode.Fixed)
+          .onChange((index: number) => { this.switchSkillsSubTab(this.skillsSubTabByIndex(index)); })
           .width('100%')
         }
         .width('38%')
@@ -2567,30 +2325,33 @@ struct SettingsPage {
 
   @Builder
   private mcpServerCard(server: McpServerRecord) {
-    Button() {
-      Column() {
-        Row() {
-          Column() {
-            Text(server.name)
-              .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
-            Text(server.id)
-              .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 4 })
-          }
-          .alignItems(HorizontalAlign.Start)
-          Blank().layoutWeight(1)
-          this.pill(this.healthLabel(server.healthStatus), this.statusChipBackground(server.healthStatus), this.statusChipColor(server.healthStatus))
+    Column() {
+      Row() {
+        Column() {
+          Text(server.name)
+            .copyOption(CopyOptions.LocalDevice).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+          Text(server.id)
+            .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 4 })
         }
-        .width('100%')
-        Row() {
-          this.pill(server.enabled ? '已启用' : '已停用', server.enabled ? '#DCFCE7' : '#F1F5F9', server.enabled ? '#166534' : '#64748B')
-          this.pill(this.authLabel(server.authStatus), this.statusChipBackground(server.authStatus), this.statusChipColor(server.authStatus))
-        }
-        .width('100%').margin({ top: 10 })
-        Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
-          .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 10 })
+        .alignItems(HorizontalAlign.Start)
+        Blank().layoutWeight(1)
+        this.pill(this.healthLabel(server.healthStatus), this.statusChipBackground(server.healthStatus), this.statusChipColor(server.healthStatus))
       }
-      .width('100%').padding(16)
+      .width('100%')
+      Row() {
+        Toggle({ type: ToggleType.Switch, isOn: server.enabled })
+          .selectedColor('#16A34A')
+          .switchPointColor('#FFFFFF')
+          .width(44)
+          .height(22)
+          .onChange((isOn: boolean) => { this.toggleMcpEnabled(server.id); })
+        this.pill(this.authLabel(server.authStatus), this.statusChipBackground(server.authStatus), this.statusChipColor(server.authStatus))
+      }
+      .width('100%').margin({ top: 10 }).alignItems(VerticalAlign.Center)
+      Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
+        .copyOption(CopyOptions.LocalDevice).fontSize(10).fontColor('#64748B').margin({ top: 10 })
     }
+    .width('100%').padding(16)
     .width('100%').margin({ top: 10 })
     .backgroundColor(this.selectedMcpServerId === server.id ? '#F8FBFF' : '#FFFFFF')
     .border({ width: 1.3, color: this.selectedMcpServerId === server.id ? '#0A84FF' : '#E2EAF3' })
@@ -2622,10 +2383,13 @@ struct SettingsPage {
           this.optionChip('http', this.mcpTransportTypeDraft === 'http', 'transport-http', () => { this.mcpTransportTypeDraft = 'http'; })
         }
         this.formLabel('启用状态')
-        Row() {
-          this.optionChip('是', this.mcpEnabledDraft, 'mcp-enabled-true', () => { this.mcpEnabledDraft = true; })
-          this.optionChip('否', !this.mcpEnabledDraft, 'mcp-enabled-false', () => { this.mcpEnabledDraft = false; })
-        }
+        Toggle({ type: ToggleType.Switch, isOn: this.mcpEnabledDraft })
+          .selectedColor('#16A34A')
+          .switchPointColor('#FFFFFF')
+          .width(44)
+          .height(22)
+          .margin({ top: 6 })
+          .onChange((isOn: boolean) => { this.mcpEnabledDraft = isOn; })
         if (this.mcpTransportTypeDraft === 'stdio') {
           this.formLabel('命令')
           TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / 可执行文件路径' })
@@ -3223,9 +2987,9 @@ struct SettingsPage {
                 }
               })
 
-            this.apiProviderActionButton('编辑', `api-edit-${provider.id}`, false, () => { this.startEditingApiProvider(provider.id); })
+            this.apiProviderActionButton('编辑', `api-edit-${provider.id}`, false, () => { router.pushUrl({ url: 'pages/AddProviderPage', params: { editId: provider.id } }); })
             this.apiProviderActionButton('验证', `api-validate-${provider.id}`, false, () => {
-              this.syncApiDraftFromProvider(provider.id);
+              this.selectedApiProviderId = provider.id;
               this.validateApiDraft();
             })
             this.apiSpeedTestButton(provider)
@@ -3287,13 +3051,7 @@ struct SettingsPage {
       List({ space: 12 }) {
         ForEach(this.apiProviders, (provider: ProviderRecord) => {
           ListItem() {
-            Column() {
-              this.apiProviderCard(provider)
-              if (this.apiEditorExpanded && this.selectedApiProviderId === provider.id) {
-                this.apiEditorPanel()
-              }
-            }
-            .width('100%')
+            this.apiProviderCard(provider)
           }
         }, (provider: ProviderRecord) => `${provider.id}-${provider.isActive}`)
           .onMove((from: number, to: number) => {
@@ -3308,174 +3066,8 @@ struct SettingsPage {
       .margin({ top: 14 })
       .scrollBar(BarState.Off)
       .divider({ strokeWidth: 0 })
-
-      if (!this.apiEditorExpanded || this.selectedApiProvider() === null) {
-        Column() {
-          Text('编辑器处于折叠状态')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
-          Text('点卡片右侧”编辑”，在当前面板下方展开前端草稿编辑区。')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
-            .fontColor('#64748B')
-            .lineHeight(18)
-            .margin({ top: 6 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(18)
-        .backgroundColor('#F8FBFF')
-        .border({ width: 1, color: '#DCE8F4' })
-        .borderRadius(22)
-        .margin({ top: 4 })
-      }
     }
     .width('100%')
-  }
-
-  @Builder
-  private apiEditorPanel() {
-    if (this.selectedApiProvider() !== null) {
-      Column() {
-
-
-        Column() {
-          this.formLabel('服务商名称')
-          TextInput({ text: this.apiProviderName, placeholder: '服务商名称' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.apiProviderName = value; })
-
-          this.formLabel('基础 URL')
-          TextInput({ text: this.apiBaseUrl, placeholder: 'https://api.openai.com/v1' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.apiBaseUrl = value; })
-
-          this.formLabel('模型')
-          TextInput({ text: this.apiModel, placeholder: 'gpt-5.1' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.apiModel = value; })
-
-          this.formLabel('接口格式')
-          Row() {
-            this.optionChip('Responses', this.apiWireApi === 'responses', 'wire-responses', () => { this.apiWireApi = 'responses'; })
-            this.optionChip('对话', this.apiWireApi === 'chat', 'wire-chat', () => { this.apiWireApi = 'chat'; })
-            this.optionChip('Anthropic', this.apiWireApi === 'anthropic', 'wire-anthropic', () => { this.apiWireApi = 'anthropic'; })
-          }
-
-          this.formLabel('API Key 预览')
-          TextInput({ text: this.apiAuthState, placeholder: 'sk-...' })
-            .width('100%')
-            .height(40)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(14)
-            .padding({ left: 12, right: 12 })
-            .margin({ top: 6 })
-            .onChange((value: string) => { this.apiAuthState = value; })
-
-          Row() {
-            this.actionButton('验证', 'api-validate', false, () => { this.validateApiDraft(); })
-            Column() {
-              this.actionButton('保存草稿', 'api-save', true, () => { this.saveApiDraft(); })
-            }
-            .margin({ left: 10 })
-            Column() {
-              this.actionButton('折叠', 'api-collapse', false, () => { this.apiEditorExpanded = false; })
-            }
-            .margin({ left: 10 })
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.End)
-          .margin({ top: 18 })
-        }
-        .width('100%')
-        .margin({ top: 12 })
-        .padding(18)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(22)
-
-        this.apiEndpointDetailPanel()
-      }
-      .width('100%')
-      .margin({ top: 4 })
-    }
-  }
-
-  @Builder
-  private apiEndpointDetailPanel() {
-    Column() {
-      this.sectionCard('端点矩阵', '当前服务商的端点配置')
-      Column() {
-        ForEach(this.apiEndpoints, (endpoint: ApiEndpointMockItem) => {
-          Row() {
-            Column() {
-              Text(endpoint.label)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(13)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#0F172A')
-              Text(endpoint.value)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(11)
-                .fontColor('#64748B')
-                .margin({ top: 6 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-
-            this.pill(endpoint.status, this.statusChipBackground(endpoint.status), this.statusChipColor(endpoint.status))
-          }
-          .width('100%')
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E2EAF3' })
-          .borderRadius(18)
-          .margin({ top: 10 })
-        }, (endpoint: ApiEndpointMockItem) => `${endpoint.label}-${endpoint.value}`)
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      Column() {
-        Text('接入说明')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#0F172A')
-        Text('当前页只演示服务商卡片、编辑草稿区和操作反馈；真实验证、测速与导入导出逻辑留待后端接入。')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .fontColor('#64748B')
-          .lineHeight(18)
-          .margin({ top: 8 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-      .padding(18)
-      .backgroundColor('#F8FBFF')
-      .border({ width: 1, color: '#DCE8F4' })
-      .borderRadius(22)
-      .margin({ top: 14 })
-    }
-    .width('100%')
-    .margin({ top: 14 })
   }
 
   @Builder

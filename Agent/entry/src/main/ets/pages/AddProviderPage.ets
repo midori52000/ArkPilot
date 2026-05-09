@@ -33,9 +33,41 @@ struct AddProviderPage {
   @State private requestFullUrl: boolean = false;
   @State private defaultModel: string = '';
   @State private advancedExpanded: boolean = false;
+  @State private editId: string = '';
 
   aboutToAppear(): void {
+    const rawParams: Object = router.getParams();
+    if (rawParams !== undefined && rawParams !== null) {
+      const params = rawParams as Record<string, string>;
+      if (params['editId'] !== undefined && params['editId'].length > 0) {
+        this.editId = params['editId'];
+        this.loadProviderForEdit(this.editId);
+        return;
+      }
+    }
     this.applyPreset(this.selectedPresetId, false);
+  }
+
+  private loadProviderForEdit(providerId: string): void {
+    const result = configManagerFacade.listProviders();
+    if (!result.ok || result.data === null) {
+      this.triggerFeedback('加载 Provider 失败。', 'error');
+      return;
+    }
+    const provider = result.data.find((p: ProviderRecord) => p.id === providerId);
+    if (provider === undefined) {
+      this.triggerFeedback('未找到该 Provider。', 'error');
+      return;
+    }
+    this.providerName = provider.name;
+    this.providerNote = provider.description;
+    this.websiteUrl = provider.websiteUrl;
+    this.apiKey = provider.apiKey;
+    this.baseUrl = provider.baseUrl;
+    this.wireApi = provider.wireApi;
+    this.defaultModel = provider.model;
+    this.selectedPresetId = 'custom';
+    this.triggerFeedback('已加载 Provider 数据。', 'success');
   }
 
   private triggerFeedback(message: string, tone: ToastTone = 'info'): void {
@@ -230,8 +262,11 @@ struct AddProviderPage {
         }
       }
 
+      const providerId: string = this.editId.length > 0
+        ? this.editId
+        : `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       const provider = new ProviderRecord(
-        `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        providerId,
         this.providerName,
         'codex',
         'exclusive',
@@ -262,12 +297,13 @@ struct AddProviderPage {
         this.triggerFeedback(msg, 'error');
         return;
       }
-      this.triggerFeedback(`已添加 "${result.data.name}"。`, 'success');
+      const actionLabel: string = this.editId.length > 0 ? '已更新' : '已添加';
+      this.triggerFeedback(`${actionLabel} "${result.data.name}"。`, 'success');
       setTimeout(() => {
         router.back();
       }, 600);
     } catch (err) {
-      this.triggerFeedback('添加失败：' + JSON.stringify(err), 'error');
+      this.triggerFeedback('保存失败：' + JSON.stringify(err), 'error');
     }
   }
 
@@ -334,12 +370,12 @@ struct AddProviderPage {
       .onClick(() => { router.back(); })
 
       Column() {
-        Text('添加新供应商')
+        Text(this.editId.length > 0 ? '编辑供应商' : '添加新供应商')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .fontColor('#0F172A')
-        Text('独立添加页 · 预设先选 · 前端模拟提交')
+        Text(this.editId.length > 0 ? '修改供应商配置后点击保存' : '独立添加页 · 预设先选 · 前端模拟提交')
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontColor('#64748B')
@@ -716,7 +752,7 @@ struct AddProviderPage {
         .padding({ left: 18, right: 18 })
         .onClick(() => { router.back(); })
 
-      Button('+ 添加')
+      Button(this.editId.length > 0 ? '保存' : '+ 添加')
         .height(40)
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
