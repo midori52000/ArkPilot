@@ -484,6 +484,8 @@ struct ProviderSettings {
     base_url: String,
     api_key: String,
     model: String,
+    #[serde(default)]
+    context_window: Option<i64>,
 }
 
 impl Default for ProviderSettings {
@@ -492,6 +494,7 @@ impl Default for ProviderSettings {
             base_url: DEFAULT_PROVIDER_BASE_URL.to_string(),
             api_key: DEFAULT_PROVIDER_API_KEY.to_string(),
             model: DEFAULT_PROVIDER_MODEL.to_string(),
+            context_window: None,
         }
     }
 }
@@ -509,6 +512,8 @@ struct ProviderCatalogRecord {
     is_active: bool,
     sync_status: String,
     updated_at: String,
+    #[serde(default)]
+    context_window: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -792,6 +797,7 @@ pub extern "C" fn codex_ohos_host_save_provider_config(
             .unwrap_or_else(|| DEFAULT_PROVIDER_BASE_URL.to_string()),
         api_key: ffi_string(api_key).unwrap_or_default(),
         model: ffi_string(model).unwrap_or_default(),
+        context_window: None,
     };
 
     match persist_provider_settings(&codex_home, &settings) {
@@ -1361,6 +1367,15 @@ fn persist_provider_settings(codex_home: &Path, settings: &ProviderSettings) -> 
         });
     }
 
+    if let Some(context_window) = settings.context_window {
+        if context_window > 0 {
+            edits.push(ConfigEdit::SetPath {
+                segments: vec!["model_context_window".to_string()],
+                value: toml_edit::value(context_window),
+            });
+        }
+    }
+
     ConfigEditsBuilder::new(codex_home)
         .with_edits(edits)
         .apply_blocking()
@@ -1410,6 +1425,7 @@ fn persist_provider_catalog(codex_home: &Path, catalog: &ProviderCatalog) -> Res
             base_url: active.base_url.clone(),
             api_key: active.api_key.clone(),
             model: active.model.clone(),
+            context_window: active.context_window,
         };
         persist_provider_settings(codex_home, &settings)?;
     }
@@ -1462,6 +1478,7 @@ fn catalog_record_from_settings(
         is_active,
         sync_status: DEFAULT_PROVIDER_SYNC_STATUS.to_string(),
         updated_at: current_timestamp_string(),
+        context_window: settings.context_window,
     }
 }
 
@@ -5329,6 +5346,7 @@ mod tests {
             base_url: "https://example.com/v1".to_string(),
             api_key: "secret".to_string(),
             model: "test-model".to_string(),
+            context_window: None,
         });
 
         assert!(config.contains("approval_policy = \"on-request\""));

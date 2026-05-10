@@ -118,6 +118,7 @@ export class ProviderRecord {
   lastValidatedAt: number;
   usageScript: UsageScriptEntry | null;
   createdAt: number;
+  contextWindow: number;
 
   constructor(
     id: string,
@@ -143,7 +144,8 @@ export class ProviderRecord {
     healthLatencyMs?: number,
     lastValidatedAt?: number,
     usageScript?: UsageScriptEntry | null,
-    createdAt?: number
+    createdAt?: number,
+    contextWindow?: number
   ) {
     this.id = id;
     this.name = name;
@@ -169,6 +171,7 @@ export class ProviderRecord {
     this.lastValidatedAt = lastValidatedAt ?? 0;
     this.usageScript = usageScript ?? null;
     this.createdAt = createdAt ?? Date.now();
+    this.contextWindow = contextWindow ?? 0;
   }
 
   getHeaderValue(key: string): string {
@@ -225,11 +228,12 @@ export class ProviderDefinition {
   mode: string;
   syncStatus: string;
   updatedAt: string;
+  contextWindow: number;
 
   constructor(
     id: string, name: string, baseUrl: string, model: string,
     wireApi: string, isActive: boolean, appType: string, mode: string,
-    syncStatus: string, updatedAt: string
+    syncStatus: string, updatedAt: string, contextWindow: number = 0
   ) {
     this.id = id;
     this.name = name;
@@ -241,6 +245,7 @@ export class ProviderDefinition {
     this.mode = mode;
     this.syncStatus = syncStatus;
     this.updatedAt = updatedAt;
+    this.contextWindow = contextWindow;
   }
 }
 

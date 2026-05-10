@@ -80,6 +80,11 @@ function parseTomlBool(value: string): boolean {
   return value.trim() === 'true';
 }
 
+function parseTomlInt(value: string, fallback: number = 0): number {
+  const n = parseInt(value.trim());
+  return isNaN(n) ? fallback : n;
+}
+
 function parseToml(content: string): ParsedToml {
   const result: ParsedToml = new ParsedToml();
   const lines: string[] = content.split('\n');
@@ -163,6 +168,9 @@ function serializeProviderDefToml(def: ProviderDefinition): string {
   result += `mode = ${escapeTomlString(def.mode)}\n`;
   result += `sync_status = ${escapeTomlString(def.syncStatus)}\n`;
   result += `updated_at = ${escapeTomlString(def.updatedAt)}\n`;
+  if (def.contextWindow > 0) {
+    result += `context_window = ${def.contextWindow}\n`;
+  }
   return result;
 }
 
@@ -258,7 +266,8 @@ function tomlMapToDefinition(m: Map<string, string>): ProviderDefinition {
     parseTomlString(m.get('app_type') ?? '"codex"'),
     parseTomlString(m.get('mode') ?? '"exclusive"'),
     parseTomlString(m.get('sync_status') ?? '"synced"'),
-    parseTomlString(m.get('updated_at') ?? '""')
+    parseTomlString(m.get('updated_at') ?? '""'),
+    parseTomlInt(m.get('context_window') ?? '0', 0)
   );
 }
 
@@ -272,7 +281,7 @@ function definitionToRecord(
     def.isActive, def.syncStatus as ProviderSyncStatus, def.updatedAt,
     'apiKey', [], def.wireApi as ApiWireFormat,
     'custom', '', '', '', '',
-    [], 'unknown', 0, 0, null, Date.now()
+    [], 'unknown', 0, 0, null, Date.now(), def.contextWindow
   );
 }
 
@@ -280,7 +289,7 @@ function recordToDefinition(rec: ProviderRecord): ProviderDefinition {
   return new ProviderDefinition(
     rec.id, rec.name, rec.baseUrl, rec.model,
     rec.wireApi, rec.isActive, rec.appType, rec.mode,
-    rec.syncStatus, rec.updatedAt
+    rec.syncStatus, rec.updatedAt, rec.contextWindow
   );
 }
 

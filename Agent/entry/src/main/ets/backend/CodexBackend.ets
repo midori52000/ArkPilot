@@ -9,6 +9,7 @@ import {
   CodexHostStatus,
   collaborationModeListNative,
   getEmbeddedCodexHostStatus,
+  getEmbeddedCodexHostStatusAsync,
   initializeNative,
   initializeAsyncNative,
   mcpConfigAddNative,
@@ -24,7 +25,9 @@ import {
   threadNameSetNative,
   threadReadNative,
   threadResumeNative,
+  threadResumeAsyncNative,
   threadStartNative,
+  threadStartAsyncNative,
   turnInterruptNative,
   turnPollNative,
   turnPollAsyncNative,
@@ -1543,7 +1546,7 @@ export class CodexBackend {
     threadStartRequest.cwd = trimmedWorkspaceRoot.length > 0 ? trimmedWorkspaceRoot : undefined;
     threadStartRequest.model = model !== 'default' ? model : undefined;
     const payload: ThreadStartResultPayload = parseJsonText(
-      threadStartNative(JSON.stringify(threadStartRequest)),
+      await threadStartAsyncNative(JSON.stringify(threadStartRequest)),
       new ThreadStartResultPayload()
     ) as ThreadStartResultPayload;
     const remoteThreadId: string = payload.thread?.id ?? '';
@@ -2257,7 +2260,7 @@ export class CodexBackend {
     const threadStartRequest: ThreadStartRequestPayload = new ThreadStartRequestPayload();
     threadStartRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
     threadStartRequest.model = request.model !== 'default' ? request.model : undefined;
-    const payload: ThreadStartResultPayload = parseJsonText(threadStartNative(JSON.stringify(threadStartRequest)), new ThreadStartResultPayload()) as ThreadStartResultPayload;
+    const payload: ThreadStartResultPayload = parseJsonText(await threadStartAsyncNative(JSON.stringify(threadStartRequest)), new ThreadStartResultPayload()) as ThreadStartResultPayload;
     if (payload.thread === undefined || payload.thread.id.length === 0) {
       const message: string = payload.error?.message?.trim() ?? '';
       if (message.length > 0) {
@@ -2380,7 +2383,7 @@ export class CodexBackend {
     resumeRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
     resumeRequest.model = request.model !== 'default' ? request.model : undefined;
     const payload: Record<string, Object> = parseJsonText(
-      threadResumeNative(JSON.stringify(resumeRequest)),
+      await threadResumeAsyncNative(JSON.stringify(resumeRequest)),
       new Object() as Object
     ) as Record<string, Object>;
     const threadPayload: Record<string, Object> | undefined = payload['thread'] as Record<string, Object> | undefined;

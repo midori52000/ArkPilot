@@ -13,6 +13,8 @@ import { breakpointManager } from '../adaptive/BreakpointManager';
 import { getArkPilotLayoutProfile } from '../adaptive/LayoutProfiles';
 import { picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
+import fs from '@ohos.file.fs';
+import util from '@ohos.util';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 type ApiSubTab = 'providers' | 'presets';
@@ -153,6 +155,10 @@ struct SettingsPage {
   @State private promptDraftContent: string = '';
   @State private promptLiveContent: string = '';
   @State private promptsStatusText: string = '';
+
+  @State private showConfigToml: boolean = false;
+  @State private configTomlContent: string = '';
+  @State private configTomlPath: string = '';
 
   @State private apiProviders: ProviderRecord[] = [];
   @State private apiPresets: ApiPresetMockItem[] = [];
@@ -1822,6 +1828,125 @@ struct SettingsPage {
     .margin({ right: 2 })
   }
 
+  private openConfigToml(): void {
+    const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+    if (codexHome.length === 0) {
+      return;
+    }
+    const configPath: string = codexHome + '/config.toml';
+    this.configTomlPath = configPath;
+    try {
+      const stat = fs.statSync(configPath);
+      if (!stat.isFile()) {
+        this.configTomlContent = '# config.toml 不存在\n# 保存 Provider 后会自动生成';
+        this.showConfigToml = true;
+        return;
+      }
+      const file = fs.openSync(configPath, fs.OpenMode.READ_ONLY);
+      const buf = new ArrayBuffer(stat.size);
+      const bytesRead = fs.readSync(file.fd, buf);
+      fs.closeSync(file);
+      this.configTomlContent = String.fromCharCode(...new Uint8Array(buf, 0, bytesRead));
+    } catch (e) {
+      this.configTomlContent = '# 读取失败: ' + JSON.stringify(e);
+    }
+    this.showConfigToml = true;
+  }
+
+  private saveConfigToml(): void {
+    if (this.configTomlPath.length === 0) {
+      return;
+    }
+    try {
+      const encoder = new util.TextEncoder();
+      const encoded = encoder.encodeInto(this.configTomlContent);
+      const file = fs.openSync(this.configTomlPath, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(file.fd, encoded.buffer);
+      fs.closeSync(file);
+      this.showConfigToml = false;
+    } catch (e) {
+      // 保存失败，保持弹窗打开
+    }
+  }
+
+  @Builder
+  private configTomlDialog() {
+    if (this.showConfigToml) {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#0F172A')
+          .opacity(0.18)
+          .onClick(() => { this.showConfigToml = false; })
+
+        Column() {
+          Row() {
+            Text('config.toml')
+              .copyOption(CopyOptions.None)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
+
+            Blank()
+              .layoutWeight(1)
+
+            Text('✕')
+              .copyOption(CopyOptions.None)
+              .fontSize(16)
+              .fontColor('#94A3B8')
+              .onClick(() => { this.showConfigToml = false; })
+          }
+          .width('100%')
+
+          TextArea({ text: this.configTomlContent, placeholder: '' })
+            .width('100%')
+            .height(400)
+            .margin({ top: 14 })
+            .fontSize(12)
+            .fontFamily('monospace')
+            .backgroundColor('#F8FAFC')
+            .border({ width: 1, color: '#E5E7EB' })
+            .borderRadius(8)
+            .padding(12)
+            .onChange((value: string) => { this.configTomlContent = value; })
+
+          Row() {
+            Button('保存')
+              .height(38)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#111827')
+              .borderRadius(14)
+              .onClick(() => { this.saveConfigToml(); })
+
+            Button('关闭')
+              .height(38)
+              .layoutWeight(1)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#64748B')
+              .backgroundColor('#F1F5F9')
+              .borderRadius(14)
+              .margin({ left: 10 })
+              .onClick(() => { this.showConfigToml = false; })
+          }
+          .width('100%')
+          .margin({ top: 18 })
+        }
+        .width(this.settingsDialogWidth())
+        .padding(22)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' })
+        .borderRadius(24)
+      }
+      .width('100%')
+      .height('100%')
+    }
+  }
+
   @Builder
   private sidebar() {
     Column() {
@@ -1833,6 +1958,23 @@ struct SettingsPage {
 
       Blank()
         .layoutWeight(1)
+
+      Button() {
+        Row() {
+          Text('⚙')
+            .fontSize(14)
+            .margin({ right: 6 })
+          Text('config.toml')
+            .fontSize(12)
+            .fontColor('#64748B')
+        }
+      }
+      .width('100%')
+      .height(36)
+      .backgroundColor('#F8FAFC')
+      .borderRadius(10)
+      .border({ width: 1, color: '#E5E7EB' })
+      .onClick(() => { this.openConfigToml(); })
     }
     .width(260)
     .height('100%')
@@ -3823,6 +3965,7 @@ struct SettingsPage {
       this.mcpDeleteDialog()
       this.validationResultDialog()
       this.apiSpeedResultsPanel()
+      this.configTomlDialog()
     }
     .width('100%')
     .height('100%')

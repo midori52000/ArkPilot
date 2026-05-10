@@ -34,6 +34,7 @@ struct AddProviderPage {
   @State private defaultModel: string = '';
   @State private advancedExpanded: boolean = false;
   @State private editId: string = '';
+  @State private contextWindowStr: string = '';
 
   aboutToAppear(): void {
     const rawParams: Object = router.getParams();
@@ -66,6 +67,7 @@ struct AddProviderPage {
     this.baseUrl = provider.baseUrl;
     this.wireApi = provider.wireApi;
     this.defaultModel = provider.model;
+    this.contextWindowStr = provider.contextWindow > 0 ? String(provider.contextWindow) : '';
     this.selectedPresetId = 'custom';
     this.triggerFeedback('已加载 Provider 数据。', 'success');
   }
@@ -265,6 +267,9 @@ struct AddProviderPage {
       const providerId: string = this.editId.length > 0
         ? this.editId
         : `provider-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const contextWindow: number = this.contextWindowStr.trim().length > 0
+        ? parseInt(this.contextWindowStr.trim()) || 0
+        : 0;
       const provider = new ProviderRecord(
         providerId,
         this.providerName,
@@ -289,7 +294,8 @@ struct AddProviderPage {
         0,
         0,
         null,
-        Date.now()
+        Date.now(),
+        contextWindow
       );
       const result = configManagerFacade.saveProvider(provider);
       if (!result.ok || result.data === null) {
@@ -681,6 +687,13 @@ struct AddProviderPage {
         .width('100%')
         .margin({ top: 10 })
       }
+
+      this.formLabel('上下文窗口大小（可选）')
+      TextInput({ text: $$this.contextWindowStr, placeholder: '例如：1000000（留空使用模型默认值）' })
+        .width('100%').height(42).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+        .padding({ left: 14, right: 14 }).margin({ top: 8 })
+        .type(InputType.Number)
 
       Row() {
         Text('请求地址')

@@ -15,6 +15,10 @@ Status: <in_progress | blocked | nearly_done>
 - <path>: <what changed and why>
 - ...
 
+## Critical Preservation
+- <exact error messages, stack traces, or diagnostic output>
+- ...
+
 ## Active Constraints
 - <constraint or preference>
 - ...
@@ -32,8 +36,11 @@ Status: <in_progress | blocked | nearly_done>
 - ...
 
 Rules:
-- Be concise. Each bullet should be one sentence.
+- Be thorough. Each bullet should capture the essential detail, not just a one-line abstraction.
+- Include all relevant context that a model would need to continue the work.
+- Preserve exact file paths, function names, variable names, and error messages verbatim.
+- When text contains Chinese/CJK characters, preserve the original text exactly — do not translate or summarize CJK content.
+- Error messages and stack traces must be copied verbatim, never paraphrased.
+- For file changes, include the specific functions or methods modified, not just the file path.
+- If a previous context checkpoint is provided, build upon it — preserve its key information while adding new context.
 - Omit empty sections entirely.
-- If no decisions were made, omit "Decisions Made".
-- Focus on information the next model needs to continue work, not narrative.
-- Preserve exact file paths, function names, and error messages.

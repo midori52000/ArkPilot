@@ -19,6 +19,7 @@ import {
   WorkspaceAccessStatus,
   checkWorkspaceAccess,
   getEmbeddedCodexHostStatus,
+  getEmbeddedCodexHostStatusAsync,
   getEmbeddedCodexProviderCatalog,
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
@@ -678,8 +679,8 @@ struct Index {
     return `${hours}:${minutes}`;
   }
 
-  private applyEmbeddedHostStatus(): void {
-    const hostStatus = getEmbeddedCodexHostStatus();
+  private async applyEmbeddedHostStatus(): Promise<void> {
+    const hostStatus = await getEmbeddedCodexHostStatusAsync();
     if (hostStatus.serverUrl.trim().length > 0) {
       this.serverUrl = hostStatus.serverUrl;
     }
@@ -1852,7 +1853,7 @@ struct Index {
     }
     const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
     const threadKey: string = workspace.workspaceId.trim().length > 0 ? workspace.workspaceId : this.activeWorkspaceBindingId;
-    this.applyEmbeddedHostStatus();
+    await this.applyEmbeddedHostStatus();
     try {
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(

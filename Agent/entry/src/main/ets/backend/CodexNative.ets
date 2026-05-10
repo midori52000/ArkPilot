@@ -906,3 +906,82 @@ export async function turnPollAsyncNative(threadId: string, turnId: string): Pro
     return '{}';
   }
 }
+
+@Concurrent
+function threadStartTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{}';
+  }
+  try {
+    return mod.threadStart(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export async function threadStartAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(threadStartTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+@Concurrent
+function threadResumeTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{}';
+  }
+  try {
+    return mod.threadResume(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export async function threadResumeAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(threadResumeTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+@Concurrent
+function getStatusTask(): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{"code":1,"running":false,"serverUrl":"","message":"libentry.so failed to load."}';
+  }
+  try {
+    const raw = mod.getStatus();
+    return JSON.stringify({
+      code: raw.code ?? 0,
+      running: raw.running === true,
+      serverUrl: raw.serverUrl ?? '',
+      message: raw.message ?? ''
+    });
+  } catch (_err) {
+    return '{"code":1,"running":false,"serverUrl":"","message":"getStatus failed"}';
+  }
+}
+
+export async function getEmbeddedCodexHostStatusAsync(): Promise<CodexHostStatus> {
+  try {
+    const task = new taskpool.Task(getStatusTask);
+    const jsonStr: string = await taskpool.execute(task) as string;
+    const parsed: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    return new CodexHostStatus(
+      typeof parsed['code'] === 'number' ? (parsed['code'] as number) : 1,
+      parsed['running'] === true,
+      typeof parsed['serverUrl'] === 'string' ? (parsed['serverUrl'] as string) : '',
+      typeof parsed['message'] === 'string' ? (parsed['message'] as string) : ''
+    );
+  } catch (_err) {
+    return new CodexHostStatus(1, false, '', 'getStatus async failed');
+  }
+}

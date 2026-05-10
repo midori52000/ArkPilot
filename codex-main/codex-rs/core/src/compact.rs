@@ -32,7 +32,7 @@ use tracing::error;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
-const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
+const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = usize::MAX;
 const COMPACT_TOOL_OUTPUT_MAX_TOKENS: usize = 500;
 
 /// Controls whether compaction replacement history must include initial context.
@@ -258,13 +258,7 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
     items
         .iter()
         .filter_map(|item| match crate::event_mapping::parse_turn_item(item) {
-            Some(TurnItem::UserMessage(user)) => {
-                if is_summary_message(&user.message()) {
-                    None
-                } else {
-                    Some(user.message())
-                }
-            }
+            Some(TurnItem::UserMessage(user)) => Some(user.message()),
             _ => None,
         })
         .collect()
