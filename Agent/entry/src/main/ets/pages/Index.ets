@@ -354,7 +354,6 @@ struct Index {
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
   @State private expandedIntermediateMessageIds: string[] = [];
-  @State private expandedFileChangeIds: string[] = [];
   @State private expandedCompactionIds: string[] = [];
   @State private rawMarkdownMessageIds: string[] = [];
   @State private rawMermaidBlockIds: string[] = [];
@@ -367,6 +366,7 @@ struct Index {
   @State private thinkingNormalPhrase: string = '';
   @State private thinkingFunPhrase: string = '';
   @State private pendingUserPrompt: string = '';
+  private thinkingMessageBoundary: number = -1;
   private thinkingNormalPhraseBucket: number = -1;
   private thinkingFunPhraseBucket: number = -1;
   @State private messageAutoFollowToBottom: boolean = true;
@@ -842,7 +842,6 @@ struct Index {
     this.changedFiles = '尚未产生文件改动';
     this.diffStat = '+0 -0';
     this.currentTurnId = '';
-    this.expandedFileChangeIds = [];
     this.expandedCompactionIds = [];
     this.resumeMessageAutoFollow();
     this.scheduleMessageScrollToBottom(true);
@@ -1573,44 +1572,24 @@ struct Index {
       content.toLowerCase().indexOf('context has been compacted') >= 0;
   }
 
-  private activeThinkingPlaceholders(): ChatMessage[] {
-    if (!this.shouldAppendThinkingPlaceholder()) {
-      return [];
-    }
-    return [this.thinkingPlaceholderMessage()];
-  }
-
-  private shouldAppendThinkingPlaceholder(): boolean {
+  private shouldShowTurnActivityLine(): boolean {
     if (!this.isRunning) {
       return false;
     }
-    if (this.pendingApproval !== null || this.pendingRequestUserInput !== null) {
-      return false;
-    }
-    return !this.currentTurnHasAssistantOutput();
+    return this.pendingApproval === null && this.pendingRequestUserInput === null;
   }
 
   private currentTurnHasAssistantOutput(): boolean {
     if (this.pendingUserPrompt.trim().length > 0) {
       return false;
     }
-    const lastUserIndex: number = this.latestUserMessageIndex();
-    const startIndex: number = lastUserIndex >= 0 ? lastUserIndex + 1 : 0;
+    const startIndex: number = this.thinkingMessageBoundary >= 0 ? this.thinkingMessageBoundary : this.messages.length;
     for (let index: number = startIndex; index < this.messages.length; index += 1) {
       if (this.isAssistantOutputMessage(this.messages[index])) {
         return true;
       }
     }
     return false;
-  }
-
-  private latestUserMessageIndex(): number {
-    for (let index: number = this.messages.length - 1; index >= 0; index -= 1) {
-      if (this.messages[index].role === 'user') {
-        return index;
-      }
-    }
-    return -1;
   }
 
   private isAssistantOutputMessage(item: ChatMessage): boolean {
@@ -1636,16 +1615,18 @@ struct Index {
       type === 'review';
   }
 
-  private thinkingPlaceholderMessage(): ChatMessage {
-    return new ChatMessage(
-      `turn-thinking-placeholder:${this.thinkingSessionId}`,
-      'ArkPilot',
-      'reasoning',
-      '',
-      '刚刚',
-      'reasoning',
-      'inProgress'
-    );
+  private currentTurnMessageStartIndex(): number {
+    return this.thinkingMessageBoundary >= 0 ? this.thinkingMessageBoundary : this.messages.length;
+  }
+
+  private thinkingStatusPhraseText(): string {
+    const isLongThinking: boolean = this.thinkingPulseIndex >= this.longThinkingPulseThreshold;
+    if (isLongThinking) {
+      const phrase: string = this.thinkingFunPhrase.length > 0 ? this.thinkingFunPhrase : '思考中';
+      return `${phrase}${this.thinkingDots()}`;
+    }
+    const phrase: string = this.thinkingNormalPhrase.length > 0 ? this.thinkingNormalPhrase : this.thinkingStatusPhrases[0];
+    return `${phrase}${this.thinkingDots()}`;
   }
 
   private pendingUserMessage(): ChatMessage {
@@ -1685,13 +1666,7 @@ struct Index {
   }
 
   private thinkingStatusText(): string {
-    const isLongThinking: boolean = this.thinkingPulseIndex >= this.longThinkingPulseThreshold;
-    if (isLongThinking) {
-      const phrase: string = this.thinkingFunPhrase.length > 0 ? this.thinkingFunPhrase : '思考中';
-      return `${this.thinkingLogoText()} ${phrase}${this.thinkingDots()}`;
-    }
-    const phrase: string = this.thinkingNormalPhrase.length > 0 ? this.thinkingNormalPhrase : this.thinkingStatusPhrases[0];
-    return `${this.thinkingLogoText()} ${phrase}${this.thinkingDots()}`;
+    return `${this.thinkingLogoText()} ${this.thinkingStatusPhraseText()}`;
   }
 
   private refreshThinkingNormalPhrase(): void {
@@ -1827,6 +1802,7 @@ struct Index {
     this.isRunning = true;
     this.currentTurnStatus = 'inProgress';
     this.pendingUserPrompt = prompt;
+    this.thinkingMessageBoundary = this.messages.length;
     this.thinkingPulseIndex = 0;
     this.thinkingNormalPhrase = '';
     this.thinkingNormalPhraseBucket = -1;
@@ -1847,6 +1823,7 @@ struct Index {
       this.isRunning = false;
       this.currentTurnStatus = '';
       this.pendingUserPrompt = '';
+      this.thinkingMessageBoundary = -1;
       this.syncThinkingAnimation();
       return;
     }
@@ -1886,6 +1863,7 @@ struct Index {
     } finally {
       this.isRunning = false;
       this.pendingUserPrompt = '';
+      this.thinkingMessageBoundary = -1;
       this.syncThinkingAnimation();
     }
   }
@@ -2068,7 +2046,10 @@ struct Index {
   }
 
   private messageRenderKey(item: ChatMessage): string {
-    return `${item.id}:${item.content.length}:${item.timestamp}`;
+    const type: string = item.itemType ?? item.role;
+    const status: string = item.status ?? '';
+    const metadataText: string = item.metadata !== undefined ? JSON.stringify(item.metadata) : '';
+    return `${item.id}:${type}:${status}:${item.content.length}:${metadataText.length}:${item.timestamp}`;
   }
 
   private async connectOrDisconnect(): Promise<void> {
@@ -2319,24 +2300,6 @@ struct Index {
     return this.diffFiles.length > 0 ||
       (this.changedFiles.trim().length > 0 && this.changedFiles !== NO_FILE_CHANGES_TEXT) ||
       this.diffStat.trim() !== '+0 -0';
-  }
-
-  private currentFileChangeEventId(): string {
-    const threadId: string = this.activeWorkspaceBindingId.trim().length > 0 ? this.activeWorkspaceBindingId.trim() : 'local';
-    const turnId: string = this.currentTurnId.trim().length > 0 ? this.currentTurnId.trim() : `${this.diffStat}:${this.changedFiles.length.toString()}`;
-    return `file-change:${threadId}:${turnId}`;
-  }
-
-  private isFileChangeExpanded(eventId: string): boolean {
-    return this.expandedFileChangeIds.indexOf(eventId) >= 0;
-  }
-
-  private toggleFileChangeExpanded(eventId: string): void {
-    if (this.isFileChangeExpanded(eventId)) {
-      this.expandedFileChangeIds = this.expandedFileChangeIds.filter((id: string) => id !== eventId);
-      return;
-    }
-    this.expandedFileChangeIds = [...this.expandedFileChangeIds, eventId];
   }
 
   private activeCompactionNotices(): CompactionNotice[] {
@@ -3912,9 +3875,9 @@ struct Index {
   }
 
   @Builder
-  private fileChangesLine() {
+  private turnActivityLine() {
     Row() {
-      this.fileChangesBlock(this.currentFileChangeEventId())
+      this.turnActivityBlock()
       Blank()
         .layoutWeight(1)
     }
@@ -3924,108 +3887,59 @@ struct Index {
   }
 
   @Builder
-  private fileChangesBlock(eventId: string) {
+  private turnActivityBlock() {
     Column() {
       Row() {
         Row() {
-          Text(this.isFileChangeExpanded(eventId) ? '\u2304' : '\u203A')
+          Text(this.messageIcon('reasoning'))
             .copyOption(CopyOptions.None)
-            .fontSize(16)
-            .fontColor(this.accentBorderColor('file'))
+            .fontSize(12)
+            .fontColor(this.accentBorderColor('reasoning'))
+            .fontWeight(FontWeight.Medium)
         }
         .width(20)
         .height(20)
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.eventSoftBackground('file'))
-        .border({ width: 0.5, color: this.eventBorderColor('file') })
+        .backgroundColor(this.eventSoftBackground('reasoning'))
+        .border({ width: 0.5, color: this.eventBorderColor('reasoning') })
         .borderRadius(6)
         .margin({ right: 8 })
 
-        Text('文件变更')
+        Text(this.thinkingLogoText())
           .copyOption(CopyOptions.None)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.accentBorderColor('file'))
+          .fontColor(this.accentBorderColor('reasoning'))
 
-        Text(this.diffFiles.length > 0 ? `${this.diffFiles.length} 个文件` : '已检测到变更')
+        Text('进行中')
           .copyOption(CopyOptions.None)
           .fontSize(10)
-          .fontColor(this.accentBorderColor('file'))
+          .fontColor(this.statusColor('inProgress'))
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .backgroundColor(this.statusBgColor('inProgress'))
+          .borderRadius(6)
           .margin({ left: 8 })
 
         Blank()
 
-        Text(this.diffStat)
-          .copyOption(CopyOptions.LocalDevice)
+        Text('刚刚')
+          .copyOption(CopyOptions.None)
           .fontSize(10)
-          .fontColor(this.accentBorderColor('file'))
-          .fontFamily('monospace')
-          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-          .backgroundColor(this.eventSoftBackground('file'))
-          .borderRadius(6)
+          .fontColor('#94A3B8')
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-      .hitTestBehavior(HitTestMode.Block)
-      .onClick(() => {
-        this.toggleFileChangeExpanded(eventId);
-      })
 
-      Text(this.changedFiles)
-        .copyOption(CopyOptions.LocalDevice)
+      Text(this.thinkingStatusPhraseText())
+        .copyOption(CopyOptions.None)
         .fontSize(11)
-        .fontColor(this.accentBorderColor('file'))
+        .fontColor(this.accentBorderColor('reasoning'))
         .lineHeight(17)
         .width('100%')
         .margin({ top: 6, left: 28 })
-        .maxLines(this.isFileChangeExpanded(eventId) ? 4 : 1)
+        .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      if (this.diffFiles.length > 0 && this.isFileChangeExpanded(eventId)) {
-        Column() {
-          ForEach(this.diffFiles, (file: CodeDiffFile) => {
-            Row() {
-              Column() {
-                Text(file.label)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(10)
-                  .fontColor('#0F172A')
-                  .fontWeight(FontWeight.Medium)
-                  .fontFamily('monospace')
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                Text(file.path)
-                  .copyOption(CopyOptions.LocalDevice)
-                  .fontSize(9)
-                  .fontColor(this.accentBorderColor('file'))
-                  .fontFamily('monospace')
-                  .margin({ top: 2 })
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-              }
-              .layoutWeight(1)
-              .alignItems(HorizontalAlign.Start)
-
-              Text(file.diffStat)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(9)
-                .fontColor(this.accentBorderColor('file'))
-                .fontFamily('monospace')
-            }
-            .width('100%')
-            .padding({ left: 8, right: 8, top: 7, bottom: 7 })
-            .backgroundColor(this.isDiffFileSelected(file) ? this.eventSoftBackground('file') : '#FFFFFF')
-            .borderRadius(7)
-            .onClick(() => {
-              this.selectDiffFile(file.path);
-            })
-          }, (file: CodeDiffFile) => file.path)
-        }
-        .width('100%')
-        .margin({ top: 8, left: 28 })
-      }
     }
     .width('92%')
     .constraintSize({ maxWidth: '92%' })
@@ -7086,15 +7000,12 @@ struct Index {
           ForEach(this.visibleMessages(), (item: ChatMessage) => {
             this.messageLine(item)
           }, (item: ChatMessage) => this.messageRenderKey(item))
-          if (this.hasDiffSignal()) {
-            this.fileChangesLine()
-          }
           ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
             this.compactionNoticeLine(notice)
           }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
-          ForEach(this.activeThinkingPlaceholders(), (item: ChatMessage) => {
-            this.messageLine(item)
-          }, (item: ChatMessage) => this.messageRenderKey(item))
+          if (this.shouldShowTurnActivityLine()) {
+            this.turnActivityLine()
+          }
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
