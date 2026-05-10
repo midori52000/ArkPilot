@@ -84,7 +84,8 @@ type BackendListener = (snapshot: CodexBackendSnapshot) => void;
 const DEFAULT_SERVER_URL: string = 'native://entry';
 const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
-const TURN_POLL_INTERVAL_MS: number = 800;
+const TURN_POLL_INTERVAL_MS: number = 200; // 减少轮询间隔以提高响应速度
+const TURN_POLL_TIMEOUT_MS: number = 300000; // 5 分钟轮询超时
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
@@ -2585,6 +2586,7 @@ export class CodexBackend {
   }
 
   private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
+    const deadline: number = Date.now() + TURN_POLL_TIMEOUT_MS;
     while (true) {
       if (pendingTurn.cancelled) {
         thread.lastTurnStatus = 'interrupted';
@@ -2593,6 +2595,18 @@ export class CodexBackend {
         thread.activeTurn = null;
         pendingTurn.resolveCompletion(interruptedSnapshot);
         return interruptedSnapshot;
+      }
+      if (Date.now() > deadline) {
+        this.logInfo(`turnPoll timeout thread=${thread.remoteThreadId} turn=${pendingTurn.turnId}`);
+        turnInterruptNative(thread.remoteThreadId, pendingTurn.turnId);
+        thread.lastTurnStatus = 'failed';
+        const timeoutSnapshot: CodexTurnResult = this.snapshotForThread(thread, 'failed', pendingTurn.turnId);
+        timeoutSnapshot.summaryTitle = '轮询超时';
+        timeoutSnapshot.summaryPoints = ['API 响应时间过长，已自动中断。请稍后重试或检查网络连接。'];
+        this.emitTurnUpdate(thread, pendingTurn, timeoutSnapshot);
+        thread.activeTurn = null;
+        pendingTurn.resolveCompletion(timeoutSnapshot);
+        return timeoutSnapshot;
       }
       const pollObject: Record<string, Object> = parseJsonText(await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
       this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
@@ -2683,7 +2697,11 @@ export class CodexBackend {
   }
 
   private applyTurnPollResult(thread: CodexThreadRecord, turnId: string, payload: Record<string, Object>): CodexTurnResult {
-    const statusRaw: string = typeof payload['status'] === 'string' ? (payload['status'] as string) : 'completed';
+    const hasStatus: boolean = typeof payload['status'] === 'string' && (payload['status'] as string).length > 0;
+    if (!hasStatus) {
+      this.logInfo(`turnPoll empty status payload thread=${thread.remoteThreadId} turn=${turnId} payload=${JSON.stringify(payload)}`);
+    }
+    const statusRaw: string = hasStatus ? (payload['status'] as string) : 'inProgress';
     const status: CodexTurnStatus = this.mapTurnStatus(statusRaw);
     const previousDiffStat: string = thread.diffStat;
     const previousChangedFiles: string = thread.changedFiles;

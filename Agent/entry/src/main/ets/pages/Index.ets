@@ -1851,7 +1851,7 @@ struct Index {
         }
       );
       this.applyBackendResult(result);
-      if (result.status === 'interrupted') {
+      if (result.status === 'interrupted' || result.status === 'failed') {
         this.draft = this.savedDraft;
       }
       this.savedDraft = '';
