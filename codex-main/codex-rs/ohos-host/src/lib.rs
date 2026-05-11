@@ -1286,7 +1286,91 @@ fn load_provider_settings(codex_home: &Path) -> Result<ProviderSettings> {
     Ok(settings)
 }
 
+/// 从 config.toml 读取 provider 相关字段，同步到 harmony-provider.json 和
+/// harmony-provider-catalog.json。确保用户手动编辑 config.toml 后重启不会被旧值覆写。
+fn sync_config_toml_to_provider_settings(codex_home: &Path) {
+    let config_path = codex_config_path(codex_home);
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let doc: toml_edit::DocumentMut = match content.parse() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    let mp = CUSTOM_PROVIDER_ID;
+    let model = doc.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    let base_url = doc
+        .get("model_providers")
+        .and_then(|t| t.get(mp))
+        .and_then(|t| t.get("base_url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let api_key = doc
+        .get("model_providers")
+        .and_then(|t| t.get(mp))
+        .and_then(|t| t.get("experimental_bearer_token"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let context_window = doc
+        .get("model_context_window")
+        .and_then(|v| v.as_integer());
+
+    // 同步到 harmony-provider.json
+    let current = load_provider_settings(codex_home).unwrap_or_default();
+    let mut updated = current.clone();
+    if !model.is_empty() {
+        updated.model = model.to_string();
+    }
+    if !base_url.is_empty() {
+        updated.base_url = base_url.to_string();
+    }
+    if !api_key.is_empty() {
+        updated.api_key = api_key.to_string();
+    }
+    if let Some(cw) = context_window {
+        if cw > 0 {
+            updated.context_window = Some(cw);
+        }
+    }
+
+    let changed = updated.model != current.model
+        || updated.base_url != current.base_url
+        || updated.api_key != current.api_key
+        || updated.context_window != current.context_window;
+
+    if changed {
+        let path = provider_settings_path(codex_home);
+        if let Ok(json) = serde_json::to_string_pretty(&updated) {
+            let _ = std::fs::write(&path, json);
+        }
+
+        // 同步到 harmony-provider-catalog.json 中的 active provider
+        let catalog_path = provider_catalog_path(codex_home);
+        if let Ok(catalog_content) = std::fs::read_to_string(&catalog_path) {
+            if let Ok(mut catalog) = serde_json::from_str::<ProviderCatalog>(&catalog_content) {
+                let active_id = catalog.active_provider_id.clone();
+                if let Some(active) = catalog
+                    .providers
+                    .iter_mut()
+                    .find(|p| p.id == active_id || p.is_active)
+                {
+                    active.base_url = updated.base_url.clone();
+                    active.api_key = updated.api_key.clone();
+                    active.model = updated.model.clone();
+                    active.context_window = updated.context_window;
+                    if let Ok(cat_json) = serde_json::to_string_pretty(&catalog) {
+                        let _ = std::fs::write(&catalog_path, cat_json);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn ensure_provider_config(codex_home: &Path) -> Result<()> {
+    sync_config_toml_to_provider_settings(codex_home);
     let settings = load_provider_settings(codex_home).unwrap_or_default();
     persist_provider_settings(codex_home, &settings)?;
     let catalog = load_provider_catalog(codex_home).unwrap_or_else(|_| ProviderCatalog {

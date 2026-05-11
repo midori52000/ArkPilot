@@ -477,6 +477,13 @@ struct Index {
     this.syncSelectedCollaborationMode();
     this.backendActiveThreadId = snapshot.activeThreadId.trim();
     this.tokenUsage = snapshot.tokenUsage;
+    // 自动压缩兜底：当剩余上下文 < 20% 且未在压缩中时，自动触发
+    if (snapshot.tokenUsage !== null &&
+        snapshot.tokenUsage.contextRemainingPercent >= 0 &&
+        snapshot.tokenUsage.contextRemainingPercent < 20 &&
+        !this.compacting) {
+      this.retryCurrentCompaction();
+    }
     this.applyCompactionSnapshot(snapshot);
   }
 
@@ -7645,7 +7652,7 @@ struct Index {
     const rem = this.contextRemainingPct();
     let suffix: string = '';
     if (win > 0 && rem >= 0) {
-      suffix = rem <= 0 ? ' (已溢出)' : ' (' + rem.toString() + '% 剩余)';
+      suffix = rem <= 0 ? ' (压缩中...)' : ' (' + rem.toString() + '% 剩余)';
     }
     if (win <= 0) return this.formatTokenCount(used) + suffix;
     return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win) + suffix;
@@ -7664,7 +7671,7 @@ struct Index {
     const pct = this.contextRemainingPct();
     let suffix: string = '';
     if (win > 0 && pct >= 0) {
-      suffix = pct <= 0 ? ' · 已溢出' : ' · 剩余 ' + pct.toString() + '%';
+      suffix = pct <= 0 ? ' · 压缩中...' : ' · 剩余 ' + pct.toString() + '%';
     }
     return '总 ' + this.formatTokenCount(total) + suffix;
   }

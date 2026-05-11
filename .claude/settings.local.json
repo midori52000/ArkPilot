@@ -41,7 +41,10 @@
       "Bash(curl -sL \"https://api.github.com/repos/openai/codex/git/trees/main?recursive=1\" -H \"Accept: application/vnd.github.v3+json\")",
       "Bash(curl *)",
       "WebFetch(domain:aider.chat)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:docs.openharmony.cn)",
+      "WebFetch(domain:gitee.com)",
+      "Bash(cargo check *)"
     ]
   }
 }

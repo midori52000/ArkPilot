@@ -545,22 +545,11 @@ struct AddProviderPage {
 
   @Builder
   private requestHint() {
-    Row() {
-      Text('💡')
-        .fontSize(11)
-      Text('填写兼容 Claude API 的服务端点地址，不要以斜杠结尾')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
-        .fontColor('#D97706')
-        .margin({ left: 6 })
-        .layoutWeight(1)
-    }
-    .width('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-    .backgroundColor('#FFF9E9')
-    .border({ width: 1, color: '#FACC15' })
-    .borderRadius(14)
-    .margin({ top: 10 })
+    Text('请填写兼容openai api格式的服务端点地址，末尾加/v1')
+      .copyOption(CopyOptions.LocalDevice)
+      .fontSize(10)
+      .fontColor('#94A3B8')
+      .margin({ top: 8 })
   }
 
   @Builder
