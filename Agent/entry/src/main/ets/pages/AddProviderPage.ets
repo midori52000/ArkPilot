@@ -1,7 +1,10 @@
 import router from '@ohos.router';
+import mediaQuery from '@ohos.mediaquery';
 import { ProviderPreset, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
 import { ApiWireFormat, CustomHeadersEntry, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
 import { configManagerFacade } from '../backend/CodexBackend';
+import { ArkPilotBreakpoint } from '../adaptive/BreakpointTypes';
+import { breakpointManager } from '../adaptive/BreakpointManager';
 
 type ToastTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -20,6 +23,7 @@ class UiToastItem {
 @Entry
 @Component
 struct AddProviderPage {
+  @StorageProp('arkPilotBreakpoint') currentBreakpoint: ArkPilotBreakpoint = 'sm';
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
@@ -36,7 +40,20 @@ struct AddProviderPage {
   @State private editId: string = '';
   @State private contextWindowStr: string = '';
 
+  private get isPhone(): boolean {
+    return this.currentBreakpoint === 'xs' || this.currentBreakpoint === 'sm';
+  }
+
+  private get pagePadding(): number {
+    return this.isPhone ? 12 : 24;
+  }
+
+  private get pageMargin(): number {
+    return this.isPhone ? 8 : 24;
+  }
+
   aboutToAppear(): void {
+    breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
     const rawParams: Object = router.getParams();
     if (rawParams !== undefined && rawParams !== null) {
       const params = rawParams as Record<string, string>;
@@ -315,25 +332,27 @@ struct AddProviderPage {
 
   @Builder
   private backdropLayer() {
-    Stack() {
-      Column()
-        .width(320)
-        .height(320)
-        .backgroundColor('#D7E8FF')
-        .opacity(0.34)
-        .borderRadius(180)
-        .position({ x: -72, y: -36 })
+    if (!this.isPhone) {
+      Stack() {
+        Column()
+          .width(320)
+          .height(320)
+          .backgroundColor('#D7E8FF')
+          .opacity(0.34)
+          .borderRadius(180)
+          .position({ x: -72, y: -36 })
 
-      Column()
-        .width(240)
-        .height(240)
-        .backgroundColor('#FFF3D6')
-        .opacity(0.28)
-        .borderRadius(160)
-        .position({ x: 760, y: 116 })
+        Column()
+          .width(240)
+          .height(240)
+          .backgroundColor('#FFF3D6')
+          .opacity(0.28)
+          .borderRadius(160)
+          .position({ x: 760, y: 116 })
+      }
+      .width('100%')
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
   }
 
   @Builder
@@ -378,14 +397,16 @@ struct AddProviderPage {
       Column() {
         Text(this.editId.length > 0 ? '编辑供应商' : '添加新供应商')
           .copyOption(CopyOptions.LocalDevice)
-          .fontSize(24)
+          .fontSize(this.isPhone ? 18 : 24)
           .fontWeight(FontWeight.Bold)
           .fontColor('#0F172A')
-        Text(this.editId.length > 0 ? '修改供应商配置后点击保存' : '独立添加页 · 预设先选 · 前端模拟提交')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .fontColor('#64748B')
-          .margin({ top: 4 })
+        if (!this.isPhone) {
+          Text(this.editId.length > 0 ? '修改供应商配置后点击保存' : '独立添加页 · 预设先选 · 前端模拟提交')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(11)
+            .fontColor('#64748B')
+            .margin({ top: 4 })
+        }
       }
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 18 })
@@ -393,10 +414,12 @@ struct AddProviderPage {
       Blank()
         .layoutWeight(1)
 
-      this.particleCluster()
+      if (!this.isPhone) {
+        this.particleCluster()
+      }
     }
     .width('100%')
-    .padding({ left: 28, right: 28, top: 24, bottom: 16 })
+    .padding({ left: this.pagePadding, right: this.pagePadding, top: this.isPhone ? 16 : 24, bottom: 16 })
   }
 
   @Builder
@@ -613,28 +636,45 @@ struct AddProviderPage {
 
       this.previewBadge()
 
-      Row() {
+      if (this.isPhone) {
         Column() {
           this.formLabel('供应商名称')
           TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
             .width('100%').height(42).backgroundColor('#FFFFFF')
             .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
             .padding({ left: 14, right: 14 }).margin({ top: 8 })
-        }
-        .layoutWeight(1)
 
-        Column() {
           this.formLabel('备注')
           TextInput({ text: $$this.providerNote, placeholder: '例如：公司专用账号' })
             .width('100%').height(42).backgroundColor('#FFFFFF')
             .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
             .padding({ left: 14, right: 14 }).margin({ top: 8 })
         }
-        .layoutWeight(1)
-        .margin({ left: 14 })
+        .width('100%')
+      } else {
+        Row() {
+          Column() {
+            this.formLabel('供应商名称')
+            TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
+              .width('100%').height(42).backgroundColor('#FFFFFF')
+              .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+              .padding({ left: 14, right: 14 }).margin({ top: 8 })
+          }
+          .layoutWeight(1)
+
+          Column() {
+            this.formLabel('备注')
+            TextInput({ text: $$this.providerNote, placeholder: '例如：公司专用账号' })
+              .width('100%').height(42).backgroundColor('#FFFFFF')
+              .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
+              .padding({ left: 14, right: 14 }).margin({ top: 8 })
+          }
+          .layoutWeight(1)
+          .margin({ left: 14 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
 
       this.formLabel('官网链接')
       TextInput({ text: $$this.websiteUrl, placeholder: 'https://example.com（可选）' })
@@ -730,7 +770,6 @@ struct AddProviderPage {
       this.requestHint()
       this.advancedSection()
     }
-    .width('100%')
     .padding(18)
     .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#E2EAF3' })
@@ -765,8 +804,7 @@ struct AddProviderPage {
         .margin({ left: 12 })
         .onClick(() => { this.submitAddProvider(); })
     }
-    .width('100%')
-    .padding({ left: 24, right: 24, top: 14, bottom: 18 })
+    .padding({ left: this.isPhone ? 12 : 24, right: this.isPhone ? 12 : 24, top: 14, bottom: 18 })
     .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#E3EAF4' })
     .borderRadius(22)
@@ -821,7 +859,7 @@ struct AddProviderPage {
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
-          .padding({ left: 28, right: 28, bottom: 24 })
+          .padding({ left: this.pagePadding, right: this.pagePadding, bottom: 24 })
         }
         .layoutWeight(1)
         .width('100%')

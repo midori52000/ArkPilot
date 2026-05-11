@@ -2702,6 +2702,30 @@ struct SettingsPage {
 
   @Builder
   private skillsPanel() {
+    if (this.isPhoneBreakpoint() && this.selectedSkillId.length > 0) {
+      this.phoneSkillPreviewView()
+    } else {
+      this.skillsListPreviewLayout()
+    }
+  }
+
+  @Builder
+  private phoneSkillPreviewView() {
+    Column() {
+      Row() {
+        Button('← 返回列表')
+          .fontSize(12).height(28).backgroundColor('#FFFFFF').fontColor('#334155')
+          .borderRadius(14).border({ width: 1, color: '#CBD5E1' })
+          .onClick(() => { this.selectedSkillId = ''; this.selectedSkillDetail = null; })
+      }
+      .width('100%').margin({ bottom: 12 })
+      this.skillPreview()
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private skillsListPreviewLayout() {
     Column() {
       Row() {
         Column() {
@@ -2733,9 +2757,12 @@ struct SettingsPage {
           .onChange((index: number) => { this.switchSkillsSubTab(this.skillsSubTabByIndex(index)); })
           .width('100%')
         }
-        .width('38%')
-        Column() { this.skillPreview() }
-          .layoutWeight(1).margin({ left: 16 })
+        .width(this.isPhoneBreakpoint() ? '100%' : '38%')
+
+        if (!this.isPhoneBreakpoint()) {
+          Column() { this.skillPreview() }
+            .layoutWeight(1).margin({ left: 16 })
+        }
       }
       .width('100%').alignItems(VerticalAlign.Top).margin({ top: 18 })
     }
@@ -2996,6 +3023,37 @@ struct SettingsPage {
 
   @Builder
   private mcpPanel() {
+    if (this.isPhoneBreakpoint() && this.selectedMcpServerId.length > 0) {
+      this.phoneMcpEditorView()
+    } else {
+      this.mcpListEditorLayout()
+    }
+  }
+
+  @Builder
+  private phoneMcpEditorView() {
+    Column() {
+      Row() {
+        Button('← 返回列表')
+          .fontSize(12).height(28).backgroundColor('#FFFFFF').fontColor('#334155')
+          .borderRadius(14).border({ width: 1, color: '#CBD5E1' })
+          .onClick(() => { this.selectedMcpServerId = ''; })
+        Blank().layoutWeight(1)
+        Button('重载 MCP')
+          .height(28).fontSize(11).fontWeight(FontWeight.Medium)
+          .fontColor('#475569').backgroundColor('#F8FAFC')
+          .borderRadius(12).border({ width: 1, color: '#DCE5EF' })
+          .padding({ left: 12, right: 12 })
+          .onClick(() => { this.reloadMcpDraft(); })
+      }
+      .width('100%').margin({ bottom: 12 })
+      this.mcpEditorCard()
+    }
+    .width('100%').margin({ top: 18 })
+  }
+
+  @Builder
+  private mcpListEditorLayout() {
     Column() {
       if (this.mcpLoading) {
         Column() {
@@ -3039,21 +3097,24 @@ struct SettingsPage {
             .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
             .onClick(() => { this.openMcpAddDialog(); })
         }
-        .width('34%')
-        Column() {
-          Row() {
-            Blank()
-            Button('重载 MCP')
-              .height(32).fontSize(12).fontWeight(FontWeight.Medium)
-              .fontColor('#475569').backgroundColor('#F8FAFC')
-              .borderRadius(12).border({ width: 1, color: '#DCE5EF' })
-              .padding({ left: 12, right: 12 })
-              .onClick(() => { this.reloadMcpDraft(); })
+        .width(this.isPhoneBreakpoint() ? '100%' : '34%')
+
+        if (!this.isPhoneBreakpoint()) {
+          Column() {
+            Row() {
+              Blank()
+              Button('重载 MCP')
+                .height(32).fontSize(12).fontWeight(FontWeight.Medium)
+                .fontColor('#475569').backgroundColor('#F8FAFC')
+                .borderRadius(12).border({ width: 1, color: '#DCE5EF' })
+                .padding({ left: 12, right: 12 })
+                .onClick(() => { this.reloadMcpDraft(); })
+            }
+            .width('100%').margin({ bottom: 10 })
+            this.mcpEditorCard()
           }
-          .width('100%').margin({ bottom: 10 })
-          this.mcpEditorCard()
+          .layoutWeight(1).margin({ left: 16 })
         }
-        .layoutWeight(1).margin({ left: 16 })
       }
       .width('100%').alignItems(VerticalAlign.Top)
       }
@@ -3153,6 +3214,38 @@ struct SettingsPage {
 
   @Builder
   private promptsPanel() {
+    if (this.isPhoneBreakpoint() && this.selectedPromptId.length > 0) {
+      this.phonePromptEditorView()
+    } else {
+      this.promptsListEditorLayout()
+    }
+  }
+
+  @Builder
+  private phonePromptEditorView() {
+    Column() {
+      Row() {
+        Button('← 返回列表')
+          .fontSize(12)
+          .height(28)
+          .backgroundColor('#FFFFFF')
+          .fontColor('#334155')
+          .borderRadius(14)
+          .border({ width: 1, color: '#CBD5E1' })
+          .onClick(() => {
+            this.selectedPromptId = '';
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      this.promptEditor()
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private promptsListEditorLayout() {
     Column() {
       Row() {
         Column() {
@@ -3199,13 +3292,15 @@ struct SettingsPage {
           .width('100%')
           .margin({ top: 12 })
         }
-        .width('38%')
+        .width(this.isPhoneBreakpoint() ? '100%' : '38%')
 
-        Column() {
-          this.promptEditor()
+        if (!this.isPhoneBreakpoint()) {
+          Column() {
+            this.promptEditor()
+          }
+          .layoutWeight(1)
+          .margin({ left: 16 })
         }
-        .layoutWeight(1)
-        .margin({ left: 16 })
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
