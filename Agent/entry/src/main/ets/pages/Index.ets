@@ -3776,6 +3776,7 @@ struct Index {
         .fontSize(this.conversationFontSize(12))
         .lineHeight(this.conversationLineHeight(19))
         .fontColor(this.messageContentColor(item.itemType))
+        .wordBreak(WordBreak.BREAK_WORD)
         .margin({ top: 6 })
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3790,6 +3791,7 @@ struct Index {
         .lineHeight(this.conversationLineHeight(19))
         .fontColor(this.messageContentColor(item.itemType))
         .width('100%')
+        .wordBreak(WordBreak.BREAK_WORD)
         .padding({ left: 10, right: 10, top: 9, bottom: 9 })
         .margin({ top: 6 })
         .backgroundColor('#F8FAFC')
@@ -3801,6 +3803,7 @@ struct Index {
         .fontSize(this.conversationFontSize(12))
         .lineHeight(this.conversationLineHeight(19))
         .fontColor(this.messageContentColor(item.itemType))
+        .wordBreak(WordBreak.BREAK_WORD)
         .margin({ top: 6 })
     } else if (!this.hasRenderedOrCodeMarkdownSurface(item.content)) {
       this.plainMarkdownTextBody(item)
@@ -3826,6 +3829,7 @@ struct Index {
     .lineHeight(this.conversationLineHeight(19))
     .fontColor(this.messageContentColor(item.itemType))
     .width('100%')
+    .wordBreak(WordBreak.BREAK_WORD)
     .margin({ top: 6 })
   }
 
@@ -4097,6 +4101,7 @@ struct Index {
     .fontSize(fontSize)
     .lineHeight(lineHeight)
     .width('100%')
+    .wordBreak(WordBreak.BREAK_WORD)
     .margin({ top: topMargin })
   }
 
@@ -4417,6 +4422,12 @@ struct Index {
           .fontWeight(FontWeight.Medium)
           .fontColor(this.accentBorderColor('reasoning'))
 
+        Text('刚刚')
+          .copyOption(CopyOptions.None)
+          .fontSize(10)
+          .fontColor('#94A3B8')
+          .margin({ left: 8 })
+
         Text('进行中')
           .copyOption(CopyOptions.None)
           .fontSize(10)
@@ -4425,13 +4436,6 @@ struct Index {
           .backgroundColor(this.statusBgColor('inProgress'))
           .borderRadius(6)
           .margin({ left: 8 })
-
-        Blank()
-
-        Text('刚刚')
-          .copyOption(CopyOptions.None)
-          .fontSize(10)
-          .fontColor('#94A3B8')
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -4675,25 +4679,41 @@ struct Index {
   }
 
   @Builder
-  private messageCard(item: ChatMessage) {
-    Column() {
-      Row() {
-        Text(item.author)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(this.conversationFontSize(12))
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.authorColor(item.itemType ?? item.role))
+  private messageHeader(item: ChatMessage) {
+    Row() {
+      Text(item.author)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(this.conversationFontSize(12))
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.authorColor(item.itemType ?? item.role))
 
-        Text(item.timestamp)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
-          .fontColor('#A1A1AA')
-          .margin({ left: 8 })
+      Text(item.timestamp)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(10)
+        .fontColor('#A1A1AA')
+        .margin({ left: 8 })
+    }
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private messageHeaderRow(item: ChatMessage) {
+    if (this.isUserMessage(item)) {
+      this.messageHeader(item)
+    } else {
+      Row() {
+        this.messageHeader(item)
       }
       .width('100%')
       .constraintSize({ maxWidth: '100%' })
       .alignItems(VerticalAlign.Center)
+    }
+  }
 
+  @Builder
+  private messageCard(item: ChatMessage) {
+    Column() {
+      this.messageHeaderRow(item)
       this.messageBody(item)
     }
     .alignItems(HorizontalAlign.Start)
@@ -7737,11 +7757,15 @@ struct Index {
         }
 
         Row() {
-          TextInput({ text: this.draft, placeholder: this.dynamicInputPlaceholder() })
+          TextArea({ text: this.draft, placeholder: this.dynamicInputPlaceholder() })
             .layoutWeight(1)
-            .height(40)
+            .constraintSize({ minHeight: 40, maxHeight: 132 })
+            .minLines(1)
+            .maxLines(5, { overflowMode: MaxLinesMode.SCROLL })
             .fontSize(this.conversationFontSize(12))
+            .lineHeight(this.conversationLineHeight(19))
             .fontColor('#18181B')
+            .wordBreak(WordBreak.BREAK_WORD)
             .placeholderColor('#A1A1AA')
             .backgroundColor('#FAFAFA')
             .borderRadius(10)
@@ -7751,7 +7775,7 @@ struct Index {
             .onChange((value: string) => {
               this.draft = value;
             })
-            .onSubmit(() => {
+            .onSubmit((_enterKey: EnterKeyType) => {
               this.sendMessage();
             })
             .onKeyEvent((event: KeyEvent) => {
@@ -7787,6 +7811,7 @@ struct Index {
             })
         }
         .width('100%')
+        .alignItems(VerticalAlign.Bottom)
         .margin({ top: 8 })
 
         Row() {
