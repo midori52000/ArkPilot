@@ -558,6 +558,9 @@ struct Index {
   private leftScrollController: Scroller = new Scroller();
   private readonly leftDrawerMinWidth: number = 100;
   private readonly rightDrawerMinWidth: number = 120;
+  private readonly motionFastDuration: number = 160;
+  private readonly motionNormalDuration: number = 240;
+  private readonly motionPanelDuration: number = 280;
   private dragStartLeftW: number = 0;
   private dragStartRightW: number = 0;
   private leftHiding: boolean = false;
@@ -1410,6 +1413,18 @@ struct Index {
     this.renameProjectText = '';
   }
 
+  private runMotion(action: () => void, duration: number = this.motionNormalDuration): void {
+    this.getUIContext().animateTo({ duration: duration, curve: Curve.FastOutSlowIn }, action);
+  }
+
+  private runPanelMotion(action: () => void): void {
+    this.runMotion(action, this.motionPanelDuration);
+  }
+
+  private runFastMotion(action: () => void): void {
+    this.runMotion(action, this.motionFastDuration);
+  }
+
   private toggleProjectExpanded(projectId: string): void {
     const savedOffset: number = this.leftScrollController.currentOffset().yOffset;
     const next: ProjectRecord[] = [];
@@ -1421,7 +1436,7 @@ struct Index {
         next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
       }
     }
-    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+    this.runFastMotion(() => {
       this.projects = next;
     });
     this.saveProjects();
@@ -2999,13 +3014,13 @@ struct Index {
   }
 
   private toggleLeftDrawer(): void {
-    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+    this.runPanelMotion(() => {
       this.showLeftDrawer = !this.showLeftDrawer;
     });
   }
 
   private toggleRightDrawer(): void {
-    this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+    this.runPanelMotion(() => {
       this.showRightDrawer = !this.showRightDrawer;
     });
   }
@@ -3231,6 +3246,8 @@ struct Index {
     .backgroundColor(active ? '#F4F4F5' : '#FAFAFA')
     .border({ width: 0.5, color: active ? '#D4D4D8' : '#E4E4E7' })
     .borderRadius(8)
+    .scale({ x: active ? 1.02 : 1, y: active ? 1.02 : 1 })
+    .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
     .onClick(() => {
       onPress();
     })
@@ -3246,6 +3263,8 @@ struct Index {
       .padding({ left: 10, right: 10, top: 5, bottom: 5 })
       .backgroundColor(selected ? '#E4E4E7' : '#FAFAFA')
       .borderRadius(6)
+      .scale({ x: selected ? 1.04 : 1, y: selected ? 1.04 : 1 })
+      .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
       .margin({ right: 6, bottom: 6 })
       .onClick(() => {
         onPress();
@@ -3266,6 +3285,8 @@ struct Index {
       .border({ width: 0.5, color: disabled ? '#E4E4E7' : '#D4D4D8' })
       .borderRadius(6)
       .opacity(disabled ? 0.55 : 1)
+      .scale({ x: disabled ? 0.96 : 1, y: disabled ? 0.96 : 1 })
+      .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
       .onClick(() => {
         if (!disabled) {
           onPress();
@@ -3352,6 +3373,8 @@ struct Index {
     .backgroundColor(disabled ? '#F8FAFC' : '#FFFFFF')
     .border({ width: 0.5, color: disabled ? '#E4E4E7' : '#BFDBFE' })
     .opacity(disabled ? 0.55 : 1)
+    .scale({ x: disabled ? 0.96 : 1, y: disabled ? 0.96 : 1 })
+    .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
     .onClick(() => {
       if (!disabled) {
         onPress();
@@ -3511,6 +3534,8 @@ struct Index {
         .padding({ left: 8, right: 8, top: 6, bottom: 6 })
         .borderRadius(6)
         .backgroundColor(this.hoveredProjectId === proj.id ? '#F4F4F5' : 'transparent')
+        .scale({ x: this.hoveredProjectId === proj.id ? 1.01 : 1, y: this.hoveredProjectId === proj.id ? 1.01 : 1 })
+        .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
         .onHover((isHover: boolean) => {
           if (this.showProjectMenuId.length === 0) {
             this.hoveredProjectId = isHover ? proj.id : '';
@@ -3572,7 +3597,7 @@ struct Index {
           }
           .width('100%')
           .padding({ left: 16 })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseOut }))
+          .transition(TransitionEffect.OPACITY.animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn }))
         }
       }
       .width('100%')
@@ -3680,6 +3705,8 @@ struct Index {
           .padding({ left: 8, right: 8, top: 5, bottom: 5 })
           .borderRadius(6)
           .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
+          .scale({ x: this.isWorkspaceActive(item) || this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? 1.01 : 1, y: this.isWorkspaceActive(item) || this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? 1.01 : 1 })
+          .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
           .onClick(() => {
             void this.selectWorkspace(item);
           })
@@ -7650,8 +7677,12 @@ struct Index {
           .padding({ left: 10, right: 10, top: 6, bottom: 6 })
           .backgroundColor('#FAFAFA')
           .borderRadius(8)
+          .scale({ x: this.showComposerToolbar ? 1.01 : 1, y: this.showComposerToolbar ? 1.01 : 1 })
+          .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
           .onClick(() => {
-            this.showComposerToolbar = !this.showComposerToolbar;
+            this.runFastMotion(() => {
+              this.showComposerToolbar = !this.showComposerToolbar;
+            });
           })
         }
 
@@ -7677,11 +7708,15 @@ struct Index {
             .backgroundColor(this.showCollaborationModeOptions ? '#F4F4F5' : '#FAFAFA')
             .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#D4D4D8' : '#E4E4E7' })
             .borderRadius(8)
+            .scale({ x: this.showCollaborationModeOptions ? 1.02 : 1, y: this.showCollaborationModeOptions ? 1.02 : 1 })
+            .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
             .onClick(() => {
-              this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
-              if (this.showCollaborationModeOptions) {
-                this.showEffortOptions = false;
-              }
+              this.runFastMotion(() => {
+                this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
+                if (this.showCollaborationModeOptions) {
+                  this.showEffortOptions = false;
+                }
+              });
             })
 
             Blank()
@@ -7708,15 +7743,20 @@ struct Index {
             .backgroundColor(this.showEffortOptions ? '#EEF4FF' : '#FFFFFF')
             .border({ width: 1, color: this.showEffortOptions ? '#BFDBFE' : '#D7DEE8' })
             .borderRadius(12)
+            .scale({ x: this.showEffortOptions ? 1.02 : 1, y: this.showEffortOptions ? 1.02 : 1 })
+            .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
             .onClick(() => {
-              this.showEffortOptions = !this.showEffortOptions;
-              if (this.showEffortOptions) {
-                this.showCollaborationModeOptions = false;
-              }
+              this.runFastMotion(() => {
+                this.showEffortOptions = !this.showEffortOptions;
+                if (this.showEffortOptions) {
+                  this.showCollaborationModeOptions = false;
+                }
+              });
             })
           }
           .width('100%')
           .margin({ top: this.isPhoneBreakpoint() ? 6 : 0 })
+          .transition(TransitionEffect.OPACITY.animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn }))
 
           if (this.showCollaborationModeOptions) {
             Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
@@ -7732,19 +7772,23 @@ struct Index {
             }
             .width('100%')
             .margin({ top: 8 })
+            .transition(TransitionEffect.OPACITY.animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn }))
           }
 
           if (this.showEffortOptions) {
             Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
               ForEach(this.effortOptions, (item: SelectorOption, index: number) => {
                 this.optionChip(item, this.selectedEffortIndex === index, () => {
-                  this.selectedEffortIndex = index;
-                  this.showEffortOptions = false;
+                  this.runFastMotion(() => {
+                    this.selectedEffortIndex = index;
+                    this.showEffortOptions = false;
+                  });
                 })
               })
             }
             .width('100%')
             .margin({ top: 8 })
+            .transition(TransitionEffect.OPACITY.animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn }))
           }
 
           Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
@@ -8093,7 +8137,7 @@ struct Index {
                 const newLeft = this.dragStartLeftW + event.offsetX;
                 if (newLeft <= this.leftDrawerMinWidth - 20) {
                   this.leftHiding = true;
-                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                  this.runPanelMotion(() => {
                     this.showLeftDrawer = false;
                   });
                   setTimeout(() => {
@@ -8106,7 +8150,7 @@ struct Index {
           )
         }
         .height('100%')
-        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
       }
       this.centerPanel()
     }
@@ -8146,7 +8190,7 @@ struct Index {
                 const newLeft = this.dragStartLeftW + event.offsetX;
                 if (newLeft <= this.leftDrawerMinWidth - 20) {
                   this.leftHiding = true;
-                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                  this.runPanelMotion(() => {
                     this.showLeftDrawer = false;
                   });
                   setTimeout(() => {
@@ -8159,7 +8203,7 @@ struct Index {
           )
         }
         .height('100%')
-        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: 300, curve: Curve.EaseOut }))
+        .transition(TransitionEffect.move(TransitionEdge.START).animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
       }
 
       this.centerPanel()
@@ -8191,7 +8235,7 @@ struct Index {
                 const newRight = this.dragStartRightW - event.offsetX;
                 if (newRight <= this.rightDrawerMinWidth - 20) {
                   this.rightHiding = true;
-                  this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                  this.runPanelMotion(() => {
                     this.showRightDrawer = false;
                   });
                   setTimeout(() => {
@@ -8208,7 +8252,7 @@ struct Index {
           }
           .height('100%')
         }
-        .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: 300, curve: Curve.EaseOut }))
+        .transition(TransitionEffect.move(TransitionEdge.END).animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
       }
     }
     .width('100%')
@@ -8403,7 +8447,7 @@ struct Index {
         .gesture(
           TapGesture()
             .onAction(() => {
-              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+              this.runMotion(() => {
                 this.tokenCardExpanded = false;
               });
             })
@@ -8446,7 +8490,7 @@ struct Index {
           .gesture(
             TapGesture()
               .onAction(() => {
-                animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                this.runMotion(() => {
                   this.tokenCardExpanded = true;
                 });
               })
@@ -8834,7 +8878,7 @@ struct Index {
       .borderRadius({ bottomLeft: 10, bottomRight: 10 })
       .border({ width: 0.5, color: '#E4E4E7' })
       .shadow(this.tokenCardExpanded ? { radius: 12, color: '#0A000000', offsetY: 4 } : undefined)
-      .animation({ duration: 250, curve: Curve.EaseInOut })
+      .animation({ duration: this.motionNormalDuration, curve: Curve.FastOutSlowIn })
     }
     .width('100%')
     .alignItems(HorizontalAlign.End)
@@ -8872,6 +8916,7 @@ struct Index {
           .height('100%')
           .padding({ top: 12, bottom: 12, left: 12, right: 48 })
           .backgroundColor('#66000000')
+          .transition(TransitionEffect.OPACITY.animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             this.showLeftDrawer = false;
           })
@@ -8882,16 +8927,17 @@ struct Index {
             Column() {
               this.rightPanel()
             }
-            .width(this.isPhoneBreakpoint() ? '92%' : this.rightPanelWidth)
-            .height(this.isPhoneBreakpoint() ? '90%' : (this.currentBreakpoint === 'md' ? '78%' : '88%'))
+            .width(this.rightPanelWidth)
+            .height(this.isPhoneBreakpoint() ? '88%' : (this.currentBreakpoint === 'md' ? '78%' : '88%'))
             .padding(4)
           }
           .width('100%')
           .height('100%')
           .padding(this.isPhoneBreakpoint()
-            ? { left: 8, right: 8, top: 16, bottom: 8 }
+            ? { left: 28, right: 8, top: 16, bottom: 8 }
             : { left: 24, right: 12, top: 24, bottom: 12 })
           .backgroundColor('#66000000')
+          .transition(TransitionEffect.OPACITY.animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             this.showRightDrawer = false;
           })
@@ -8915,6 +8961,7 @@ struct Index {
           .width('100%')
           .height('100%')
           .backgroundColor('#4D000000')
+          .transition(TransitionEffect.OPACITY.animation({ duration: this.motionNormalDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             // tap backdrop to dismiss — do nothing, user must approve/deny
           })

@@ -187,17 +187,37 @@ struct SettingsPage {
     this.loadSettingsFacadeState();
   }
 
+  private runMotion(action: () => void, duration: number = 220): void {
+    this.getUIContext().animateTo({
+      duration: duration,
+      curve: Curve.FastOutSlowIn
+    }, action);
+  }
+
+  private softFadeTransition(): TransitionEffect {
+    return TransitionEffect.OPACITY
+      .animation({ duration: 220, curve: Curve.Smooth });
+  }
+
+  private panelTransition(): TransitionEffect {
+    return TransitionEffect.OPACITY
+      .animation({ duration: 260, curve: Curve.Smooth })
+      .combine(TransitionEffect.translate({ x: 12, y: 0 }).animation({ duration: 260, curve: Curve.Smooth }));
+  }
+
+  private dialogTransition(): TransitionEffect {
+    return TransitionEffect.OPACITY
+      .animation({ duration: 280, curve: Curve.Smooth });
+  }
+
   private onBreakpointChange(): void {
     const newMode = getArkPilotLayoutMode(this.currentBreakpoint);
     if (newMode === this.animatedMode) {
       return;
     }
-    this.getUIContext().animateTo({
-      duration: 250,
-      curve: Curve.FastOutSlowIn
-    }, () => {
+    this.runMotion(() => {
       this.animatedMode = newMode;
-    });
+    }, 260);
   }
 
   onPageShow(): void {
@@ -290,7 +310,9 @@ struct SettingsPage {
   }
 
   private triggerFeedback(message: string, tone: ToastTone = 'info'): void {
-    this.sparkSeed += 1;
+    this.runMotion(() => {
+      this.sparkSeed += 1;
+    }, 180);
     this.showToast(message, tone);
   }
 
@@ -435,13 +457,17 @@ struct SettingsPage {
       }
       this.pendingDeleteSkillId = skillId;
       this.pendingDeleteSkillName = this.installedSkills[index].name;
-      this.showSkillDeleteDialog = true;
+      this.runMotion(() => {
+        this.showSkillDeleteDialog = true;
+      });
       return;
     }
   }
 
   private cancelUninstallSkill(): void {
-    this.showSkillDeleteDialog = false;
+    this.runMotion(() => {
+      this.showSkillDeleteDialog = false;
+    });
     this.pendingDeleteSkillId = '';
     this.pendingDeleteSkillName = '';
   }
@@ -469,11 +495,15 @@ struct SettingsPage {
   private showSkillDetail(skill: InstalledSkill): void {
     this.selectedSkillId = skill.id;
     this.selectedSkillDetail = skill;
-    this.showSkillDetailDialog = true;
+    this.runMotion(() => {
+      this.showSkillDetailDialog = true;
+    });
   }
 
   private closeSkillDetail(): void {
-    this.showSkillDetailDialog = false;
+    this.runMotion(() => {
+      this.showSkillDetailDialog = false;
+    });
     const selectedSkill = this.selectedSkill();
     this.selectedSkillDetail = selectedSkill;
   }
@@ -730,8 +760,10 @@ struct SettingsPage {
   }
 
   private selectSkillForPreview(skill: InstalledSkill): void {
-    this.selectedSkillId = skill.id;
-    this.selectedSkillDetail = skill;
+    this.runMotion(() => {
+      this.selectedSkillId = skill.id;
+      this.selectedSkillDetail = skill;
+    }, 180);
   }
 
   private skillSourceText(skill: InstalledSkill): string {
@@ -900,11 +932,15 @@ struct SettingsPage {
 
   private openMcpAddDialog(): void {
     this.mcpNewServerName = '';
-    this.showMcpAddDialog = true;
+    this.runMotion(() => {
+      this.showMcpAddDialog = true;
+    });
   }
 
   private cancelMcpAdd(): void {
-    this.showMcpAddDialog = false;
+    this.runMotion(() => {
+      this.showMcpAddDialog = false;
+    });
     this.mcpNewServerName = '';
     this.mcpJsonPasteInput = '';
   }
@@ -1006,7 +1042,9 @@ struct SettingsPage {
     const httpHeadersText: string = headersObj !== undefined ? JSON.stringify(headersObj) : '{}';
     codexBackend.addMcpServer(name, transportType, command, argsText, url, envText, httpHeadersText)
       .then(() => {
-        this.showMcpAddDialog = false;
+        this.runMotion(() => {
+          this.showMcpAddDialog = false;
+        });
         this.mcpNewServerName = '';
         this.mcpJsonPasteInput = '';
         this.syncMcpStateFromBackend();
@@ -1029,11 +1067,15 @@ struct SettingsPage {
       return;
     }
     this.pendingDeleteMcpName = server.name;
-    this.showMcpDeleteDialog = true;
+    this.runMotion(() => {
+      this.showMcpDeleteDialog = true;
+    });
   }
 
   private cancelMcpDelete(): void {
-    this.showMcpDeleteDialog = false;
+    this.runMotion(() => {
+      this.showMcpDeleteDialog = false;
+    });
     this.pendingDeleteMcpName = '';
   }
 
@@ -1084,14 +1126,18 @@ struct SettingsPage {
   private showToast(message: string, tone: ToastTone = 'info', duration: number = 1800): void {
     const toastId = this.toastIdSeed;
     this.toastIdSeed += 1;
-    this.toasts = [...this.toasts, new UiToastItem(toastId, tone, message)];
+    this.runMotion(() => {
+      this.toasts = [...this.toasts, new UiToastItem(toastId, tone, message)];
+    }, 180);
     setTimeout(() => {
       this.dismissToast(toastId);
     }, duration);
   }
 
   private dismissToast(toastId: number): void {
-    this.toasts = this.toasts.filter((toast: UiToastItem) => toast.id !== toastId);
+    this.runMotion(() => {
+      this.toasts = this.toasts.filter((toast: UiToastItem) => toast.id !== toastId);
+    }, 180);
   }
 
   private notePending(action: string): void {
@@ -1100,16 +1146,20 @@ struct SettingsPage {
 
   private updatePressed(key: string, event: TouchEvent): void {
     if (event.type === TouchType.Down) {
-      this.pressedKey = key;
+      this.runMotion(() => {
+        this.pressedKey = key;
+      }, 90);
       return;
     }
     if (this.pressedKey === key) {
-      this.pressedKey = '';
+      this.runMotion(() => {
+        this.pressedKey = '';
+      }, 140);
     }
   }
 
   private pressScale(key: string): number {
-    return this.pressedKey === key ? 0.98 : 1;
+    return this.pressedKey === key ? 0.97 : 1;
   }
 
   private tabAccent(tab: SettingsTab): string {
@@ -1205,7 +1255,9 @@ struct SettingsPage {
   }
 
   private selectTab(tab: SettingsTab): void {
-    this.activeTab = tab;
+    this.runMotion(() => {
+      this.activeTab = tab;
+    }, 220);
     this.triggerFeedback(`已切换到 ${this.navLabel(tab)} 面板。`, 'info');
     if (tab === 'mcp' && this.mcpServers.length === 0 && !this.mcpLoading) {
       this.mcpLoading = true;
@@ -1266,8 +1318,10 @@ struct SettingsPage {
   }
 
   private selectPrompt(promptId: string): void {
-    this.selectedPromptId = promptId;
-    const prompt = this.selectedPrompt();
+    const prompt = this.prompts.find((item: PromptRecord) => item.id === promptId) ?? null;
+    this.runMotion(() => {
+      this.selectedPromptId = promptId;
+    }, 180);
     if (prompt !== null) {
       this.promptDraftName = prompt.name;
       this.promptDraftSummary = prompt.description;
@@ -1520,7 +1574,9 @@ struct SettingsPage {
   }
 
   private selectApiProvider(providerId: string): void {
-    this.selectedApiProviderId = providerId;
+    this.runMotion(() => {
+      this.selectedApiProviderId = providerId;
+    }, 180);
   }
 
   private activateApiProvider(providerId: string): void {
@@ -1566,7 +1622,9 @@ struct SettingsPage {
       const created = apiManagementVM.state.providers[apiManagementVM.state.providers.length - 1];
       this.selectedApiProviderId = created.id;
     }
-    this.apiActiveSubTab = 'providers';
+    this.runMotion(() => {
+      this.apiActiveSubTab = 'providers';
+    }, 180);
     this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
 
@@ -1594,7 +1652,9 @@ struct SettingsPage {
         const result = apiManagementVM.state.validationResult;
         if (result !== null) {
           this.validationResult = result;
-          this.showValidationDialog = true;
+          this.runMotion(() => {
+            this.showValidationDialog = true;
+          });
         } else {
           const msg = apiManagementVM.state.errorText.trim().length > 0
             ? apiManagementVM.state.errorText
@@ -1610,7 +1670,9 @@ struct SettingsPage {
   private runApiSpeedTest(provider: ProviderRecord): void {
     this.apiSpeedTesting = true;
     this.apiSpeedResults = [];
-    this.apiShowSpeedResults = true;
+    this.runMotion(() => {
+      this.apiShowSpeedResults = true;
+    });
     this.selectedApiProviderId = provider.id;
     apiManagementVM.testSpeed(provider, false)
       .then(() => {
@@ -1670,7 +1732,7 @@ struct SettingsPage {
           .height('100%')
           .backgroundColor('#0F172A')
           .opacity(0.18)
-          .onClick(() => { this.apiShowSpeedResults = false; })
+          .onClick(() => { this.runMotion(() => { this.apiShowSpeedResults = false; }); })
 
         Column() {
           Row() {
@@ -1693,7 +1755,7 @@ struct SettingsPage {
               .fontSize(16)
               .fontColor('#94A3B8')
               .margin({ left: 12 })
-              .onClick(() => { this.apiShowSpeedResults = false; })
+              .onClick(() => { this.runMotion(() => { this.apiShowSpeedResults = false; }); })
           }
           .width('100%')
 
@@ -1782,7 +1844,7 @@ struct SettingsPage {
             .backgroundColor('#111827')
             .borderRadius(14)
             .margin({ top: 16 })
-            .onClick(() => { this.apiShowSpeedResults = false; })
+            .onClick(() => { this.runMotion(() => { this.apiShowSpeedResults = false; }); })
         }
         .width(this.settingsDialogWidth())
         .padding(22)
@@ -1792,6 +1854,7 @@ struct SettingsPage {
       }
       .width('100%')
       .height('100%')
+      .transition(this.dialogTransition())
     }
   }
 
@@ -1852,7 +1915,7 @@ struct SettingsPage {
       .borderRadius(this.isPhoneBreakpoint() ? 12 : 10)
       .border({ width: 1, color: '#E5E7EB' })
       .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
-      .animation({ duration: 120, curve: Curve.EaseOut })
+      .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed('back', event); })
       .onClick(() => { router.back(); })
 
@@ -1880,7 +1943,7 @@ struct SettingsPage {
         .borderRadius(12)
         .border({ width: 1, color: '#E5E7EB' })
         .scale({ x: this.pressScale('config-toml'), y: this.pressScale('config-toml') })
-        .animation({ duration: 120, curve: Curve.EaseOut })
+        .animation({ duration: 140, curve: Curve.FastOutSlowIn })
         .onTouch((event: TouchEvent) => { this.updatePressed('config-toml', event); })
         .onClick(() => { this.openConfigToml(); })
       }
@@ -1924,7 +1987,9 @@ struct SettingsPage {
       const stat = fs.statSync(configPath);
       if (!stat.isFile()) {
         this.configTomlContent = '# config.toml 不存在\n# 保存 Provider 后会自动生成';
-        this.showConfigToml = true;
+        this.runMotion(() => {
+          this.showConfigToml = true;
+        });
         return;
       }
       const file = fs.openSync(configPath, fs.OpenMode.READ_ONLY);
@@ -1936,7 +2001,9 @@ struct SettingsPage {
     } catch (e) {
       this.configTomlContent = '# 读取失败: ' + JSON.stringify(e);
     }
-    this.showConfigToml = true;
+    this.runMotion(() => {
+      this.showConfigToml = true;
+    });
   }
 
   private saveConfigToml(): void {
@@ -1947,7 +2014,7 @@ struct SettingsPage {
       const file = fs.openSync(this.configTomlPath, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, this.configTomlContent);
       fs.closeSync(file);
-      this.showConfigToml = false;
+      this.runMotion(() => { this.showConfigToml = false; });
     } catch (e) {
       AlertDialog.show({
         title: '保存失败',
@@ -1966,7 +2033,7 @@ struct SettingsPage {
           .height('100%')
           .backgroundColor('#0F172A')
           .opacity(0.18)
-          .onClick(() => { this.showConfigToml = false; })
+          .onClick(() => { this.runMotion(() => { this.showConfigToml = false; }); })
 
         Column() {
           Row() {
@@ -1983,7 +2050,7 @@ struct SettingsPage {
               .copyOption(CopyOptions.None)
               .fontSize(16)
               .fontColor('#94A3B8')
-              .onClick(() => { this.showConfigToml = false; })
+              .onClick(() => { this.runMotion(() => { this.showConfigToml = false; }); })
           }
           .width('100%')
 
@@ -2019,7 +2086,7 @@ struct SettingsPage {
               .backgroundColor('#F1F5F9')
               .borderRadius(14)
               .margin({ left: 10 })
-              .onClick(() => { this.showConfigToml = false; })
+              .onClick(() => { this.runMotion(() => { this.showConfigToml = false; }); })
           }
           .width('100%')
           .margin({ top: this.isPhoneBreakpoint() ? 14 : 18 })
@@ -2032,6 +2099,7 @@ struct SettingsPage {
       }
       .width('100%')
       .height('100%')
+      .transition(this.dialogTransition())
     }
   }
 
@@ -2118,7 +2186,7 @@ struct SettingsPage {
     .border({ width: 1, color: this.activeTab === item.tab ? '#E9D5FF' : '#EDF2F7' })
     .borderRadius(16)
     .scale({ x: this.pressScale(`top-nav-${item.tab}`), y: this.pressScale(`top-nav-${item.tab}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
+    .animation({ duration: 140, curve: Curve.FastOutSlowIn })
     .onTouch((event: TouchEvent) => { this.updatePressed(`top-nav-${item.tab}`, event); })
     .onClick(() => {
       this.selectTab(item.tab);
@@ -2175,7 +2243,7 @@ struct SettingsPage {
     .backgroundColor(this.activeTab === item.tab ? '#F3F4F6' : 'transparent')
     .borderRadius(10)
     .scale({ x: this.pressScale(`nav-${item.tab}`), y: this.pressScale(`nav-${item.tab}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
+    .animation({ duration: 140, curve: Curve.FastOutSlowIn })
     .onTouch((event: TouchEvent) => { this.updatePressed(`nav-${item.tab}`, event); })
     .onClick(() => {
       this.selectTab(item.tab);
@@ -2336,7 +2404,7 @@ struct SettingsPage {
       .border({ width: primary ? 0 : 1, color: '#D5E0ED' })
       .padding({ left: 16, right: 16 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
+      .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onClick(onClick)
   }
@@ -2384,7 +2452,7 @@ struct SettingsPage {
       .padding({ left: 10, right: 10 })
       .margin({ left: 6 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
+      .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onClick(onClick)
   }
@@ -2732,7 +2800,7 @@ struct SettingsPage {
         Button('← 返回列表')
           .fontSize(12).height(28).backgroundColor('#FFFFFF').fontColor('#334155')
           .borderRadius(14).border({ width: 1, color: '#CBD5E1' })
-          .onClick(() => { this.selectedSkillId = ''; this.selectedSkillDetail = null; })
+          .onClick(() => { this.runMotion(() => { this.selectedSkillId = ''; this.selectedSkillDetail = null; }, 180); })
       }
       .width('100%').margin({ bottom: 12 })
       this.skillPreview()
@@ -2778,7 +2846,7 @@ struct SettingsPage {
         if (this.animatedMode === 'desktop') {
           Column() { this.skillPreview() }
             .layoutWeight(1).margin({ left: 16 })
-            .transition(TransitionEffect.OPACITY)
+            .transition(this.panelTransition())
         }
       }
       .width('100%').alignItems(VerticalAlign.Top).margin({ top: 18 })
@@ -2791,7 +2859,7 @@ struct SettingsPage {
     if (this.showSkillDeleteDialog) {
       Stack() {
         Column()
-          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelUninstallSkill(); })
         Column() {
           Text('确认删除 Skill')
@@ -2806,14 +2874,14 @@ struct SettingsPage {
               .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('skill-delete-cancel'), y: this.pressScale('skill-delete-cancel') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-cancel', event); })
               .onClick(() => { this.cancelUninstallSkill(); })
             Button('确认删除')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('skill-delete-confirm'), y: this.pressScale('skill-delete-confirm') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-confirm', event); })
               .onClick(() => { this.confirmUninstallSkill(); })
           }
@@ -2823,6 +2891,7 @@ struct SettingsPage {
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
+      .transition(this.dialogTransition())
     }
   }
 
@@ -2831,7 +2900,7 @@ struct SettingsPage {
     if (this.showSkillDetailDialog && this.selectedSkillDetail !== null) {
       Stack() {
         Column()
-          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.closeSkillDetail(); })
         Column() {
           Row() {
@@ -2873,7 +2942,7 @@ struct SettingsPage {
               .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('skill-detail-close'), y: this.pressScale('skill-detail-close') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('skill-detail-close', event); })
               .onClick(() => { this.closeSkillDetail(); })
           }
@@ -2883,6 +2952,7 @@ struct SettingsPage {
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
+      .transition(this.dialogTransition())
     }
   }
 
@@ -2920,7 +2990,7 @@ struct SettingsPage {
     .border({ width: 1.3, color: this.selectedMcpServerId === server.id ? '#0A84FF' : '#E2EAF3' })
     .borderRadius(22)
     .scale({ x: this.pressScale(`mcp-${server.id}`), y: this.pressScale(`mcp-${server.id}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
+    .animation({ duration: 140, curve: Curve.FastOutSlowIn })
     .onTouch((event: TouchEvent) => { this.updatePressed(`mcp-${server.id}`, event); })
     .onClick(() => {
       this.loadMcpDraft(server.id);
@@ -3054,7 +3124,7 @@ struct SettingsPage {
         Button('← 返回列表')
           .fontSize(12).height(28).backgroundColor('#FFFFFF').fontColor('#334155')
           .borderRadius(14).border({ width: 1, color: '#CBD5E1' })
-          .onClick(() => { this.selectedMcpServerId = ''; })
+          .onClick(() => { this.runMotion(() => { this.selectedMcpServerId = ''; }, 180); })
         Blank().layoutWeight(1)
         Button('重载 MCP')
           .height(28).fontSize(11).fontWeight(FontWeight.Medium)
@@ -3110,7 +3180,7 @@ struct SettingsPage {
             .fontColor('#0A84FF').backgroundColor('#F0F7FF').borderRadius(16)
             .border({ width: 1, color: '#BDD7FF' })
             .scale({ x: this.pressScale('mcp-add'), y: this.pressScale('mcp-add') })
-            .animation({ duration: 120, curve: Curve.EaseOut })
+            .animation({ duration: 140, curve: Curve.FastOutSlowIn })
             .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
             .onClick(() => { this.openMcpAddDialog(); })
         }
@@ -3131,7 +3201,7 @@ struct SettingsPage {
             this.mcpEditorCard()
           }
           .layoutWeight(1).margin({ left: 16 })
-          .transition(TransitionEffect.OPACITY)
+          .transition(this.panelTransition())
         }
       }
       .width('100%').alignItems(VerticalAlign.Top)
@@ -3145,7 +3215,7 @@ struct SettingsPage {
     if (this.showMcpAddDialog) {
       Stack() {
         Column()
-          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelMcpAdd(); })
         Column() {
           Text('新增 MCP 服务')
@@ -3172,14 +3242,14 @@ struct SettingsPage {
               .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('mcp-add-cancel'), y: this.pressScale('mcp-add-cancel') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-cancel', event); })
               .onClick(() => { this.cancelMcpAdd(); })
             Button('添加')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#0A84FF').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('mcp-add-confirm'), y: this.pressScale('mcp-add-confirm') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-confirm', event); })
               .onClick(() => { this.confirmMcpAdd(); })
           }
@@ -3189,6 +3259,7 @@ struct SettingsPage {
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
+      .transition(this.dialogTransition())
     }
   }
 
@@ -3197,7 +3268,7 @@ struct SettingsPage {
     if (this.showMcpDeleteDialog) {
       Stack() {
         Column()
-          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18)
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelMcpDelete(); })
         Column() {
           Text('确认删除 MCP 服务')
@@ -3210,14 +3281,14 @@ struct SettingsPage {
               .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('mcp-delete-cancel'), y: this.pressScale('mcp-delete-cancel') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-cancel', event); })
               .onClick(() => { this.cancelMcpDelete(); })
             Button('确认删除')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('mcp-delete-confirm'), y: this.pressScale('mcp-delete-confirm') })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-confirm', event); })
               .onClick(() => { this.confirmMcpDelete(); })
           }
@@ -3227,6 +3298,7 @@ struct SettingsPage {
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
+      .transition(this.dialogTransition())
     }
   }
 
@@ -3251,7 +3323,9 @@ struct SettingsPage {
           .borderRadius(14)
           .border({ width: 1, color: '#CBD5E1' })
           .onClick(() => {
-            this.selectedPromptId = '';
+            this.runMotion(() => {
+              this.selectedPromptId = '';
+            }, 180);
           })
       }
       .width('100%')
@@ -3318,7 +3392,7 @@ struct SettingsPage {
           }
           .layoutWeight(1)
           .margin({ left: 16 })
-          .transition(TransitionEffect.OPACITY)
+          .transition(this.panelTransition())
         }
       }
       .width('100%')
@@ -3404,7 +3478,7 @@ struct SettingsPage {
     .border({ width: 1.3, color: this.selectedPromptId === prompt.id ? '#F59E0B' : '#E2EAF3' })
     .borderRadius(22)
     .scale({ x: this.pressScale(`prompt-${prompt.id}`), y: this.pressScale(`prompt-${prompt.id}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
+    .animation({ duration: 140, curve: Curve.FastOutSlowIn })
     .onTouch((event: TouchEvent) => { this.updatePressed(`prompt-${prompt.id}`, event); })
     .onClick(() => { this.selectPrompt(prompt.id); })
   }
@@ -3512,9 +3586,9 @@ struct SettingsPage {
       .borderRadius(12)
       .margin({ right: 8 })
       .scale({ x: this.pressScale(`api-subtab-${tab}`), y: this.pressScale(`api-subtab-${tab}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
+      .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed(`api-subtab-${tab}`, event); })
-      .onClick(() => { this.apiActiveSubTab = tab; })
+      .onClick(() => { this.runMotion(() => { this.apiActiveSubTab = tab; }, 180); })
   }
 
   @Builder
@@ -3530,9 +3604,9 @@ struct SettingsPage {
       .borderRadius(10)
       .margin({ right: 8, top: 8 })
       .scale({ x: this.pressScale(`api-filter-${category}`), y: this.pressScale(`api-filter-${category}`) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
+      .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed(`api-filter-${category}`, event); })
-      .onClick(() => { this.apiPresetCategory = category; })
+      .onClick(() => { this.runMotion(() => { this.apiPresetCategory = category; }, 180); })
   }
 
   @Builder
@@ -3563,7 +3637,7 @@ struct SettingsPage {
     .border({ width: 1, color: (this.apiSpeedTesting && this.selectedApiProviderId === provider.id) ? '#93C5FD' : '#E5E7EB' })
     .padding({ left: 10, right: 10 })
     .scale({ x: this.pressScale(`api-speed-${provider.id}`), y: this.pressScale(`api-speed-${provider.id}`) })
-    .animation({ duration: 120, curve: Curve.EaseOut })
+    .animation({ duration: 140, curve: Curve.FastOutSlowIn })
     .onTouch((event: TouchEvent) => { this.updatePressed(`api-speed-${provider.id}`, event); })
     .onClick(() => {
       if (!this.apiSpeedTesting) {
@@ -3584,7 +3658,7 @@ struct SettingsPage {
       .border({ width: 1, color: danger ? '#FECACA' : '#E5E7EB' })
       .padding({ left: 10, right: 10 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
-      .animation({ duration: 120, curve: Curve.EaseOut })
+      .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed(key, event); })
       .onClick(onClick)
   }
@@ -3683,7 +3757,7 @@ struct SettingsPage {
               .borderRadius(8)
               .border({ width: provider.isActive ? 0 : 1, color: '#E5E7EB' })
               .scale({ x: this.pressScale(`api-activate-${provider.id}`), y: this.pressScale(`api-activate-${provider.id}`) })
-              .animation({ duration: 120, curve: Curve.EaseOut })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed(`api-activate-${provider.id}`, event); })
               .onClick(() => {
                 if (!provider.isActive) {
@@ -3839,7 +3913,7 @@ struct SettingsPage {
           .fontColor('#FFFFFF')
           .borderRadius(12)
           .scale({ x: this.pressScale(`api-preset-${preset.id}`), y: this.pressScale(`api-preset-${preset.id}`) })
-          .animation({ duration: 120, curve: Curve.EaseOut })
+          .animation({ duration: 140, curve: Curve.FastOutSlowIn })
           .onTouch((event: TouchEvent) => { this.updatePressed(`api-preset-${preset.id}`, event); })
           .onClick(() => { this.applyApiPreset(preset.id); })
       }
@@ -3919,7 +3993,7 @@ struct SettingsPage {
             .borderRadius(16)
             .margin({ left: 12 })
             .scale({ x: this.pressScale('api-add-provider'), y: this.pressScale('api-add-provider') })
-            .animation({ duration: 120, curve: Curve.EaseOut })
+            .animation({ duration: 140, curve: Curve.FastOutSlowIn })
             .onTouch((event: TouchEvent) => { this.updatePressed('api-add-provider', event); })
             .onClick(() => { router.pushUrl({ url: 'pages/AddProviderPage' }); })
         }
@@ -3968,6 +4042,7 @@ struct SettingsPage {
         .border({ width: 1, color: '#FFFFFF' })
         .borderRadius(18)
         .margin({ top: 10 })
+        .transition(this.softFadeTransition())
       }, (toast: UiToastItem) => `${toast.id}`)
     }
     .width('100%')
@@ -4020,26 +4095,26 @@ struct SettingsPage {
           .height('100%')
           .backgroundColor('#0F172A')
           .opacity(0.18)
-          .onClick(() => { this.showValidationDialog = false; })
+          .onClick(() => { this.runMotion(() => { this.showValidationDialog = false; }); })
 
         Column() {
-        Row() {
-          Text(this.validationTitleText())
-            .copyOption(CopyOptions.None)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.validationTitleColor())
+          Row() {
+            Text(this.validationTitleText())
+              .copyOption(CopyOptions.None)
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.validationTitleColor())
 
-          Blank()
-            .layoutWeight(1)
+            Blank()
+              .layoutWeight(1)
 
-          Text('✕')
-            .copyOption(CopyOptions.None)
-            .fontSize(16)
-            .fontColor('#94A3B8')
-            .onClick(() => { this.showValidationDialog = false; })
-        }
-        .width('100%')
+            Text('✕')
+              .copyOption(CopyOptions.None)
+              .fontSize(16)
+              .fontColor('#94A3B8')
+              .onClick(() => { this.runMotion(() => { this.showValidationDialog = false; }); })
+          }
+          .width('100%')
 
         Column() {
           Row() {
@@ -4130,7 +4205,7 @@ struct SettingsPage {
           .backgroundColor('#111827')
           .borderRadius(14)
           .margin({ top: 18 })
-          .onClick(() => { this.showValidationDialog = false; })
+          .onClick(() => { this.runMotion(() => { this.showValidationDialog = false; }); })
       }
       .width(this.settingsDialogWidth())
       .padding(22)
@@ -4140,6 +4215,7 @@ struct SettingsPage {
     }
     .width('100%')
     .height('100%')
+    .transition(this.dialogTransition())
     }
   }
 
