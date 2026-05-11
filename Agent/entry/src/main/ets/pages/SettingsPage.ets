@@ -10,7 +10,7 @@ import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { PromptRecord } from '../prompts/PromptTypes';
 import { ArkPilotBreakpoint } from '../adaptive/BreakpointTypes';
 import { breakpointManager } from '../adaptive/BreakpointManager';
-import { getArkPilotLayoutProfile } from '../adaptive/LayoutProfiles';
+import { getArkPilotLayoutProfile, getArkPilotLayoutMode } from '../adaptive/LayoutProfiles';
 import { picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
 import fs from '@ohos.file.fs';
@@ -2702,7 +2702,7 @@ struct SettingsPage {
 
   @Builder
   private skillsPanel() {
-    if (this.isPhoneBreakpoint() && this.selectedSkillId.length > 0) {
+    if (getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' && this.selectedSkillId.length > 0) {
       this.phoneSkillPreviewView()
     } else {
       this.skillsListPreviewLayout()
@@ -2757,9 +2757,9 @@ struct SettingsPage {
           .onChange((index: number) => { this.switchSkillsSubTab(this.skillsSubTabByIndex(index)); })
           .width('100%')
         }
-        .width(this.isPhoneBreakpoint() ? '100%' : '38%')
+        .width(getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' ? '100%' : '38%')
 
-        if (!this.isPhoneBreakpoint()) {
+        if (getArkPilotLayoutMode(this.currentBreakpoint) === 'desktop') {
           Column() { this.skillPreview() }
             .layoutWeight(1).margin({ left: 16 })
         }
@@ -3023,7 +3023,7 @@ struct SettingsPage {
 
   @Builder
   private mcpPanel() {
-    if (this.isPhoneBreakpoint() && this.selectedMcpServerId.length > 0) {
+    if (getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' && this.selectedMcpServerId.length > 0) {
       this.phoneMcpEditorView()
     } else {
       this.mcpListEditorLayout()
@@ -3097,9 +3097,9 @@ struct SettingsPage {
             .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
             .onClick(() => { this.openMcpAddDialog(); })
         }
-        .width(this.isPhoneBreakpoint() ? '100%' : '34%')
+        .width(getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' ? '100%' : '34%')
 
-        if (!this.isPhoneBreakpoint()) {
+        if (getArkPilotLayoutMode(this.currentBreakpoint) === 'desktop') {
           Column() {
             Row() {
               Blank()
@@ -3214,7 +3214,7 @@ struct SettingsPage {
 
   @Builder
   private promptsPanel() {
-    if (this.isPhoneBreakpoint() && this.selectedPromptId.length > 0) {
+    if (getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' && this.selectedPromptId.length > 0) {
       this.phonePromptEditorView()
     } else {
       this.promptsListEditorLayout()
@@ -3292,9 +3292,9 @@ struct SettingsPage {
           .width('100%')
           .margin({ top: 12 })
         }
-        .width(this.isPhoneBreakpoint() ? '100%' : '38%')
+        .width(getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' ? '100%' : '38%')
 
-        if (!this.isPhoneBreakpoint()) {
+        if (getArkPilotLayoutMode(this.currentBreakpoint) === 'desktop') {
           Column() {
             this.promptEditor()
           }
