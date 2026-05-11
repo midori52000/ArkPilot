@@ -200,8 +200,50 @@ struct SettingsPage {
     return getArkPilotLayoutProfile(this.currentBreakpoint).dialogWidth;
   }
 
+  private configTomlDialogWidth(): number {
+    if (this.currentBreakpoint === 'lg') {
+      return 680;
+    }
+    if (this.currentBreakpoint === 'md') {
+      return 560;
+    }
+    if (this.currentBreakpoint === 'xs') {
+      return 300;
+    }
+    return 360;
+  }
+
+  private configTomlEditorHeight(): number {
+    if (this.currentBreakpoint === 'lg') {
+      return 520;
+    }
+    if (this.currentBreakpoint === 'md') {
+      return 460;
+    }
+    if (this.currentBreakpoint === 'xs') {
+      return 300;
+    }
+    return 340;
+  }
+
+  private configTomlDialogPadding(): number {
+    return this.isPhoneBreakpoint() ? 16 : 22;
+  }
+
   private settingsContentPadding(): number {
     return this.isPhoneBreakpoint() ? 14 : 24;
+  }
+
+  private topBarHorizontalPadding(): number {
+    return this.isPhoneBreakpoint() ? 12 : 24;
+  }
+
+  private topBarTopPadding(): number {
+    return this.isPhoneBreakpoint() ? 10 : 20;
+  }
+
+  private topBarBottomPadding(): number {
+    return this.isPhoneBreakpoint() ? 8 : 12;
   }
 
   private loadMockData(): void {
@@ -1778,18 +1820,20 @@ struct SettingsPage {
             .fontSize(16)
             .fontColor('#0F172A')
             .fontWeight(FontWeight.Bold)
-          Text('返回')
-            .copyOption(CopyOptions.None)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
-            .margin({ left: 6 })
+          if (!this.isPhoneBreakpoint()) {
+            Text('返回')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#0F172A')
+              .margin({ left: 6 })
+          }
         }
       }
-      .height(36)
-      .padding({ left: 12, right: 14 })
+      .width(this.isPhoneBreakpoint() ? 34 : undefined)
+      .height(this.isPhoneBreakpoint() ? 34 : 36)
+      .padding(this.isPhoneBreakpoint() ? 0 : { left: 12, right: 14 })
       .backgroundColor('#FFFFFF')
-      .borderRadius(10)
+      .borderRadius(this.isPhoneBreakpoint() ? 12 : 10)
       .border({ width: 1, color: '#E5E7EB' })
       .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
       .animation({ duration: 120, curve: Curve.EaseOut })
@@ -1798,16 +1842,41 @@ struct SettingsPage {
 
       Text('设置')
         .copyOption(CopyOptions.None)
-        .fontSize(20)
+        .fontSize(this.isPhoneBreakpoint() ? 22 : 20)
         .fontWeight(FontWeight.Bold)
         .fontColor('#0F172A')
-        .margin({ left: 16 })
+        .margin({ left: this.isPhoneBreakpoint() ? 12 : 16 })
 
       Blank()
         .layoutWeight(1)
+
+      if (this.isPhoneBreakpoint()) {
+        Button() {
+          Text('config.toml')
+            .copyOption(CopyOptions.None)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#475569')
+        }
+        .height(34)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor('#F8FAFC')
+        .borderRadius(12)
+        .border({ width: 1, color: '#E5E7EB' })
+        .scale({ x: this.pressScale('config-toml'), y: this.pressScale('config-toml') })
+        .animation({ duration: 120, curve: Curve.EaseOut })
+        .onTouch((event: TouchEvent) => { this.updatePressed('config-toml', event); })
+        .onClick(() => { this.openConfigToml(); })
+      }
     }
     .width('100%')
-    .padding({ left: 24, right: 24, top: 20, bottom: 12 })
+    .padding({
+      left: this.topBarHorizontalPadding(),
+      right: this.topBarHorizontalPadding(),
+      top: this.topBarTopPadding(),
+      bottom: this.topBarBottomPadding()
+    })
+    .backgroundColor('#FFFFFF')
   }
 
   @Builder
@@ -1904,9 +1973,9 @@ struct SettingsPage {
 
           TextArea({ text: this.configTomlContent, placeholder: '' })
             .width('100%')
-            .height(400)
-            .margin({ top: 14 })
-            .fontSize(12)
+            .height(this.configTomlEditorHeight())
+            .margin({ top: this.isPhoneBreakpoint() ? 12 : 14 })
+            .fontSize(this.isPhoneBreakpoint() ? 11 : 12)
             .fontFamily('monospace')
             .backgroundColor('#F8FAFC')
             .border({ width: 1, color: '#E5E7EB' })
@@ -1937,13 +2006,13 @@ struct SettingsPage {
               .onClick(() => { this.showConfigToml = false; })
           }
           .width('100%')
-          .margin({ top: 18 })
+          .margin({ top: this.isPhoneBreakpoint() ? 14 : 18 })
         }
-        .width(this.settingsDialogWidth())
-        .padding(22)
+        .width(this.configTomlDialogWidth())
+        .padding(this.configTomlDialogPadding())
         .backgroundColor('#FFFFFF')
         .border({ width: 1, color: '#E2EAF3' })
-        .borderRadius(24)
+        .borderRadius(this.isPhoneBreakpoint() ? 20 : 24)
       }
       .width('100%')
       .height('100%')
@@ -1995,10 +2064,13 @@ struct SettingsPage {
           this.topTabEntry(item)
         }, (item: SettingsNavItem) => item.tab)
       }
-      .padding({ left: 14, right: 14 })
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
     }
     .width('100%')
-    .height(48)
+    .height(56)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 1, color: '#E5E7EB' })
+    .borderRadius(16)
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
   }
@@ -2006,18 +2078,29 @@ struct SettingsPage {
   @Builder
   private topTabEntry(item: SettingsNavItem) {
     Button() {
-      Text(item.label)
-        .copyOption(CopyOptions.None)
-        .fontSize(13)
-        .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
-        .fontColor(this.activeTab === item.tab ? '#0F172A' : '#64748B')
-        .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+      Column() {
+        Text(item.label)
+          .copyOption(CopyOptions.None)
+          .fontSize(13)
+          .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
+          .fontColor(this.activeTab === item.tab ? '#0F172A' : '#64748B')
+
+        if (this.activeTab === item.tab) {
+          Column()
+            .width(18)
+            .height(3)
+            .margin({ top: 5 })
+            .backgroundColor(item.accent)
+            .borderRadius(3)
+        }
+      }
+      .padding({ left: 12, right: 12, top: 8, bottom: 6 })
     }
-    .height(36)
-    .margin({ right: 8 })
-    .backgroundColor(this.activeTab === item.tab ? '#FFFFFF' : '#F8FAFC')
-    .border({ width: 1, color: this.activeTab === item.tab ? item.accent : '#E5E7EB' })
-    .borderRadius(14)
+    .height(42)
+    .margin({ right: 6 })
+    .backgroundColor(this.activeTab === item.tab ? '#F8FAFF' : '#FFFFFF')
+    .border({ width: 1, color: this.activeTab === item.tab ? '#E9D5FF' : '#EDF2F7' })
+    .borderRadius(16)
     .scale({ x: this.pressScale(`top-nav-${item.tab}`), y: this.pressScale(`top-nav-${item.tab}`) })
     .animation({ duration: 120, curve: Curve.EaseOut })
     .onTouch((event: TouchEvent) => { this.updatePressed(`top-nav-${item.tab}`, event); })
@@ -2116,7 +2199,7 @@ struct SettingsPage {
     .backgroundColor('#FFFFFF')
     .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(16)
-    .margin({ left: this.isPhoneBreakpoint() ? 0 : 16 })
+    .margin({ left: this.isPhoneBreakpoint() ? 0 : 16, top: this.isPhoneBreakpoint() ? 10 : 0 })
   }
 
   @Builder
@@ -2128,6 +2211,7 @@ struct SettingsPage {
     .layoutWeight(1)
     .width('100%')
     .padding({ left: 12, right: 12, bottom: 12 })
+    .justifyContent(FlexAlign.Start)
   }
 
   @Builder
@@ -2187,8 +2271,6 @@ struct SettingsPage {
         return '';
     }
   }
-
-  @Builder
 
   @Builder
   private sectionCard(title: string, subtitle: string) {
