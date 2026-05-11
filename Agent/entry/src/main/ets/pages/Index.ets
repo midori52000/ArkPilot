@@ -31,6 +31,7 @@ import { projectStore } from '../backend/ProjectStore';
 import router from '@ohos.router';
 import pasteboard from '@ohos.pasteboard';
 import { promptAction } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
@@ -127,32 +128,6 @@ class CompactionNotice {
   }
 }
 
-class MermaidNode {
-  id: string;
-  label: string;
-  shape: string;
-
-  constructor(id: string, label: string, shape?: string) {
-    this.id = id;
-    this.label = label;
-    this.shape = shape ?? 'rect';
-  }
-}
-
-class MermaidEdge {
-  id: string;
-  from: MermaidNode;
-  to: MermaidNode;
-  label: string;
-
-  constructor(id: string, from: MermaidNode, to: MermaidNode, label?: string) {
-    this.id = id;
-    this.from = from;
-    this.to = to;
-    this.label = label ?? '';
-  }
-}
-
 class MarkdownBlock {
   id: string;
   kind: string;
@@ -161,9 +136,8 @@ class MarkdownBlock {
   level: number;
   language: string;
   rows: string[][];
-  edges: MermaidEdge[];
 
-  constructor(id: string, kind: string, text: string, level?: number, language?: string, rows?: string[][], edges?: MermaidEdge[], rawText?: string) {
+  constructor(id: string, kind: string, text: string, level?: number, language?: string, rows?: string[][], rawText?: string) {
     this.id = id;
     this.kind = kind;
     this.text = text;
@@ -171,7 +145,6 @@ class MarkdownBlock {
     this.level = level ?? 0;
     this.language = language ?? '';
     this.rows = rows ?? [];
-    this.edges = edges ?? [];
   }
 }
 
@@ -186,6 +159,22 @@ class MathSegment {
     this.kind = kind;
     this.text = text;
     this.rawText = rawText ?? text;
+  }
+}
+
+class MarkdownTextRun {
+  id: string;
+  text: string;
+  blockKind: string;
+  inlineKind: string;
+  level: number;
+
+  constructor(id: string, text: string, blockKind: string, inlineKind?: string, level?: number) {
+    this.id = id;
+    this.text = text;
+    this.blockKind = blockKind;
+    this.inlineKind = inlineKind ?? 'text';
+    this.level = level ?? 0;
   }
 }
 
@@ -237,6 +226,223 @@ class FormulaParseResult {
   }
 }
 
+class MermaidScaleEntry {
+  key: string;
+  scale: number;
+
+  constructor(key: string, scale: number) {
+    this.key = key;
+    this.scale = scale;
+  }
+}
+
+@Component
+struct MermaidWebDiagram {
+  @Prop source: string = '';
+  @Prop diagramHeight: number = 260;
+  @Prop
+  @Watch('onFontScaleChanged')
+  fontScale: number = 1;
+
+  private controller: webview.WebviewController = new webview.WebviewController();
+
+  private mermaidDataUrl(): string {
+    return `data:text/html;charset=utf-8,${encodeURIComponent(this.mermaidHtml())}`;
+  }
+
+  private mermaidHtml(): string {
+    const sourceText: string = this.escapeHtml(this.source);
+    const scaleText: string = this.normalizedScale(this.fontScale).toFixed(2);
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #FFFFFF;
+      background-color: #FFFFFF !important;
+      color: #0F172A;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: auto;
+      color-scheme: light;
+    }
+    body {
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    #diagram {
+      width: 100%;
+      min-height: 40px;
+      background: #FFFFFF !important;
+      background-color: #FFFFFF !important;
+      transform-origin: 0 0;
+    }
+    #diagram svg {
+      max-width: 100%;
+      height: auto;
+      background: #FFFFFF !important;
+      background-color: #FFFFFF !important;
+    }
+    .render-error {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+      line-height: 18px;
+      color: #B91C1C;
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-radius: 8px;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="diagram"></div>
+  <pre id="source" style="display:none">${sourceText}</pre>
+  <script>
+    const source = document.getElementById('source').textContent || '';
+    const target = document.getElementById('diagram');
+    const minScale = 0.6;
+    const maxScale = 1.8;
+    let diagramScale = ${scaleText};
+    const mermaidUrls = [
+      'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js',
+      'https://unpkg.com/mermaid@11/dist/mermaid.min.js'
+    ];
+    function clampScale(value) {
+      if (!Number.isFinite(value)) {
+        return 1;
+      }
+      return Math.min(maxScale, Math.max(minScale, Math.round(value * 100) / 100));
+    }
+    function applyDiagramScale() {
+      diagramScale = clampScale(diagramScale);
+      if ('zoom' in target.style) {
+        target.style.zoom = diagramScale.toString();
+        target.style.transform = 'none';
+        target.style.width = '100%';
+      } else {
+        target.style.zoom = '';
+        target.style.transform = 'scale(' + diagramScale.toString() + ')';
+        target.style.width = (100 / diagramScale).toString() + '%';
+      }
+    }
+    window.__arkpilotApplyMermaidScale = function(value) {
+      diagramScale = clampScale(value);
+      applyDiagramScale();
+    };
+    function showError(error) {
+      const detail = error && error.message ? error.message : String(error || 'Unknown Mermaid render error');
+      target.innerHTML = '<div class="render-error">Mermaid 渲染失败\\n\\n' + detail.replace(/[&<>"']/g, function(ch) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+      }) + '</div>';
+    }
+    function loadMermaid(index) {
+      if (window.mermaid) {
+        return Promise.resolve();
+      }
+      if (index >= mermaidUrls.length) {
+        return Promise.reject(new Error('Mermaid.js 未加载。请确认设备可以访问 jsdelivr 或 unpkg，或后续改为内置 mermaid.min.js。'));
+      }
+      return new Promise(function(resolve, reject) {
+        const script = document.createElement('script');
+        script.src = mermaidUrls[index];
+        script.onload = function() { resolve(); };
+        script.onerror = function() {
+          loadMermaid(index + 1).then(resolve).catch(reject);
+        };
+        document.head.appendChild(script);
+      });
+    }
+    async function renderDiagram() {
+      try {
+        await loadMermaid(0);
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme: 'base',
+          themeVariables: {
+            primaryColor: '#DBEAFE',
+            primaryTextColor: '#0F172A',
+            primaryBorderColor: '#93C5FD',
+            lineColor: '#2563EB',
+            secondaryColor: '#F8FAFC',
+            tertiaryColor: '#FFFFFF',
+            background: '#FFFFFF',
+            mainBkg: '#DBEAFE',
+            secondBkg: '#F8FAFC',
+            textColor: '#0F172A',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+          }
+        });
+        const result = await mermaid.render('arkpilot-mermaid-' + Date.now().toString(), source);
+        target.innerHTML = result.svg;
+        if (result.bindFunctions) {
+          result.bindFunctions(target);
+        }
+        applyDiagramScale();
+      } catch (error) {
+        showError(error);
+      }
+    }
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', renderDiagram);
+    } else {
+      renderDiagram();
+    }
+  </script>
+</body>
+</html>`;
+  }
+
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private normalizedScale(value: number): number {
+    if (value !== value) {
+      return 1;
+    }
+    return Math.min(1.8, Math.max(0.6, value));
+  }
+
+  private onFontScaleChanged(): void {
+    const scaleText: string = this.normalizedScale(this.fontScale).toFixed(2);
+    try {
+      void this.controller.runJavaScript(
+        `window.__arkpilotApplyMermaidScale && window.__arkpilotApplyMermaidScale(${scaleText});`
+      );
+    } catch (_err) {
+    }
+  }
+
+  build() {
+    Web({ src: this.mermaidDataUrl(), controller: this.controller })
+      .javaScriptAccess(true)
+      .darkMode(WebDarkMode.Off)
+      .forceDarkAccess(false)
+      .zoomAccess(false)
+      .initialScale(100)
+      .textZoomRatio(100)
+      .onPageEnd(() => {
+        this.onFontScaleChanged();
+      })
+      .width('100%')
+      .height(this.diagramHeight)
+      .backgroundColor('#FFFFFF')
+      .zIndex(0)
+      .hitTestBehavior(HitTestMode.Transparent)
+  }
+}
+
 @Entry
 @Component
 struct Index {
@@ -268,6 +474,15 @@ struct Index {
   ];
   private readonly longThinkingPulseThreshold: number = 50;
   private readonly thinkingPhrasePulseSpan: number = 30;
+  private readonly conversationFontScaleMin: number = 0.6;
+  private readonly conversationFontScaleMax: number = 1.8;
+  private readonly conversationFontScaleStep: number = 0.05;
+  private readonly keyCodeMinus: number = 2057;
+  private readonly keyCodeEquals: number = 2058;
+  private readonly keyCodePlus: number = 2066;
+  private readonly keyCodeNumpadSubtract: number = 2115;
+  private readonly keyCodeNumpadAdd: number = 2116;
+  private readonly keyCodeNumpadEquals: number = 2120;
   private readonly thinkingLogoFrames: string[] = [
     '◎>_',
     '◎>=',
@@ -356,8 +571,10 @@ struct Index {
   @State private requestUserInputVersion: number = 0;
   @State private expandedIntermediateMessageIds: string[] = [];
   @State private expandedCompactionIds: string[] = [];
-  @State private rawMarkdownMessageIds: string[] = [];
-  @State private rawMermaidBlockIds: string[] = [];
+  @State private selectableMessageIds: string[] = [];
+  @State private hoveredMessageId: string = '';
+  @State private conversationFontScale: number = 1;
+  @State private mermaidScaleEntries: MermaidScaleEntry[] = [];
   @State private compactionNotices: CompactionNotice[] = [];
   @State private compactionNoticeVersion: number = 0;
   @State private currentTurnId: string = '';
@@ -375,6 +592,7 @@ struct Index {
   private messageProgrammaticScrollTimerId: number = -1;
   private messageUserScrollActive: boolean = false;
   private messageUserScrollTimerId: number = -1;
+  private messageZoomWheelActiveUntil: number = 0;
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -1916,6 +2134,169 @@ struct Index {
     return false;
   }
 
+  private clampConversationFontScale(value: number): number {
+    const clamped: number = Math.min(this.conversationFontScaleMax, Math.max(this.conversationFontScaleMin, value));
+    return Math.round(clamped * 100) / 100;
+  }
+
+  private setConversationFontScale(value: number): void {
+    const nextScale: number = this.clampConversationFontScale(value);
+    if (nextScale === this.conversationFontScale) {
+      return;
+    }
+    this.conversationFontScale = nextScale;
+    this.scheduleMessageScrollToBottom();
+  }
+
+  private adjustConversationFontScale(steps: number): void {
+    if (steps === 0) {
+      return;
+    }
+    this.setConversationFontScale(this.conversationFontScale + (this.conversationFontScaleStep * steps));
+  }
+
+  private adjustConversationFontScaleFromWheel(steps: number): void {
+    this.messageZoomWheelActiveUntil = Date.now() + 120;
+    this.adjustConversationFontScale(steps);
+  }
+
+  private conversationFontSize(base: number): number {
+    return Math.round(base * this.conversationFontScale * 10) / 10;
+  }
+
+  private conversationLineHeight(base: number): number {
+    return Math.round(base * this.conversationFontScale * 10) / 10;
+  }
+
+  private conversationZoomLabel(): string {
+    return `${Math.round(this.conversationFontScale * 100).toString()}%`;
+  }
+
+  private isConversationFontAtMin(): boolean {
+    return this.conversationFontScale <= this.conversationFontScaleMin;
+  }
+
+  private isConversationFontAtMax(): boolean {
+    return this.conversationFontScale >= this.conversationFontScaleMax;
+  }
+
+  private mermaidScaleKey(messageId: string, block: MarkdownBlock): string {
+    return `${messageId}:${block.id}`;
+  }
+
+  private mermaidScale(key: string): number {
+    for (let index: number = 0; index < this.mermaidScaleEntries.length; index += 1) {
+      if (this.mermaidScaleEntries[index].key === key) {
+        return this.mermaidScaleEntries[index].scale;
+      }
+    }
+    return 1;
+  }
+
+  private setMermaidScale(key: string, value: number): void {
+    const nextScale: number = this.clampConversationFontScale(value);
+    const nextEntries: MermaidScaleEntry[] = [];
+    let updated: boolean = false;
+    for (let index: number = 0; index < this.mermaidScaleEntries.length; index += 1) {
+      const entry: MermaidScaleEntry = this.mermaidScaleEntries[index];
+      if (entry.key === key) {
+        updated = true;
+        if (nextScale !== 1) {
+          nextEntries.push(new MermaidScaleEntry(key, nextScale));
+        }
+      } else {
+        nextEntries.push(entry);
+      }
+    }
+    if (!updated && nextScale !== 1) {
+      nextEntries.push(new MermaidScaleEntry(key, nextScale));
+    }
+    this.mermaidScaleEntries = nextEntries;
+  }
+
+  private adjustMermaidScale(key: string, steps: number): void {
+    if (steps === 0) {
+      return;
+    }
+    this.setMermaidScale(key, this.mermaidScale(key) + (this.conversationFontScaleStep * steps));
+  }
+
+  private isMermaidScaleAtMin(key: string): boolean {
+    return this.mermaidScale(key) <= this.conversationFontScaleMin;
+  }
+
+  private isMermaidScaleAtMax(key: string): boolean {
+    return this.mermaidScale(key) >= this.conversationFontScaleMax;
+  }
+
+  private isModifierPressed(event: KeyEvent | AxisEvent, primary: string): boolean {
+    if (event.getModifierKeyState === undefined) {
+      return false;
+    }
+    try {
+      if (event.getModifierKeyState([primary])) {
+        return true;
+      }
+    } catch (_err) {
+    }
+    try {
+      return event.getModifierKeyState([primary.toLowerCase()]);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private isConversationZoomInKey(event: KeyEvent): boolean {
+    return event.keyText === '+' ||
+      event.keyText === '=' ||
+      event.keyCode === this.keyCodePlus ||
+      event.keyCode === this.keyCodeEquals ||
+      event.keyCode === this.keyCodeNumpadAdd ||
+      event.keyCode === this.keyCodeNumpadEquals;
+  }
+
+  private isConversationZoomOutKey(event: KeyEvent): boolean {
+    return event.keyText === '-' ||
+      event.keyCode === this.keyCodeMinus ||
+      event.keyCode === this.keyCodeNumpadSubtract;
+  }
+
+  private handleConversationKeyEvent(event: KeyEvent): boolean {
+    if (event.type !== KeyType.Down || !this.isModifierPressed(event, 'Ctrl')) {
+      return false;
+    }
+    if (this.isConversationZoomInKey(event)) {
+      this.adjustConversationFontScale(1);
+      event.stopPropagation();
+      return true;
+    }
+    if (this.isConversationZoomOutKey(event)) {
+      this.adjustConversationFontScale(-1);
+      event.stopPropagation();
+      return true;
+    }
+    return false;
+  }
+
+  private axisVerticalValue(event: AxisEvent): number {
+    let value: number = event.getVerticalAxisValue();
+    if (value === 0 && event.axisVertical !== undefined) {
+      value = event.axisVertical;
+    }
+    return value;
+  }
+
+  private handleConversationAxisZoom(event: AxisEvent): void {
+    if (!this.isModifierPressed(event, 'Ctrl')) {
+      return;
+    }
+    const vertical: number = this.axisVerticalValue(event);
+    if (vertical === 0 || vertical !== vertical) {
+      return;
+    }
+    this.adjustConversationFontScaleFromWheel(vertical < 0 ? 1 : -1);
+  }
+
   private scheduleMessageScrollToBottom(force: boolean = false): void {
     if (!force && !this.messageAutoFollowToBottom) {
       return;
@@ -1994,7 +2375,10 @@ struct Index {
     }
   }
 
-  private handleMessageWillScroll(_xOffset: number, yOffset: number, _scrollState: ScrollState, scrollSource: ScrollSource): void {
+  private handleMessageWillScroll(_xOffset: number, yOffset: number, _scrollState: ScrollState, scrollSource: ScrollSource): OffsetResult | void {
+    if (this.messageZoomWheelActiveUntil > Date.now() && scrollSource === ScrollSource.OTHER_USER_INPUT) {
+      return { xOffset: 0, yOffset: 0 };
+    }
     if (!this.isUserMessageScrollSource(scrollSource)) {
       return;
     }
@@ -2649,6 +3033,33 @@ struct Index {
     return JSON.stringify(err);
   }
 
+  private copyPlainText(text: string, successMessage: string): void {
+    if (text.length === 0) {
+      promptAction.showToast({ message: '没有可复制内容', duration: 1600 });
+      return;
+    }
+    try {
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      void systemPasteboard.setData(pasteData);
+      promptAction.showToast({ message: successMessage, duration: 1600 });
+    } catch (_err) {
+      promptAction.showToast({ message: '复制失败', duration: 2000 });
+    }
+  }
+
+  private messageCopyText(item: ChatMessage): string {
+    return this.messageOriginalText(item.content);
+  }
+
+  private copyMessage(item: ChatMessage): void {
+    this.copyPlainText(this.messageCopyText(item), '消息已复制');
+  }
+
+  private messageOriginalText(content: string): string {
+    return content.trimEnd();
+  }
+
   private placeholderDiffLine(id: string, content: string): CodeDiffLine {
     return new CodeDiffLine(id, '1', ' ', content, 'context');
   }
@@ -2834,6 +3245,203 @@ struct Index {
   }
 
   @Builder
+  private zoomStepButton(label: string, disabled: boolean, onPress: () => void) {
+    Text(label)
+      .copyOption(CopyOptions.None)
+      .fontSize(12)
+      .fontColor(disabled ? '#A1A1AA' : '#0F172A')
+      .fontWeight(FontWeight.Medium)
+      .textAlign(TextAlign.Center)
+      .width(24)
+      .height(24)
+      .backgroundColor(disabled ? '#F4F4F5' : '#FFFFFF')
+      .border({ width: 0.5, color: disabled ? '#E4E4E7' : '#D4D4D8' })
+      .borderRadius(6)
+      .opacity(disabled ? 0.55 : 1)
+      .onClick(() => {
+        if (!disabled) {
+          onPress();
+        }
+      })
+  }
+
+  @Builder
+  private conversationZoomControl() {
+    Row() {
+      this.zoomStepButton('-', this.isConversationFontAtMin(), () => {
+        this.adjustConversationFontScale(-1);
+      })
+
+      Text(this.conversationZoomLabel())
+        .copyOption(CopyOptions.None)
+        .fontSize(10)
+        .fontColor('#64748B')
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .width(42)
+
+      this.zoomStepButton('+', this.isConversationFontAtMax(), () => {
+        this.adjustConversationFontScale(1);
+      })
+    }
+    .height(28)
+    .padding({ left: 2, right: 2 })
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor('#FAFAFA')
+    .border({ width: 0.5, color: '#E4E4E7' })
+    .borderRadius(8)
+  }
+
+  @Builder
+  private magnifierZoomIcon(kind: string, color: string) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Circle()
+        .width(11)
+        .height(11)
+        .fill('#00000000')
+        .stroke(color)
+        .strokeWidth(1.4)
+        .position({ x: 2, y: 2 })
+
+      Column()
+        .width(6)
+        .height(1.4)
+        .backgroundColor(color)
+        .borderRadius(1)
+        .rotate({ angle: 45 })
+        .position({ x: 11.2, y: 12.2 })
+
+      Column()
+        .width(6)
+        .height(1.3)
+        .backgroundColor(color)
+        .borderRadius(1)
+        .position({ x: 4.5, y: 6.8 })
+
+      if (kind === 'in') {
+        Column()
+          .width(1.3)
+          .height(6)
+          .backgroundColor(color)
+          .borderRadius(1)
+          .position({ x: 6.85, y: 4.45 })
+      }
+    }
+    .width(19)
+    .height(19)
+  }
+
+  @Builder
+  private mermaidZoomIconButton(kind: string, disabled: boolean, onPress: () => void) {
+    Row() {
+      this.magnifierZoomIcon(kind, disabled ? '#A1A1AA' : '#2563EB')
+    }
+    .width(26)
+    .height(24)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(6)
+    .backgroundColor(disabled ? '#F8FAFC' : '#FFFFFF')
+    .border({ width: 0.5, color: disabled ? '#E4E4E7' : '#BFDBFE' })
+    .opacity(disabled ? 0.55 : 1)
+    .onClick(() => {
+      if (!disabled) {
+        onPress();
+      }
+    })
+  }
+
+  @Builder
+  private copyIcon(color: string) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width(10)
+        .height(12)
+        .border({ width: 1.2, color: color })
+        .borderRadius(2)
+        .backgroundColor('#00000000')
+        .position({ x: 4, y: 1 })
+
+      Column()
+        .width(10)
+        .height(12)
+        .border({ width: 1.2, color: color })
+        .borderRadius(2)
+        .backgroundColor('#00000000')
+        .position({ x: 1, y: 4 })
+    }
+    .width(16)
+    .height(18)
+  }
+
+  @Builder
+  private iconCopyButton(onPress: () => void) {
+    Row() {
+      this.copyIcon('#64748B')
+    }
+    .width(26)
+    .height(26)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(6)
+    .backgroundColor('#00000000')
+    .onClick(() => {
+      onPress();
+    })
+  }
+
+  @Builder
+  private selectTextIcon(color: string) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        Column().width(12).height(1.3).backgroundColor(color).borderRadius(1)
+        Column().width(12).height(1.3).backgroundColor(color).borderRadius(1).margin({ top: 4 })
+        Column().width(8).height(1.3).backgroundColor(color).borderRadius(1).margin({ top: 4 })
+      }
+      .position({ x: 1, y: 3 })
+
+      Column()
+        .width(1.4)
+        .height(15)
+        .backgroundColor(color)
+        .borderRadius(1)
+        .position({ x: 17, y: 2 })
+
+      Column()
+        .width(5)
+        .height(1.2)
+        .backgroundColor(color)
+        .borderRadius(1)
+        .position({ x: 15, y: 1 })
+
+      Column()
+        .width(5)
+        .height(1.2)
+        .backgroundColor(color)
+        .borderRadius(1)
+        .position({ x: 15, y: 17 })
+    }
+    .width(22)
+    .height(20)
+  }
+
+  @Builder
+  private iconSelectTextButton(active: boolean, onPress: () => void) {
+    Row() {
+      this.selectTextIcon(active ? '#2563EB' : '#64748B')
+    }
+    .width(30)
+    .height(26)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(6)
+    .backgroundColor(active ? '#EFF6FF' : '#00000000')
+    .onClick(() => {
+      onPress();
+    })
+  }
+
+  @Builder
   private projectGroup(proj: ProjectRecord) {
       Column() {
         // Project header row
@@ -2990,14 +3598,7 @@ struct Index {
             }
           }
           if (targetPath.length > 0) {
-            try {
-              const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, targetPath);
-              const systemPasteboard = pasteboard.getSystemPasteboard();
-              void systemPasteboard.setData(pasteData);
-              promptAction.showToast({ message: '路径已复制', duration: 2000 });
-            } catch (_err) {
-              promptAction.showToast({ message: '复制失败', duration: 2000 });
-            }
+            this.copyPlainText(targetPath, '路径已复制');
           }
         })
     }
@@ -3156,16 +3757,16 @@ struct Index {
     if (item.status === 'inProgress' && item.content.trim().length === 0) {
       Text(this.thinkingStatusText())
         .copyOption(CopyOptions.None)
-        .fontSize(12)
-        .lineHeight(19)
+        .fontSize(this.conversationFontSize(12))
+        .lineHeight(this.conversationLineHeight(19))
         .fontColor(this.messageContentColor(item.itemType))
         .fontWeight(FontWeight.Medium)
         .margin({ top: 6 })
     } else if (this.isMessageCollapsed(item)) {
       Text(item.content)
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .lineHeight(19)
+        .fontSize(this.conversationFontSize(12))
+        .lineHeight(this.conversationLineHeight(19))
         .fontColor(this.messageContentColor(item.itemType))
         .margin({ top: 6 })
         .maxLines(2)
@@ -3174,13 +3775,27 @@ struct Index {
         .onClick(() => {
           this.toggleMessageExpanded(item.id);
         })
+    } else if (this.isMessageSelectableMode(item.id) && this.shouldShowMessageSelectableAction(item)) {
+      Text(this.messageOriginalText(item.content))
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(this.conversationFontSize(12))
+        .lineHeight(this.conversationLineHeight(19))
+        .fontColor(this.messageContentColor(item.itemType))
+        .width('100%')
+        .padding({ left: 10, right: 10, top: 9, bottom: 9 })
+        .margin({ top: 6 })
+        .backgroundColor('#F8FAFC')
+        .border({ width: 0.5, color: '#CBD5E1' })
+        .borderRadius(8)
     } else if (!this.shouldRenderMarkdown(item.content)) {
       Text(item.content)
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
-        .lineHeight(19)
+        .fontSize(this.conversationFontSize(12))
+        .lineHeight(this.conversationLineHeight(19))
         .fontColor(this.messageContentColor(item.itemType))
         .margin({ top: 6 })
+    } else if (!this.hasRenderedOrCodeMarkdownSurface(item.content)) {
+      this.plainMarkdownTextBody(item)
     } else if (this.shouldRenderInlineOnlyMarkdown(item.content)) {
       this.inlineMessageMarkdownBody(item)
     } else {
@@ -3189,8 +3804,26 @@ struct Index {
   }
 
   @Builder
+  private plainMarkdownTextBody(item: ChatMessage) {
+    Text() {
+      ForEach(this.plainMarkdownTextRuns(item.content, item.id), (run: MarkdownTextRun) => {
+        Span(run.text)
+          .fontColor(this.plainMarkdownRunColor(run, item.itemType))
+          .fontSize(this.plainMarkdownRunFontSize(run))
+          .fontWeight(this.plainMarkdownRunWeight(run))
+      }, (run: MarkdownTextRun) => run.id)
+    }
+    .copyOption(CopyOptions.LocalDevice)
+    .fontSize(this.conversationFontSize(12))
+    .lineHeight(this.conversationLineHeight(19))
+    .fontColor(this.messageContentColor(item.itemType))
+    .width('100%')
+    .margin({ top: 6 })
+  }
+
+  @Builder
   private inlineMessageMarkdownBody(item: ChatMessage) {
-    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType), 12, 19, undefined, 6)
+    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType), this.conversationFontSize(12), this.conversationLineHeight(19), undefined, 6)
   }
 
   @Builder
@@ -3243,7 +3876,7 @@ struct Index {
           Row() {
             Text(this.markdownListMarker(line))
               .copyOption(CopyOptions.None)
-              .fontSize(12)
+              .fontSize(this.conversationFontSize(12))
               .fontColor('#64748B')
               .width(24)
             Column() {
@@ -3264,7 +3897,7 @@ struct Index {
     } else if (block.kind === 'math') {
       this.mathBlock(block)
     } else if (block.kind === 'mermaid') {
-      this.mermaidBlock(`${messageId}:${block.id}`, block)
+      this.mermaidBlock(messageId, block)
     } else if (block.kind === 'table') {
       this.markdownTable(messageId, block)
     } else if (block.kind === 'divider') {
@@ -3290,8 +3923,8 @@ struct Index {
                 `${block.id}:r${rowIndex}:c${cellIndex ?? 0}`,
                 cell,
                 rowIndex === 0 ? '#0F172A' : '#334155',
-                10,
-                16,
+                this.conversationFontSize(10),
+                this.conversationLineHeight(16),
                 rowIndex === 0 ? FontWeight.Medium : FontWeight.Regular
               )
             }
@@ -3324,6 +3957,9 @@ struct Index {
           .borderRadius(6)
         Blank()
           .layoutWeight(1)
+        this.iconCopyButton(() => {
+          this.copyPlainText(block.text, '代码已复制');
+        })
       }
       .width('100%')
       .margin({ bottom: 6 })
@@ -3345,39 +3981,24 @@ struct Index {
 
   @Builder
   private highlightedCodeLines(text: string, language: string, baseId: string) {
-    Column() {
+    Text() {
       ForEach(this.codeBlockLines(text), (line: string, lineIndex: number) => {
-        Row() {
-          Text(`${lineIndex + 1}`)
-            .copyOption(CopyOptions.None)
-            .fontSize(10)
-            .lineHeight(18)
-            .fontColor('#94A3B8')
-            .fontFamily('monospace')
-            .textAlign(TextAlign.End)
-            .width(28)
-            .margin({ right: 10 })
-
-          Text() {
-            ForEach(this.codeLineTokens(line, language, `${baseId}:${lineIndex}`), (token: CodeToken) => {
-              Span(token.text)
-                .fontColor(this.codeTokenColor(token.kind))
-                .fontWeight(this.codeTokenWeight(token.kind))
-            }, (token: CodeToken) => token.id)
-          }
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .lineHeight(18)
-          .fontFamily('monospace')
-          .layoutWeight(1)
+        ForEach(this.codeLineTokens(line, language, `${baseId}:${lineIndex}`), (token: CodeToken) => {
+          Span(token.text)
+            .fontColor(this.codeTokenColor(token.kind))
+            .fontWeight(this.codeTokenWeight(token.kind))
+        }, (token: CodeToken) => token.id)
+        if (lineIndex < this.codeBlockLines(text).length - 1) {
+          Span('\n')
+            .fontColor('#0F172A')
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-        .margin({ top: lineIndex === 0 ? 0 : 1 })
       }, (line: string, lineIndex: number) => `${lineIndex}:${line}`)
     }
+    .copyOption(CopyOptions.LocalDevice)
+    .fontSize(this.conversationFontSize(11))
+    .lineHeight(this.conversationLineHeight(18))
+    .fontFamily('monospace')
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -3389,7 +4010,15 @@ struct Index {
             .width('100%')
             .height(8)
         } else {
-          this.inlineMarkdownLine(`${messageId}:${blockId}:${lineIndex}`, line, color, fontSize ?? 12, lineHeight ?? 19, weight, lineIndex === 0 ? 0 : 2)
+          this.inlineMarkdownLine(
+            `${messageId}:${blockId}:${lineIndex}`,
+            line,
+            color,
+            fontSize ?? this.conversationFontSize(12),
+            lineHeight ?? this.conversationLineHeight(19),
+            weight,
+            lineIndex === 0 ? 0 : 2
+          )
         }
       })
     }
@@ -3402,7 +4031,7 @@ struct Index {
     if (segment.kind === 'code') {
       Text(segment.text)
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(Math.max(fontSize - 1, 10))
+        .fontSize(Math.max(fontSize - this.conversationFontSize(1), this.conversationFontSize(10)))
         .lineHeight(lineHeight)
         .fontFamily('monospace')
         .fontColor('#0F172A')
@@ -3495,7 +4124,7 @@ struct Index {
   @Builder
   private formulaInlineContent(source: string, fontSize: number) {
     Row() {
-      this.formulaNode(this.parseFormula(source), Math.max(fontSize + 1, 13), '#0F172A')
+      this.formulaNode(this.parseFormula(source), Math.max(fontSize + this.conversationFontSize(1), this.conversationFontSize(13)), '#0F172A')
     }
     .alignItems(VerticalAlign.Center)
   }
@@ -3505,7 +4134,7 @@ struct Index {
     Column() {
       ForEach(this.mathBlockLines(source), (line: string, lineIndex?: number) => {
         Row() {
-          this.formulaNode(this.parseFormula(line), 19, '#0F172A')
+          this.formulaNode(this.parseFormula(line), this.conversationFontSize(19), '#0F172A')
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -3698,7 +4327,7 @@ struct Index {
   }
 
   @Builder
-  private mermaidBlock(blockId: string, block: MarkdownBlock) {
+  private mermaidBlock(messageId: string, block: MarkdownBlock) {
     Column() {
       Row() {
         Text('Mermaid')
@@ -3708,33 +4337,30 @@ struct Index {
           .padding({ left: 7, right: 7, top: 3, bottom: 3 })
           .backgroundColor('#EFF6FF')
           .borderRadius(6)
+
         Blank()
           .layoutWeight(1)
-        Text(this.isMermaidSourceVisible(blockId) ? '返回渲染' : '点击查看源码')
-          .copyOption(CopyOptions.None)
-          .fontSize(9)
-          .fontColor('#2563EB')
+
+        this.mermaidZoomIconButton('out', this.isMermaidScaleAtMin(this.mermaidScaleKey(messageId, block)), () => {
+          this.adjustMermaidScale(this.mermaidScaleKey(messageId, block), -1);
+        })
+
+        Blank()
+          .width(4)
+
+        this.mermaidZoomIconButton('in', this.isMermaidScaleAtMax(this.mermaidScaleKey(messageId, block)), () => {
+          this.adjustMermaidScale(this.mermaidScaleKey(messageId, block), 1);
+        })
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
       .margin({ bottom: 7 })
 
-      if (this.isMermaidSourceVisible(blockId)) {
-        this.mermaidSourceBlock(blockId, block)
-      } else if (block.edges.length > 0) {
-        if (this.isLinearMermaidGraph(block.edges)) {
-          this.mermaidPathGraph(block)
-        } else {
-          this.mermaidEdgeGraph(block)
-        }
-      } else {
-        Text(block.text)
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(11)
-          .lineHeight(17)
-          .fontColor('#334155')
-          .fontFamily('monospace')
-          .width('100%')
-      }
+      MermaidWebDiagram({
+        source: block.text,
+        diagramHeight: this.mermaidDiagramHeight(block.text),
+        fontScale: this.mermaidScale(this.mermaidScaleKey(messageId, block))
+      })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -3743,136 +4369,6 @@ struct Index {
     .border({ width: 0.5, color: '#BFDBFE' })
     .borderRadius(8)
     .margin({ top: 5, bottom: 5 })
-    .hitTestBehavior(HitTestMode.Block)
-    .onClick(() => {
-      this.toggleMermaidSource(blockId);
-    })
-  }
-
-  @Builder
-  private mermaidSourceBlock(blockId: string, block: MarkdownBlock) {
-    Column() {
-      this.highlightedCodeLines(block.text, 'mermaid', `${blockId}:source`)
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding({ left: 8, right: 8, top: 8, bottom: 8 })
-    .backgroundColor('#FFFFFF')
-    .border({ width: 0.5, color: '#E2E8F0' })
-    .borderRadius(7)
-  }
-
-  @Builder
-  private mermaidPathGraph(block: MarkdownBlock) {
-    if (this.isVerticalMermaid(block.rawText)) {
-      Column() {
-        ForEach(this.orderedMermaidPath(block.edges), (node: MermaidNode, index: number) => {
-          if (index > 0) {
-            Text(this.mermaidArrowSymbol(block.rawText))
-              .copyOption(CopyOptions.None)
-              .fontSize(18)
-              .fontColor('#2563EB')
-              .margin({ top: 2, bottom: 2 })
-          }
-          this.mermaidNodeChip(node)
-        }, (node: MermaidNode, index: number) => `${index}:${node.id}`)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Center)
-    } else {
-      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
-        ForEach(this.orderedMermaidPath(block.edges), (node: MermaidNode, index: number) => {
-          if (index > 0) {
-            Text(this.mermaidArrowSymbol(block.rawText))
-              .copyOption(CopyOptions.None)
-              .fontSize(18)
-              .fontColor('#2563EB')
-              .margin({ left: 8, right: 8, bottom: 6 })
-          }
-          this.mermaidNodeChip(node)
-        }, (node: MermaidNode, index: number) => `${index}:${node.id}`)
-      }
-      .width('100%')
-    }
-  }
-
-  @Builder
-  private mermaidEdgeGraph(block: MarkdownBlock) {
-    Column() {
-      ForEach(block.edges, (edge: MermaidEdge) => {
-        Row() {
-          this.mermaidNodeChip(edge.from)
-          Column() {
-            if (edge.label.length > 0) {
-              Text(edge.label)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(9)
-                .fontColor('#64748B')
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-            }
-            Text(this.mermaidArrowSymbol(block.rawText))
-              .copyOption(CopyOptions.None)
-              .fontSize(18)
-              .fontColor('#2563EB')
-          }
-          .width(48)
-          .alignItems(HorizontalAlign.Center)
-          this.mermaidNodeChip(edge.to)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .margin({ top: 5 })
-      }, (edge: MermaidEdge) => edge.id)
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private mermaidNodeChip(node: MermaidNode) {
-    Text(node.label)
-      .copyOption(CopyOptions.LocalDevice)
-      .fontSize(10)
-      .fontColor(node.shape === 'diamond' ? '#92400E' : '#1E3A8A')
-      .fontWeight(FontWeight.Medium)
-      .textOverflow({ overflow: TextOverflow.Ellipsis })
-      .maxLines(2)
-      .padding({ left: 9, right: 9, top: 7, bottom: 7 })
-      .margin({ right: 4, bottom: 6 })
-      .backgroundColor(node.shape === 'diamond' ? '#FEF3C7' : '#DBEAFE')
-      .border({ width: 0.5, color: node.shape === 'diamond' ? '#F59E0B' : '#93C5FD' })
-      .borderRadius(node.shape === 'round' ? 16 : 7)
-  }
-
-  @Builder
-  private mermaidNodePill(node: MermaidNode) {
-    Text(node.label)
-      .copyOption(CopyOptions.LocalDevice)
-      .fontSize(10)
-      .fontColor(node.shape === 'diamond' ? '#92400E' : '#1E3A8A')
-      .fontWeight(FontWeight.Medium)
-      .textOverflow({ overflow: TextOverflow.Ellipsis })
-      .maxLines(2)
-      .layoutWeight(1)
-      .padding({ left: 8, right: 8, top: 7, bottom: 7 })
-      .backgroundColor(node.shape === 'diamond' ? '#FEF3C7' : '#DBEAFE')
-      .border({ width: 0.5, color: node.shape === 'diamond' ? '#F59E0B' : '#93C5FD' })
-      .borderRadius(node.shape === 'round' ? 16 : 7)
-  }
-
-  @Builder
-  private mermaidNodeBadge(node: MermaidNode) {
-    Text(node.label)
-      .copyOption(CopyOptions.LocalDevice)
-      .fontSize(9)
-      .fontColor(node.shape === 'diamond' ? '#92400E' : '#1E3A8A')
-      .fontWeight(FontWeight.Medium)
-      .padding({ left: 7, right: 7, top: 4, bottom: 4 })
-      .margin({ right: 6, bottom: 6 })
-      .backgroundColor(node.shape === 'diamond' ? '#FEF3C7' : '#EFF6FF')
-      .border({ width: 0.5, color: node.shape === 'diamond' ? '#F59E0B' : '#BFDBFE' })
-      .borderRadius(node.shape === 'round' ? 14 : 6)
   }
 
   @Builder
@@ -3909,7 +4405,7 @@ struct Index {
 
         Text(this.thinkingLogoText())
           .copyOption(CopyOptions.None)
-          .fontSize(12)
+          .fontSize(this.conversationFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.accentBorderColor('reasoning'))
 
@@ -3934,9 +4430,9 @@ struct Index {
 
       Text(this.thinkingStatusPhraseText())
         .copyOption(CopyOptions.None)
-        .fontSize(11)
+        .fontSize(this.conversationFontSize(11))
         .fontColor(this.accentBorderColor('reasoning'))
-        .lineHeight(17)
+        .lineHeight(this.conversationLineHeight(17))
         .width('100%')
         .margin({ top: 6, left: 28 })
         .maxLines(1)
@@ -3983,7 +4479,7 @@ struct Index {
 
         Text('上下文压缩')
           .copyOption(CopyOptions.None)
-          .fontSize(12)
+          .fontSize(this.conversationFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.compactionNoticeColor(notice.status))
 
@@ -4012,9 +4508,9 @@ struct Index {
 
       Text(this.compactionNoticeSummary(notice))
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
+        .fontSize(this.conversationFontSize(11))
         .fontColor(this.compactionNoticeColor(notice.status))
-        .lineHeight(17)
+        .lineHeight(this.conversationLineHeight(17))
         .width('100%')
         .margin({ top: 6, left: 28 })
         .maxLines(this.isCompactionNoticeExpanded(notice.id) ? 3 : 1)
@@ -4028,9 +4524,9 @@ struct Index {
           if (notice.errorMessage.trim().length > 0) {
             Text(notice.errorMessage)
               .copyOption(CopyOptions.LocalDevice)
-              .fontSize(10)
+              .fontSize(this.conversationFontSize(10))
               .fontColor('#DC2626')
-              .lineHeight(16)
+              .lineHeight(this.conversationLineHeight(16))
               .margin({ top: 6 })
           }
           if (notice.status === 'failed' || notice.status === 'timeout') {
@@ -4072,7 +4568,7 @@ struct Index {
 
       Text(value)
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(10)
+        .fontSize(this.conversationFontSize(10))
         .fontColor('#0F172A')
         .fontFamily('monospace')
     }
@@ -4101,14 +4597,14 @@ struct Index {
 
         Text(this.messageIcon(item.itemType))
           .copyOption(CopyOptions.None)
-          .fontSize(12)
+          .fontSize(this.conversationFontSize(12))
           .fontColor(this.accentBorderColor(item.itemType ?? item.role))
           .fontWeight(FontWeight.Medium)
           .width(22)
 
         Text(this.operationLabel(item.itemType ?? item.role))
           .copyOption(CopyOptions.LocalDevice)
-          .fontSize(12)
+          .fontSize(this.conversationFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.accentBorderColor(item.itemType ?? item.role))
 
@@ -4139,9 +4635,9 @@ struct Index {
         Row() {
           Text(this.collapsedMessagePreview(item))
             .copyOption(CopyOptions.LocalDevice)
-            .fontSize(11)
+            .fontSize(this.conversationFontSize(11))
             .fontColor(this.accentBorderColor(item.itemType ?? item.role))
-            .lineHeight(17)
+            .lineHeight(this.conversationLineHeight(17))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4176,7 +4672,7 @@ struct Index {
       Row() {
         Text(item.author)
           .copyOption(CopyOptions.LocalDevice)
-          .fontSize(12)
+          .fontSize(this.conversationFontSize(12))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.authorColor(item.itemType ?? item.role))
 
@@ -4186,6 +4682,7 @@ struct Index {
           .fontColor('#A1A1AA')
           .margin({ left: 8 })
       }
+      .width('100%')
       .constraintSize({ maxWidth: '100%' })
       .alignItems(VerticalAlign.Center)
 
@@ -4205,18 +4702,51 @@ struct Index {
   }
 
   @Builder
+  private messageActionRow(item: ChatMessage) {
+    if (this.shouldShowMessageActions(item) && this.hoveredMessageId === item.id) {
+      Row() {
+        this.iconCopyButton(() => {
+          this.copyMessage(item);
+        })
+        if (this.shouldShowMessageSelectableAction(item)) {
+          Blank()
+            .width(4)
+          this.iconSelectTextButton(this.isMessageSelectableMode(item.id), () => {
+            this.toggleMessageSelectableMode(item.id);
+          })
+        }
+      }
+      .height(26)
+      .margin({
+        top: 3,
+        left: this.isUserMessage(item) ? 0 : 2,
+        right: this.isUserMessage(item) ? 2 : 0
+      })
+    }
+  }
+
+  @Builder
+  private messageCluster(item: ChatMessage) {
+    Column() {
+      this.messageCard(item)
+      this.messageActionRow(item)
+    }
+    .alignItems(this.isUserMessage(item) ? HorizontalAlign.End : HorizontalAlign.Start)
+  }
+
+  @Builder
   private messageLine(item: ChatMessage) {
     Row() {
       if (this.isUserMessage(item)) {
         Blank()
           .layoutWeight(1)
-        this.messageCard(item)
+        this.messageCluster(item)
       } else if (this.isCollapsibleMessage(item)) {
         this.messageEventBlock(item)
         Blank()
           .layoutWeight(1)
       } else {
-        this.messageCard(item)
+        this.messageCluster(item)
         Blank()
           .layoutWeight(1)
       }
@@ -4224,10 +4754,180 @@ struct Index {
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .margin({ bottom: this.isCollapsibleMessage(item) ? 6 : 10 })
+    .onHover((isHover: boolean) => {
+      if (!this.shouldShowMessageActions(item)) {
+        return;
+      }
+      if (isHover) {
+        this.hoveredMessageId = item.id;
+        return;
+      }
+      if (this.hoveredMessageId === item.id) {
+        this.hoveredMessageId = '';
+      }
+    })
   }
 
   private isUserMessage(item: ChatMessage): boolean {
     return item.role === 'user';
+  }
+
+  private mermaidDiagramHeight(source: string): number {
+    const lineCount: number = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').length;
+    return Math.min(Math.max(220, lineCount * 28 + 120), 640);
+  }
+
+  private shouldShowMessageActions(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    return item.content.trim().length > 0 &&
+      item.role !== 'system' &&
+      type !== 'system' &&
+      !this.isIntermediateMessageType(type);
+  }
+
+  private shouldShowMessageSelectableAction(item: ChatMessage): boolean {
+    return this.shouldShowMessageActions(item) && this.hasRenderedOrCodeMarkdownSurface(item.content);
+  }
+
+  private hasRenderedOrCodeMarkdownSurface(content: string): boolean {
+    const text: string = content.trim();
+    if (text.length === 0 || !this.shouldRenderMarkdown(text)) {
+      return false;
+    }
+    if (this.hasInlineMathText(text)) {
+      return true;
+    }
+    const blocks: MarkdownBlock[] = this.markdownBlocks(text);
+    for (let index: number = 0; index < blocks.length; index += 1) {
+      const kind: string = blocks[index].kind;
+      if (kind === 'code' || kind === 'math' || kind === 'mermaid' || kind === 'table') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private plainMarkdownTextRuns(content: string, baseId: string): MarkdownTextRun[] {
+    const blocks: MarkdownBlock[] = this.markdownBlocks(content);
+    const runs: MarkdownTextRun[] = [];
+    let serial: number = 0;
+    for (let index: number = 0; index < blocks.length; index += 1) {
+      if (index > 0) {
+        serial = this.pushPlainMarkdownRun(runs, serial, '\n', 'newline');
+      }
+      serial = this.appendPlainMarkdownBlockRuns(runs, serial, blocks[index], `${baseId}:plain:${index}`);
+    }
+    if (runs.length === 0) {
+      runs.push(new MarkdownTextRun(`${baseId}:plain:empty`, content.trim(), 'paragraph'));
+    }
+    return runs;
+  }
+
+  private appendPlainMarkdownBlockRuns(runs: MarkdownTextRun[], serial: number, block: MarkdownBlock, baseId: string): number {
+    switch (block.kind) {
+      case 'heading':
+        return this.appendPlainMarkdownInlineRuns(runs, serial, block.text, 'heading', block.level, baseId);
+      case 'quote':
+        return this.appendPlainMarkdownQuoteRuns(runs, serial, block, baseId);
+      case 'list':
+        return this.appendPlainMarkdownListRuns(runs, serial, block, baseId);
+      case 'divider':
+        return this.pushPlainMarkdownRun(runs, serial, '────────────', 'divider');
+      default:
+        return this.appendPlainMarkdownInlineRuns(runs, serial, block.text, 'paragraph', 0, baseId);
+    }
+  }
+
+  private appendPlainMarkdownQuoteRuns(runs: MarkdownTextRun[], serial: number, block: MarkdownBlock, baseId: string): number {
+    const lines: string[] = block.text.split('\n');
+    for (let index: number = 0; index < lines.length; index += 1) {
+      if (index > 0) {
+        serial = this.pushPlainMarkdownRun(runs, serial, '\n', 'newline');
+      }
+      serial = this.pushPlainMarkdownRun(runs, serial, '> ', 'quoteMarker');
+      serial = this.appendPlainMarkdownInlineRuns(runs, serial, lines[index], 'quote', 0, `${baseId}:q${index}`);
+    }
+    return serial;
+  }
+
+  private appendPlainMarkdownListRuns(runs: MarkdownTextRun[], serial: number, block: MarkdownBlock, baseId: string): number {
+    const lines: string[] = block.text.split('\n');
+    for (let index: number = 0; index < lines.length; index += 1) {
+      if (index > 0) {
+        serial = this.pushPlainMarkdownRun(runs, serial, '\n', 'newline');
+      }
+      serial = this.pushPlainMarkdownRun(runs, serial, `${this.markdownListMarker(lines[index])} `, 'listMarker');
+      serial = this.appendPlainMarkdownInlineRuns(runs, serial, this.markdownListText(lines[index]), 'list', 0, `${baseId}:li${index}`);
+    }
+    return serial;
+  }
+
+  private appendPlainMarkdownInlineRuns(runs: MarkdownTextRun[], serial: number, text: string, blockKind: string, level: number, baseId: string): number {
+    const lines: string[] = text.split('\n');
+    for (let lineIndex: number = 0; lineIndex < lines.length; lineIndex += 1) {
+      if (lineIndex > 0) {
+        serial = this.pushPlainMarkdownRun(runs, serial, '\n', 'newline');
+      }
+      const segments: MathSegment[] = this.inlineMarkdownSegments(lines[lineIndex], `${baseId}:line${lineIndex}`);
+      for (let segmentIndex: number = 0; segmentIndex < segments.length; segmentIndex += 1) {
+        const segment: MathSegment = segments[segmentIndex];
+        const displayText: string = segment.kind === 'math' ? segment.rawText : segment.text;
+        serial = this.pushPlainMarkdownRun(runs, serial, displayText, blockKind, segment.kind, level);
+      }
+    }
+    return serial;
+  }
+
+  private pushPlainMarkdownRun(
+    runs: MarkdownTextRun[],
+    serial: number,
+    text: string,
+    blockKind: string,
+    inlineKind?: string,
+    level?: number
+  ): number {
+    if (text.length === 0) {
+      return serial;
+    }
+    runs.push(new MarkdownTextRun(`plain-run-${serial}`, text, blockKind, inlineKind, level));
+    return serial + 1;
+  }
+
+  private plainMarkdownRunColor(run: MarkdownTextRun, itemType?: string): string {
+    if (run.inlineKind === 'link') {
+      return '#2563EB';
+    }
+    if (run.inlineKind === 'code') {
+      return '#0F172A';
+    }
+    if (run.blockKind === 'heading') {
+      return '#0F172A';
+    }
+    if (run.blockKind === 'quote' || run.blockKind === 'quoteMarker') {
+      return '#475569';
+    }
+    if (run.blockKind === 'listMarker') {
+      return '#64748B';
+    }
+    if (run.blockKind === 'divider') {
+      return '#94A3B8';
+    }
+    return this.messageContentColor(itemType);
+  }
+
+  private plainMarkdownRunFontSize(run: MarkdownTextRun): number {
+    if (run.blockKind === 'heading') {
+      return this.markdownHeadingFontSize(run.level);
+    }
+    return this.conversationFontSize(12);
+  }
+
+  private plainMarkdownRunWeight(run: MarkdownTextRun): FontWeight {
+    if (run.blockKind === 'heading' || run.inlineKind === 'strong' || run.inlineKind === 'code' ||
+      run.blockKind === 'listMarker' || run.blockKind === 'quoteMarker') {
+      return FontWeight.Medium;
+    }
+    return FontWeight.Regular;
   }
 
   private shouldRenderMarkdown(content: string): boolean {
@@ -4305,95 +5005,16 @@ struct Index {
     this.expandedIntermediateMessageIds = [...this.expandedIntermediateMessageIds, messageId];
   }
 
-  private isMessageSourceVisible(messageId: string): boolean {
-    return this.rawMarkdownMessageIds.indexOf(messageId) >= 0;
+  private isMessageSelectableMode(messageId: string): boolean {
+    return this.selectableMessageIds.indexOf(messageId) >= 0;
   }
 
-  private toggleMessageSource(messageId: string): void {
-    if (this.isMessageSourceVisible(messageId)) {
-      this.rawMarkdownMessageIds = this.rawMarkdownMessageIds.filter((id: string) => id !== messageId);
+  private toggleMessageSelectableMode(messageId: string): void {
+    if (this.isMessageSelectableMode(messageId)) {
+      this.selectableMessageIds = this.selectableMessageIds.filter((id: string) => id !== messageId);
       return;
     }
-    this.rawMarkdownMessageIds = [...this.rawMarkdownMessageIds, messageId];
-  }
-
-  private isMermaidSourceVisible(blockId: string): boolean {
-    return this.rawMermaidBlockIds.indexOf(blockId) >= 0;
-  }
-
-  private toggleMermaidSource(blockId: string): void {
-    if (this.isMermaidSourceVisible(blockId)) {
-      this.rawMermaidBlockIds = this.rawMermaidBlockIds.filter((id: string) => id !== blockId);
-      return;
-    }
-    this.rawMermaidBlockIds = [...this.rawMermaidBlockIds, blockId];
-  }
-
-  private uniqueMermaidNodes(edges: MermaidEdge[]): MermaidNode[] {
-    const seen: Map<string, MermaidNode> = new Map();
-    for (let i = 0; i < edges.length; i++) {
-      if (!seen.has(edges[i].from.id)) {
-        seen.set(edges[i].from.id, edges[i].from);
-      }
-      if (!seen.has(edges[i].to.id)) {
-        seen.set(edges[i].to.id, edges[i].to);
-      }
-    }
-    return Array.from(seen.values());
-  }
-
-  private isLinearMermaidGraph(edges: MermaidEdge[]): boolean {
-    if (edges.length === 0) {
-      return false;
-    }
-    const outgoing: Map<string, number> = new Map();
-    const incoming: Map<string, number> = new Map();
-    for (let i = 0; i < edges.length; i++) {
-      outgoing.set(edges[i].from.id, (outgoing.get(edges[i].from.id) ?? 0) + 1);
-      incoming.set(edges[i].to.id, (incoming.get(edges[i].to.id) ?? 0) + 1);
-      if ((outgoing.get(edges[i].from.id) ?? 0) > 1 || (incoming.get(edges[i].to.id) ?? 0) > 1) {
-        return false;
-      }
-    }
-    return this.orderedMermaidPath(edges).length === edges.length + 1;
-  }
-
-  private orderedMermaidPath(edges: MermaidEdge[]): MermaidNode[] {
-    if (edges.length === 0) {
-      return [];
-    }
-    const outgoing: Map<string, MermaidEdge> = new Map();
-    const incoming: Map<string, boolean> = new Map();
-    const nodes: Map<string, MermaidNode> = new Map();
-    for (let i = 0; i < edges.length; i++) {
-      outgoing.set(edges[i].from.id, edges[i]);
-      incoming.set(edges[i].to.id, true);
-      nodes.set(edges[i].from.id, edges[i].from);
-      nodes.set(edges[i].to.id, edges[i].to);
-    }
-
-    let start: MermaidNode | null = null;
-    const allNodes: MermaidNode[] = Array.from(nodes.values());
-    for (let i = 0; i < allNodes.length; i++) {
-      if (!incoming.has(allNodes[i].id)) {
-        start = allNodes[i];
-        break;
-      }
-    }
-    if (start === null) {
-      start = edges[0].from;
-    }
-
-    const path: MermaidNode[] = [];
-    const visited: Map<string, boolean> = new Map();
-    let current: MermaidNode | null = start;
-    while (current !== null && !visited.has(current.id)) {
-      path.push(current);
-      visited.set(current.id, true);
-      const edge: MermaidEdge | undefined = outgoing.get(current.id);
-      current = edge === undefined ? null : edge.to;
-    }
-    return path;
+    this.selectableMessageIds = [...this.selectableMessageIds, messageId];
   }
 
   private markdownBlocks(content: string): MarkdownBlock[] {
@@ -4422,7 +5043,7 @@ struct Index {
           i++;
         }
         const code: string = body.join('\n');
-        const kind: string = language === 'mermaid' || code.trim().startsWith('flowchart ') || code.trim().startsWith('graph ') ? 'mermaid' : 'code';
+        const kind: string = this.isMermaidCodeBlock(language, code) ? 'mermaid' : 'code';
         const rawLanguage: string = kind === 'mermaid' ? (language.length > 0 ? language : 'mermaid') : language;
         blocks.push(new MarkdownBlock(
           `md-${serial++}`,
@@ -4431,7 +5052,6 @@ struct Index {
           0,
           language,
           [],
-          kind === 'mermaid' ? this.parseMermaidEdges(code) : [],
           this.fencedCodeSource(rawLanguage, code)
         ));
         continue;
@@ -4462,7 +5082,7 @@ struct Index {
           }
         }
         const mathBody: string = body.join('\n');
-        blocks.push(new MarkdownBlock(`md-${serial++}`, 'math', mathBody, 0, '', [], [], this.wrappedMathSource('$$', '$$', mathBody)));
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'math', mathBody, 0, '', [], this.wrappedMathSource('$$', '$$', mathBody)));
         continue;
       }
 
@@ -4491,7 +5111,7 @@ struct Index {
           }
         }
         const mathBody: string = body.join('\n');
-        blocks.push(new MarkdownBlock(`md-${serial++}`, 'math', mathBody, 0, '', [], [], this.wrappedMathSource('\\[', '\\]', mathBody)));
+        blocks.push(new MarkdownBlock(`md-${serial++}`, 'math', mathBody, 0, '', [], this.wrappedMathSource('\\[', '\\]', mathBody)));
         continue;
       }
 
@@ -4572,6 +5192,73 @@ struct Index {
 
   private isDividerLine(trimmed: string): boolean {
     return trimmed === '---' || trimmed === '***' || trimmed === '___';
+  }
+
+  private isMermaidCodeBlock(language: string, code: string): boolean {
+    const lang: string = language.trim().toLowerCase();
+    if (lang === 'mermaid' || lang === 'mmd') {
+      return true;
+    }
+    const firstMeaningfulLine: string = this.firstMeaningfulMermaidLine(code).toLowerCase();
+    if (firstMeaningfulLine.length === 0) {
+      return false;
+    }
+    const starters: string[] = [
+      'flowchart ',
+      'graph ',
+      'sequencediagram',
+      'classdiagram',
+      'statediagram',
+      'statediagram-v2',
+      'erdiagram',
+      'journey',
+      'gantt',
+      'pie',
+      'mindmap',
+      'timeline',
+      'quadrantchart',
+      'requirementdiagram',
+      'gitgraph',
+      'c4context',
+      'c4container',
+      'c4component',
+      'c4dynamic',
+      'zenuml',
+      'sankey',
+      'sankey-beta',
+      'xychart-beta',
+      'block-beta',
+      'packet-beta',
+      'architecture-beta',
+      'kanban',
+      'radar-beta',
+      'treemap-beta'
+    ];
+    for (let index: number = 0; index < starters.length; index += 1) {
+      if (firstMeaningfulLine.startsWith(starters[index])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private firstMeaningfulMermaidLine(code: string): string {
+    const lines: string[] = code.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    let skippingFrontmatter: boolean = false;
+    for (let index: number = 0; index < lines.length; index += 1) {
+      const line: string = lines[index].trim();
+      if (line.length === 0 || line.startsWith('%%')) {
+        continue;
+      }
+      if (line === '---') {
+        skippingFrontmatter = !skippingFrontmatter;
+        continue;
+      }
+      if (!skippingFrontmatter) {
+        return line;
+      }
+    }
+    return '';
   }
 
   private isQuoteLine(trimmed: string): boolean {
@@ -4834,108 +5521,6 @@ struct Index {
     return kind === 'keyword' || kind === 'builtin' ? FontWeight.Medium : FontWeight.Regular;
   }
 
-  private parseMermaidEdges(source: string): MermaidEdge[] {
-    const nodes: Map<string, MermaidNode> = new Map();
-    const edges: MermaidEdge[] = [];
-    const lines: string[] = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-    let serial = 0;
-    for (let i = 0; i < lines.length; i++) {
-      let line: string = lines[i].trim();
-      if (line.length === 0 || line.startsWith('%%') || line.startsWith('flowchart ') || line.startsWith('graph ')) {
-        continue;
-      }
-      if (line.endsWith(';')) {
-        line = line.substring(0, line.length - 1);
-      }
-      const arrow: string = this.findMermaidArrow(line);
-      if (arrow.length === 0) {
-        const singleNode: MermaidNode | null = this.parseMermaidNode(line);
-        if (singleNode !== null && !nodes.has(singleNode.id)) {
-          nodes.set(singleNode.id, singleNode);
-        }
-        continue;
-      }
-      const parts: string[] = line.split(arrow);
-      if (parts.length < 2) {
-        continue;
-      }
-      const left: MermaidNode | null = this.parseMermaidNode(this.removeMermaidLeftLabel(parts[0].trim()));
-      const rightParts: string[] = parts.slice(1);
-      const rightRaw: string = rightParts.join(arrow).trim();
-      const label: string = this.extractMermaidEdgeLabel(line);
-      const right: MermaidNode | null = this.parseMermaidNode(this.removeMermaidEdgeLabel(rightRaw));
-      if (left === null || right === null) {
-        continue;
-      }
-      const from: MermaidNode = nodes.get(left.id) ?? left;
-      const to: MermaidNode = nodes.get(right.id) ?? right;
-      nodes.set(from.id, from);
-      nodes.set(to.id, to);
-      edges.push(new MermaidEdge(`edge-${serial++}`, from, to, label));
-    }
-    return edges;
-  }
-
-  private findMermaidArrow(line: string): string {
-    const arrows: string[] = ['-.->', '==>', '-->', '---'];
-    for (let i = 0; i < arrows.length; i++) {
-      if (line.indexOf(arrows[i]) >= 0) {
-        return arrows[i];
-      }
-    }
-    return '';
-  }
-
-  private parseMermaidNode(rawText: string): MermaidNode | null {
-    let text: string = this.removeMermaidEdgeLabel(rawText.trim());
-    if (text.length === 0) {
-      return null;
-    }
-    const match: RegExpMatchArray | null = text.match(/^([A-Za-z0-9_]+)\s*(?:\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\))?$/);
-    if (match === null) {
-      const fallback: string = text.replace(/[^A-Za-z0-9_]/g, '');
-      if (fallback.length === 0) {
-        return null;
-      }
-      return new MermaidNode(fallback, text, 'rect');
-    }
-    const label: string = match[2] ?? match[3] ?? match[4] ?? match[1];
-    const shape: string = match[3] !== undefined ? 'diamond' : (match[4] !== undefined ? 'round' : 'rect');
-    return new MermaidNode(match[1], label, shape);
-  }
-
-  private extractMermaidEdgeLabel(line: string): string {
-    const pipeMatch: RegExpMatchArray | null = line.match(/\|([^|]+)\|/);
-    if (pipeMatch !== null) {
-      return pipeMatch[1].trim();
-    }
-    const labelMatch: RegExpMatchArray | null = line.match(/--\s*([^-]+?)\s*-->/);
-    return labelMatch !== null ? labelMatch[1].trim() : '';
-  }
-
-  private removeMermaidLeftLabel(text: string): string {
-    const dashLabel: number = text.lastIndexOf('--');
-    if (dashLabel > 0) {
-      return text.substring(0, dashLabel).trim();
-    }
-    const equalLabel: number = text.lastIndexOf('==');
-    if (equalLabel > 0) {
-      return text.substring(0, equalLabel).trim();
-    }
-    return text;
-  }
-
-  private removeMermaidEdgeLabel(text: string): string {
-    let result: string = text.trim();
-    if (result.startsWith('|')) {
-      const closing: number = result.indexOf('|', 1);
-      if (closing > 0) {
-        result = result.substring(closing + 1).trim();
-      }
-    }
-    return result.replace(/\|[^|]+\|/g, '').trim();
-  }
-
   private normalizeInlineMarkdownText(text: string): string {
     let result: string = text;
     result = result.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '图片: $1');
@@ -4943,15 +5528,6 @@ struct Index {
     result = result.replace(/\*\*([^*]+)\*\*/g, '$1');
     result = result.replace(/__([^_]+)__/g, '$1');
     result = result.replace(/`([^`]+)`/g, '$1');
-    return result;
-  }
-
-  private inlineMarkdownText(text: string): string {
-    const segments: MathSegment[] = this.inlineMarkdownSegments(text, 'plain');
-    let result: string = '';
-    for (let i = 0; i < segments.length; i++) {
-      result += segments[i].kind === 'math' ? segments[i].rawText : segments[i].text;
-    }
     return result;
   }
 
@@ -5803,51 +6379,27 @@ struct Index {
     return `${opening}${body}${closing}`;
   }
 
-  private mermaidDirection(source: string): string {
-    const match: RegExpMatchArray | null = source.match(/(?:flowchart|graph)\s+(TD|TB|BT|LR|RL)/i);
-    return match !== null ? match[1].toUpperCase() : 'LR';
-  }
-
-  private isVerticalMermaid(source: string): boolean {
-    const direction: string = this.mermaidDirection(source);
-    return direction === 'TD' || direction === 'TB' || direction === 'BT';
-  }
-
-  private mermaidArrowSymbol(source: string): string {
-    const direction: string = this.mermaidDirection(source);
-    if (direction === 'TD' || direction === 'TB') {
-      return '↓';
-    }
-    if (direction === 'BT') {
-      return '↑';
-    }
-    if (direction === 'RL') {
-      return '←';
-    }
-    return '→';
-  }
-
   private markdownHeadingFontSize(level: number): number {
     if (level <= 1) {
-      return 18;
+      return this.conversationFontSize(18);
     }
     if (level === 2) {
-      return 16;
+      return this.conversationFontSize(16);
     }
     if (level === 3) {
-      return 14;
+      return this.conversationFontSize(14);
     }
-    return 13;
+    return this.conversationFontSize(13);
   }
 
   private markdownHeadingLineHeight(level: number): number {
     if (level <= 1) {
-      return 26;
+      return this.conversationLineHeight(26);
     }
     if (level === 2) {
-      return 24;
+      return this.conversationLineHeight(24);
     }
-    return 21;
+    return this.conversationLineHeight(21);
   }
 
   private markdownListMarker(line: string): string {
@@ -6140,7 +6692,7 @@ struct Index {
   private actionChip(label: string) {
     Text(label)
       .copyOption(CopyOptions.None)
-      .fontSize(10)
+      .fontSize(this.conversationFontSize(10))
       .fontColor('#71717A')
       .padding({ left: 10, right: 10, top: 5, bottom: 5 })
       .backgroundColor('#FAFAFA')
@@ -6159,7 +6711,7 @@ struct Index {
       Row() {
         Text('回到底部')
           .copyOption(CopyOptions.None)
-          .fontSize(11)
+          .fontSize(this.conversationFontSize(11))
           .fontWeight(FontWeight.Medium)
           .fontColor('#18181B')
       }
@@ -6191,9 +6743,9 @@ struct Index {
 
       Text(approval.detail)
         .copyOption(CopyOptions.LocalDevice)
-        .fontSize(12)
+        .fontSize(this.conversationFontSize(12))
         .fontColor('#27272A')
-        .lineHeight(19)
+        .lineHeight(this.conversationLineHeight(19))
         .margin({ top: 10 })
 
       Row() {
@@ -6247,9 +6799,9 @@ struct Index {
       if (request.detail.trim().length > 0) {
         Text(request.detail)
           .copyOption(CopyOptions.LocalDevice)
-          .fontSize(12)
+          .fontSize(this.conversationFontSize(12))
           .fontColor('#27272A')
-          .lineHeight(19)
+          .lineHeight(this.conversationLineHeight(19))
           .margin({ top: 10 })
       }
 
@@ -6257,14 +6809,14 @@ struct Index {
         ForEach(request.questions, (question: CodexRequestUserInputQuestion) => {
           Column() {
             Text(question.header)
-              .fontSize(11)
+              .fontSize(this.conversationFontSize(11))
               .fontWeight(FontWeight.Medium)
               .fontColor('#18181B')
 
             Text(question.question)
-              .fontSize(11)
+              .fontSize(this.conversationFontSize(11))
               .fontColor('#71717A')
-              .lineHeight(18)
+              .lineHeight(this.conversationLineHeight(18))
               .margin({ top: 4 })
 
             if (question.options.length > 0) {
@@ -6280,9 +6832,9 @@ struct Index {
                     )
                     if (option.description.trim().length > 0) {
                       Text(option.description)
-                        .fontSize(10)
+                        .fontSize(this.conversationFontSize(10))
                         .fontColor('#A1A1AA')
-                        .lineHeight(16)
+                        .lineHeight(this.conversationLineHeight(16))
                     }
                   }
                   .alignItems(HorizontalAlign.Start)
@@ -6301,7 +6853,7 @@ struct Index {
                 .width('100%')
                 .height(40)
                 .margin({ top: 8 })
-                .fontSize(11)
+                .fontSize(this.conversationFontSize(11))
                 .backgroundColor('#FAFAFA')
                 .borderRadius(8)
                 .border({ width: 0.5, color: '#E4E4E7' })
@@ -6924,6 +7476,11 @@ struct Index {
             .alignItems(VerticalAlign.Center)
           }
 
+          this.conversationZoomControl()
+
+          Blank()
+            .width(6)
+
           Button() {
             Stack() {
               Column()
@@ -7016,7 +7573,7 @@ struct Index {
       .margin({ top: 10 })
       .scrollBar(BarState.Off)
       .onWillScroll((xOffset: number, yOffset: number, scrollState: ScrollState, scrollSource: ScrollSource) => {
-        this.handleMessageWillScroll(xOffset, yOffset, scrollState, scrollSource);
+        return this.handleMessageWillScroll(xOffset, yOffset, scrollState, scrollSource);
       })
       .onDidScroll((xOffset: number, yOffset: number, scrollState: ScrollState) => {
         this.handleMessageDidScroll(xOffset, yOffset, scrollState);
@@ -7029,6 +7586,9 @@ struct Index {
       })
       .onReachEnd(() => {
         this.resumeMessageAutoFollow();
+      })
+      .onAxisEvent((event: AxisEvent) => {
+        this.handleConversationAxisZoom(event);
       })
 
       if (!this.messageAutoFollowToBottom) {
@@ -7138,7 +7698,7 @@ struct Index {
           TextInput({ text: this.draft, placeholder: this.dynamicInputPlaceholder() })
             .layoutWeight(1)
             .height(40)
-            .fontSize(12)
+            .fontSize(this.conversationFontSize(12))
             .fontColor('#18181B')
             .placeholderColor('#A1A1AA')
             .backgroundColor('#FAFAFA')
@@ -7153,9 +7713,14 @@ struct Index {
               this.sendMessage();
             })
             .onKeyEvent((event: KeyEvent) => {
+              if (this.handleConversationKeyEvent(event)) {
+                return true;
+              }
               if (event.type === KeyType.Down && event.keyCode === 27 && this.isRunning) {
                 this.stopTurn();
+                return true;
               }
+              return false;
             })
 
           Button() {
@@ -7209,6 +7774,10 @@ struct Index {
     }
     .height('100%')
     .width('100%')
+    .focusable(true)
+    .onKeyEvent((event: KeyEvent) => {
+      return this.handleConversationKeyEvent(event);
+    })
   }
 
   @Builder
