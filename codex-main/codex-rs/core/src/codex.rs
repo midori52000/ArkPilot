@@ -6075,6 +6075,30 @@ pub(crate) async fn run_turn(
                 sess.send_event(&turn_context, event).await;
                 break;
             }
+            Err(CodexErr::ContextWindowExceeded) => {
+                info!("ContextWindowExceeded received, attempting auto-compact recovery");
+                match run_auto_compact(
+                    &sess,
+                    &turn_context,
+                    InitialContextInjection::BeforeLastUserMessage,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        info!("Auto-compact recovery succeeded, retrying turn");
+                        continue;
+                    }
+                    Err(compact_err) => {
+                        info!("Auto-compact recovery failed: {compact_err:#}");
+                        let event = EventMsg::Error(ErrorEvent {
+                            message: "上下文已满，自动压缩失败，请手动压缩后重试".to_string(),
+                            codex_error_info: Some(CodexErrorInfo::Other),
+                        });
+                        sess.send_event(&turn_context, event).await;
+                        break;
+                    }
+                }
+            }
             Err(e) => {
                 info!("Turn error: {e:#}");
                 let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));

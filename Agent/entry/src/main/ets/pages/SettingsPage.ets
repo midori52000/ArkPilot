@@ -1846,7 +1846,8 @@ struct SettingsPage {
       const buf = new ArrayBuffer(stat.size);
       const bytesRead = fs.readSync(file.fd, buf);
       fs.closeSync(file);
-      this.configTomlContent = String.fromCharCode(...new Uint8Array(buf, 0, bytesRead));
+      const decoder = new util.TextDecoder('utf-8');
+      this.configTomlContent = decoder.decode(new Uint8Array(buf, 0, bytesRead));
     } catch (e) {
       this.configTomlContent = '# 读取失败: ' + JSON.stringify(e);
     }
@@ -1858,14 +1859,16 @@ struct SettingsPage {
       return;
     }
     try {
-      const encoder = new util.TextEncoder();
-      const encoded = encoder.encodeInto(this.configTomlContent);
       const file = fs.openSync(this.configTomlPath, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, encoded.buffer);
+      fs.writeSync(file.fd, this.configTomlContent);
       fs.closeSync(file);
       this.showConfigToml = false;
     } catch (e) {
-      // 保存失败，保持弹窗打开
+      AlertDialog.show({
+        title: '保存失败',
+        message: JSON.stringify(e),
+        primaryButton: { value: '确定', action: () => {} }
+      });
     }
   }
 
