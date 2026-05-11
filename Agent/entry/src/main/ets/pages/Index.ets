@@ -519,6 +519,7 @@ struct Index {
   @State private workspaceStatusText: string = 'å°šæœªæ£€æµ‹å·¥ä½œåŒºæƒé™';
   @State private selectedEffortIndex: number = 0;
   @State private showEffortOptions: boolean = false;
+  @State private showComposerToolbar: boolean = false;
   @State private collaborationModes: CollaborationModeOption[] = [];
   @State private selectedCollaborationModeName: string = 'default';
   @State private collaborationModeVersion: number = 0;
@@ -7552,11 +7553,11 @@ struct Index {
       }
       .width('100%')
 
-      if (this.pendingApproval !== null) {
+      if (!this.isPhoneBreakpoint() && this.pendingApproval !== null) {
         this.approvalCard(this.pendingApproval!)
       }
 
-      if (this.pendingRequestUserInput !== null) {
+      if (!this.isPhoneBreakpoint() && this.pendingRequestUserInput !== null) {
         this.requestUserInputCard(this.pendingRequestUserInput!)
       }
 
@@ -7603,103 +7604,137 @@ struct Index {
       }
 
       Column() {
-        Row() {
+        if (this.isPhoneBreakpoint()) {
           Row() {
-            Text('模式')
-              .copyOption(CopyOptions.None)
-              .fontSize(10)
-              .fontColor('#71717A')
             Text(this.currentCollaborationModeLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#18181B')
-              .margin({ left: 6 })
-            Text('▾')
+              .fontColor('#71717A')
+            Text('/')
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#A1A1AA')
-              .margin({ left: 6 })
-          }
-          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-          .backgroundColor(this.showCollaborationModeOptions ? '#F4F4F5' : '#FAFAFA')
-          .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#D4D4D8' : '#E4E4E7' })
-          .borderRadius(8)
-          .onClick(() => {
-            this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
-            if (this.showCollaborationModeOptions) {
-              this.showEffortOptions = false;
-            }
-          })
-
-          Blank()
-            .width(8)
-          Row() {
-            Text('推理')
-              .copyOption(CopyOptions.None)
-              .fontSize(10)
-              .fontColor('#64748B')
-
+              .fontColor('#D4D4D8')
+              .margin({ left: 4, right: 4 })
             Text(this.currentEffortLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#0F172A')
-              .margin({ left: 6 })
-
-            Text('▾')
+              .fontColor('#71717A')
+            Blank()
+              .layoutWeight(1)
+            Text(this.showComposerToolbar ? '▴' : '▾')
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#94A3B8')
-              .margin({ left: 6 })
-          }
-          .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-          .backgroundColor(this.showEffortOptions ? '#EEF4FF' : '#FFFFFF')
-          .border({ width: 1, color: this.showEffortOptions ? '#BFDBFE' : '#D7DEE8' })
-          .borderRadius(12)
-          .onClick(() => {
-            this.showEffortOptions = !this.showEffortOptions;
-            if (this.showEffortOptions) {
-              this.showCollaborationModeOptions = false;
-            }
-          })
-        }
-        .width('100%')
-
-        if (this.showCollaborationModeOptions) {
-          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-            ForEach(this.collaborationModes, (item: CollaborationModeOption) => {
-              this.optionChip(
-                new SelectorOption(item.name, item.name),
-                this.selectedCollaborationModeName === item.name,
-                () => {
-                  this.chooseCollaborationMode(item);
-                }
-              )
-            }, (item: CollaborationModeOption) => item.name)
+              .fontColor('#A1A1AA')
           }
           .width('100%')
-          .margin({ top: 8 })
+          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+          .backgroundColor('#FAFAFA')
+          .borderRadius(8)
+          .onClick(() => {
+            this.showComposerToolbar = !this.showComposerToolbar;
+          })
         }
 
-        if (this.showEffortOptions) {
-          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-            ForEach(this.effortOptions, (item: SelectorOption, index: number) => {
-              this.optionChip(item, this.selectedEffortIndex === index, () => {
-                this.selectedEffortIndex = index;
+        if (!this.isPhoneBreakpoint() || this.showComposerToolbar) {
+          Row() {
+            Row() {
+              Text('模式')
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#71717A')
+              Text(this.currentCollaborationModeLabel())
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#18181B')
+                .margin({ left: 6 })
+              Text('▾')
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#A1A1AA')
+                .margin({ left: 6 })
+            }
+            .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+            .backgroundColor(this.showCollaborationModeOptions ? '#F4F4F5' : '#FAFAFA')
+            .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#D4D4D8' : '#E4E4E7' })
+            .borderRadius(8)
+            .onClick(() => {
+              this.showCollaborationModeOptions = !this.showCollaborationModeOptions;
+              if (this.showCollaborationModeOptions) {
                 this.showEffortOptions = false;
-              })
+              }
+            })
+
+            Blank()
+              .width(8)
+            Row() {
+              Text('推理')
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#64748B')
+
+              Text(this.currentEffortLabel())
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#0F172A')
+                .margin({ left: 6 })
+
+              Text('▾')
+                .copyOption(CopyOptions.None)
+                .fontSize(10)
+                .fontColor('#94A3B8')
+                .margin({ left: 6 })
+            }
+            .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+            .backgroundColor(this.showEffortOptions ? '#EEF4FF' : '#FFFFFF')
+            .border({ width: 1, color: this.showEffortOptions ? '#BFDBFE' : '#D7DEE8' })
+            .borderRadius(12)
+            .onClick(() => {
+              this.showEffortOptions = !this.showEffortOptions;
+              if (this.showEffortOptions) {
+                this.showCollaborationModeOptions = false;
+              }
             })
           }
           .width('100%')
+          .margin({ top: this.isPhoneBreakpoint() ? 6 : 0 })
+
+          if (this.showCollaborationModeOptions) {
+            Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+              ForEach(this.collaborationModes, (item: CollaborationModeOption) => {
+                this.optionChip(
+                  new SelectorOption(item.name, item.name),
+                  this.selectedCollaborationModeName === item.name,
+                  () => {
+                    this.chooseCollaborationMode(item);
+                  }
+                )
+              }, (item: CollaborationModeOption) => item.name)
+            }
+            .width('100%')
+            .margin({ top: 8 })
+          }
+
+          if (this.showEffortOptions) {
+            Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+              ForEach(this.effortOptions, (item: SelectorOption, index: number) => {
+                this.optionChip(item, this.selectedEffortIndex === index, () => {
+                  this.selectedEffortIndex = index;
+                  this.showEffortOptions = false;
+                })
+              })
+            }
+            .width('100%')
+            .margin({ top: 8 })
+          }
+
+          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+            ForEach(this.dynamicInputHints(), (item: string) => {
+              this.actionChip(item)
+            }, (item: string) => item)
+          }
+          .width('100%')
           .margin({ top: 8 })
         }
-
-        Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-          ForEach(this.dynamicInputHints(), (item: string) => {
-            this.actionChip(item)
-          }, (item: string) => item)
-        }
-        .width('100%')
-        .margin({ top: 8 })
 
         Row() {
           TextInput({ text: this.draft, placeholder: this.dynamicInputPlaceholder() })
@@ -8822,16 +8857,41 @@ struct Index {
             Column() {
               this.rightPanel()
             }
-            .width(this.rightPanelWidth)
-            .height(this.currentBreakpoint === 'md' ? '78%' : '88%')
+            .width(this.isPhoneBreakpoint() ? '92%' : this.rightPanelWidth)
+            .height(this.isPhoneBreakpoint() ? '90%' : (this.currentBreakpoint === 'md' ? '78%' : '88%'))
             .padding(4)
           }
           .width('100%')
           .height('100%')
-          .padding({ left: 24, right: 12, top: 24, bottom: 12 })
+          .padding(this.isPhoneBreakpoint()
+            ? { left: 8, right: 8, top: 16, bottom: 8 }
+            : { left: 24, right: 12, top: 24, bottom: 12 })
           .backgroundColor('#66000000')
           .onClick(() => {
             this.showRightDrawer = false;
+          })
+        }
+
+        if (this.isPhoneBreakpoint() && (this.pendingApproval !== null || this.pendingRequestUserInput !== null)) {
+          Column() {
+            Blank()
+              .layoutWeight(1)
+            Column() {
+              if (this.pendingApproval !== null) {
+                this.approvalCard(this.pendingApproval!)
+              }
+              if (this.pendingRequestUserInput !== null) {
+                this.requestUserInputCard(this.pendingRequestUserInput!)
+              }
+            }
+            .width('100%')
+            .padding({ left: 12, right: 12, bottom: 12 })
+          }
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#4D000000')
+          .onClick(() => {
+            // tap backdrop to dismiss — do nothing, user must approve/deny
           })
         }
       }
