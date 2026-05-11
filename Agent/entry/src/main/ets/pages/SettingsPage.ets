@@ -10,7 +10,7 @@ import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { PromptRecord } from '../prompts/PromptTypes';
 import { ArkPilotBreakpoint } from '../adaptive/BreakpointTypes';
 import { breakpointManager } from '../adaptive/BreakpointManager';
-import { getArkPilotLayoutProfile, getArkPilotLayoutMode } from '../adaptive/LayoutProfiles';
+import { ArkPilotLayoutMode, getArkPilotLayoutProfile, getArkPilotLayoutMode } from '../adaptive/LayoutProfiles';
 import { picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
 import fs from '@ohos.file.fs';
@@ -100,7 +100,9 @@ struct SettingsPage {
   ];
 
   @StorageProp('arkPilotBreakpoint')
+  @Watch('onBreakpointChange')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
+  @State private animatedMode: ArkPilotLayoutMode = 'phone';
   @State private activeTab: SettingsTab = 'api';
   @State private pressedKey: string = '';
   @State private sparkSeed: number = 0;
@@ -172,6 +174,7 @@ struct SettingsPage {
   aboutToAppear(): void {
     const mediaQuery = this.getUIContext().getMediaQuery();
     breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
+    this.animatedMode = getArkPilotLayoutMode(this.currentBreakpoint);
     this.loadMockData();
     const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
     if (codexHome.length > 0) {
@@ -182,6 +185,19 @@ struct SettingsPage {
     this.syncSkillsStateFromViewModel();
     this.syncMcpStateFromBackend();
     this.loadSettingsFacadeState();
+  }
+
+  private onBreakpointChange(): void {
+    const newMode = getArkPilotLayoutMode(this.currentBreakpoint);
+    if (newMode === this.animatedMode) {
+      return;
+    }
+    this.getUIContext().animateTo({
+      duration: 250,
+      curve: Curve.FastOutSlowIn
+    }, () => {
+      this.animatedMode = newMode;
+    });
   }
 
   onPageShow(): void {
@@ -2702,7 +2718,7 @@ struct SettingsPage {
 
   @Builder
   private skillsPanel() {
-    if (getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' && this.selectedSkillId.length > 0) {
+    if (this.animatedMode !== 'desktop' && this.selectedSkillId.length > 0) {
       this.phoneSkillPreviewView()
     } else {
       this.skillsListPreviewLayout()
@@ -2757,11 +2773,12 @@ struct SettingsPage {
           .onChange((index: number) => { this.switchSkillsSubTab(this.skillsSubTabByIndex(index)); })
           .width('100%')
         }
-        .width(getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' ? '100%' : '38%')
+        .width(this.animatedMode !== 'desktop' ? '100%' : '38%')
 
-        if (getArkPilotLayoutMode(this.currentBreakpoint) === 'desktop') {
+        if (this.animatedMode === 'desktop') {
           Column() { this.skillPreview() }
             .layoutWeight(1).margin({ left: 16 })
+            .transition(TransitionEffect.OPACITY)
         }
       }
       .width('100%').alignItems(VerticalAlign.Top).margin({ top: 18 })
@@ -3023,7 +3040,7 @@ struct SettingsPage {
 
   @Builder
   private mcpPanel() {
-    if (getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' && this.selectedMcpServerId.length > 0) {
+    if (this.animatedMode !== 'desktop' && this.selectedMcpServerId.length > 0) {
       this.phoneMcpEditorView()
     } else {
       this.mcpListEditorLayout()
@@ -3097,9 +3114,9 @@ struct SettingsPage {
             .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add', event); })
             .onClick(() => { this.openMcpAddDialog(); })
         }
-        .width(getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' ? '100%' : '34%')
+        .width(this.animatedMode !== 'desktop' ? '100%' : '34%')
 
-        if (getArkPilotLayoutMode(this.currentBreakpoint) === 'desktop') {
+        if (this.animatedMode === 'desktop') {
           Column() {
             Row() {
               Blank()
@@ -3114,6 +3131,7 @@ struct SettingsPage {
             this.mcpEditorCard()
           }
           .layoutWeight(1).margin({ left: 16 })
+          .transition(TransitionEffect.OPACITY)
         }
       }
       .width('100%').alignItems(VerticalAlign.Top)
@@ -3214,7 +3232,7 @@ struct SettingsPage {
 
   @Builder
   private promptsPanel() {
-    if (getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' && this.selectedPromptId.length > 0) {
+    if (this.animatedMode !== 'desktop' && this.selectedPromptId.length > 0) {
       this.phonePromptEditorView()
     } else {
       this.promptsListEditorLayout()
@@ -3292,14 +3310,15 @@ struct SettingsPage {
           .width('100%')
           .margin({ top: 12 })
         }
-        .width(getArkPilotLayoutMode(this.currentBreakpoint) !== 'desktop' ? '100%' : '38%')
+        .width(this.animatedMode !== 'desktop' ? '100%' : '38%')
 
-        if (getArkPilotLayoutMode(this.currentBreakpoint) === 'desktop') {
+        if (this.animatedMode === 'desktop') {
           Column() {
             this.promptEditor()
           }
           .layoutWeight(1)
           .margin({ left: 16 })
+          .transition(TransitionEffect.OPACITY)
         }
       }
       .width('100%')
