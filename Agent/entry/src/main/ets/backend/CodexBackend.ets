@@ -1185,6 +1185,7 @@ class CompactionRunState {
   status: CodexCompactionStatus = 'idle';
   errorMessage: string = '';
   savedTokens: number = 0;
+  observedReduction: boolean = false;
 }
 
 class CodexThreadRecord {
@@ -1766,6 +1767,7 @@ export class CodexBackend {
       this.compactionState.status = 'starting';
       this.compactionState.errorMessage = '';
       this.compactionState.savedTokens = 0;
+      this.compactionState.observedReduction = false;
       this.notifyListeners();
       const resp = parseJsonText(
         compactStartNative(JSON.stringify({ threadId: thread.remoteThreadId })),
@@ -1852,16 +1854,26 @@ export class CodexBackend {
     this.compactionState.status = 'idle';
     this.compactionState.errorMessage = '';
     this.compactionState.savedTokens = 0;
+    this.compactionState.observedReduction = false;
   }
 
   private failCompaction(message: string, threadId: string, status: CodexCompactionStatus = 'failed'): void {
     const normalizedThreadId: string = this.normalizeThreadId(threadId);
+    if (this.compactionState.observedReduction && normalizedThreadId === this.compactionState.threadId) {
+      const thread: CodexThreadRecord | undefined = this.threads.get(normalizedThreadId);
+      if (thread !== undefined) {
+        this.completeCompaction(thread);
+        return;
+      }
+    }
     this.lastCompactError = message;
     this.compactionState.threadId = normalizedThreadId;
     this.compactionState.status = status;
     this.compactionState.errorMessage = message;
-    this.compactionState.newTotalTokens = 0;
-    this.compactionState.savedTokens = 0;
+    if (!this.compactionState.observedReduction) {
+      this.compactionState.newTotalTokens = 0;
+      this.compactionState.savedTokens = 0;
+    }
     this.notifyListeners();
   }
 
@@ -1960,6 +1972,9 @@ export class CodexBackend {
     this.compactionState.newTotalTokens = newTotal;
     const saved: number = this.compactionState.oldTotalTokens - newTotal;
     this.compactionState.savedTokens = saved > 0 ? saved : 0;
+    if (saved > 0) {
+      this.compactionState.observedReduction = true;
+    }
   }
 
   private async pollCompactionUntilCompleted(thread: CodexThreadRecord, baselineTurnId: string, timeoutMs: number): Promise<void> {
@@ -1976,6 +1991,11 @@ export class CodexBackend {
             return;
           }
           if (snapshotStatus === 'failed' || snapshotStatus === 'interrupted') {
+            await this.drainCompactionTokenUsage(thread);
+            if (this.compactionState.observedReduction) {
+              this.completeCompaction(thread);
+              return;
+            }
             this.failCompaction('压缩失败', thread.remoteThreadId);
             return;
           }
@@ -1990,17 +2010,26 @@ export class CodexBackend {
         ) as Record<string, Object>;
         this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} payload=${JSON.stringify(pollObject)}`);
         const result: CodexTurnResult = this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
+        if (this.compactionState.observedReduction) {
+          this.completeCompaction(thread);
+          return;
+        }
+        if (result.status === 'failed' || result.status === 'interrupted') {
+          await this.drainCompactionTokenUsage(thread);
+          if (this.compactionState.observedReduction) {
+            this.completeCompaction(thread);
+            return;
+          }
+          this.failCompaction(result.summaryPoints[0] ?? '压缩失败', thread.remoteThreadId);
+          return;
+        }
         if (this.compactionState.status !== 'running') {
-          this.compactionState.status = result.status === 'failed' ? 'failed' : (result.status === 'inProgress' ? 'running' : this.compactionState.status);
+          this.compactionState.status = result.status === 'inProgress' ? 'running' : this.compactionState.status;
         }
         this.notifyListeners();
         if (result.status === 'completed') {
           await this.drainCompactionTokenUsage(thread);
           this.completeCompaction(thread);
-          return;
-        }
-        if (result.status === 'failed' || result.status === 'interrupted') {
-          this.failCompaction(result.summaryPoints[0] ?? '压缩失败', thread.remoteThreadId);
           return;
         }
       }
@@ -2011,6 +2040,10 @@ export class CodexBackend {
   }
 
   private async drainCompactionTokenUsage(thread: CodexThreadRecord): Promise<void> {
+    if (this.compactionState.turnId.trim().length === 0) {
+      this.updateCompactionTokenDelta(thread);
+      return;
+    }
     for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
       this.updateCompactionTokenDelta(thread);
       if (this.compactionState.newTotalTokens > 0 && this.compactionState.newTotalTokens !== this.compactionState.oldTotalTokens) {
