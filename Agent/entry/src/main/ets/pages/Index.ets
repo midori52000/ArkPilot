@@ -634,6 +634,8 @@ struct Index {
   @State private renameSessionText: string = '';
   @State private hoveredProjectId: string = '';
   @State private hoveredSessionId: string = '';
+  @State private mouseNearRightEdge: boolean = false;
+  @State private chatAreaWidth: number = 0;
   @State private showProjectMenuId: string = '';
   @State private showSessionMenuId: string = '';
   @State private showRenameSessionDialog: boolean = false;
@@ -7608,42 +7610,63 @@ struct Index {
         this.requestUserInputCard(this.pendingRequestUserInput!)
       }
 
-      Scroll(this.messageScroller) {
-        Column() {
-          ForEach(this.visibleMessages(), (item: ChatMessage) => {
-            this.messageLine(item)
-          }, (item: ChatMessage) => this.messageRenderKey(item))
-          ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
-            this.compactionNoticeLine(notice)
-          }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
-          if (this.shouldShowTurnActivityLine()) {
-            this.turnActivityLine()
+      Column() {
+        Scroll(this.messageScroller) {
+          Column() {
+            ForEach(this.visibleMessages(), (item: ChatMessage) => {
+              this.messageLine(item)
+            }, (item: ChatMessage) => this.messageRenderKey(item))
+            ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
+              this.compactionNoticeLine(notice)
+            }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
+            if (this.shouldShowTurnActivityLine()) {
+              this.turnActivityLine()
+            }
           }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
         }
         .width('100%')
-        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .margin({ top: 10 })
+        .scrollBar(this.mouseNearRightEdge ? BarState.On : BarState.Auto)
+        .onWillScroll((xOffset: number, yOffset: number, scrollState: ScrollState, scrollSource: ScrollSource) => {
+          return this.handleMessageWillScroll(xOffset, yOffset, scrollState, scrollSource);
+        })
+        .onDidScroll((xOffset: number, yOffset: number, scrollState: ScrollState) => {
+          this.handleMessageDidScroll(xOffset, yOffset, scrollState);
+        })
+        .onScrollEdge((side: Edge) => {
+          this.handleMessageScrollEdge(side);
+        })
+        .onScrollStop(() => {
+          this.handleMessageScrollStop();
+        })
+        .onReachEnd(() => {
+          this.resumeMessageAutoFollow();
+        })
+        .onAxisEvent((event: AxisEvent) => {
+          this.handleConversationAxisZoom(event);
+        })
       }
       .layoutWeight(1)
       .width('100%')
-      .margin({ top: 10 })
-      .scrollBar(BarState.Off)
-      .onWillScroll((xOffset: number, yOffset: number, scrollState: ScrollState, scrollSource: ScrollSource) => {
-        return this.handleMessageWillScroll(xOffset, yOffset, scrollState, scrollSource);
+      .onAreaChange((_old: Area, newArea: Area) => {
+        this.chatAreaWidth = newArea.width as number;
       })
-      .onDidScroll((xOffset: number, yOffset: number, scrollState: ScrollState) => {
-        this.handleMessageDidScroll(xOffset, yOffset, scrollState);
+      .onTouch((event: TouchEvent) => {
+        if (event.touches.length > 0) {
+          const touch: TouchObject = event.touches[0];
+          const near: boolean = this.chatAreaWidth - touch.windowX < 20;
+          if (near !== this.mouseNearRightEdge) {
+            this.mouseNearRightEdge = near;
+          }
+        }
       })
-      .onScrollEdge((side: Edge) => {
-        this.handleMessageScrollEdge(side);
-      })
-      .onScrollStop(() => {
-        this.handleMessageScrollStop();
-      })
-      .onReachEnd(() => {
-        this.resumeMessageAutoFollow();
-      })
-      .onAxisEvent((event: AxisEvent) => {
-        this.handleConversationAxisZoom(event);
+      .onHover((isHover: boolean) => {
+        if (!isHover) {
+          this.mouseNearRightEdge = false;
+        }
       })
 
       if (!this.messageAutoFollowToBottom) {
