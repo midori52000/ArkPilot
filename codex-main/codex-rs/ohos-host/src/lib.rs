@@ -77,6 +77,7 @@ use codex_core::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Settings;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -107,6 +108,7 @@ const DEFAULT_PROVIDER_SYNC_STATUS: &str = "synced";
 const REMOTE_CLIENT_NAME: &str = "codex_harmony_agent_native";
 const REMOTE_CLIENT_VERSION: &str = "0.1.0";
 const REMOTE_CLIENT_CHANNEL_CAPACITY: usize = 256;
+const REASONING_PENDING_CONTENT: &str = "正在思考...";
 
 #[derive(Default)]
 struct HostState {
@@ -2286,6 +2288,7 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
         let requested_effort = parse_reasoning_effort(request.effort.as_deref())?;
         params.model = requested_model.clone();
         params.effort = requested_effort;
+        params.summary = Some(ReasoningSummary::Detailed);
         params.approval_policy = parse_approval_policy(
             request
                 .approval_policy
@@ -2343,7 +2346,7 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
                     thread_id: request.thread_id.clone(),
                     status: map_turn_status(&response.turn.status).to_string(),
                     messages: Vec::new(),
-                    summary: vec!["正在等待 Codex 响应".to_string()],
+                    summary: vec!["正在等待 ArkPilot 响应".to_string()],
                     summary_title: "执行中".to_string(),
                     diff: String::new(),
                     diff_authoritative: false,
@@ -3345,7 +3348,7 @@ async fn handle_server_request(
                 .map(|q| q.question.clone())
                 .unwrap_or_default();
             let detail = if question_text.trim().is_empty() {
-                "Codex needs your input to continue this plan.".to_string()
+                "ArkPilot needs your input to continue this plan.".to_string()
             } else {
                 question_text
             };
@@ -3456,7 +3459,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     entry.summary_title = "执行中".to_string();
                 }
                 if entry.summary.is_empty() {
-                    entry.summary.push("Codex 正在处理请求。".to_string());
+                    entry.summary.push("ArkPilot 正在处理请求。".to_string());
                 }
             });
         }
@@ -3494,7 +3497,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                         });
                     turn.status = "inProgress".to_string();
                     turn.summary_title = "执行中".to_string();
-                    push_turn_summary(turn, "Codex 正在生成回复。".to_string());
+                    push_turn_summary(turn, "ArkPilot 正在生成回复。".to_string());
                 }
                 append_assistant_delta(
                     state,
@@ -3532,8 +3535,17 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
-                push_turn_summary(turn, format!("推理摘要: {}", compact_text(&payload.delta, 160)));
-                append_reasoning_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
+                push_turn_summary(
+                    turn,
+                    format!("推理摘要: {}", compact_text(&payload.delta, 160)),
+                );
+                append_reasoning_delta(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item_id,
+                    &payload.delta,
+                );
             });
         }
         ServerNotification::ReasoningTextDelta(payload) => {
@@ -3549,7 +3561,34 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
                 push_turn_summary(turn, format!("推理: {}", compact_text(&payload.delta, 160)));
-                append_reasoning_delta(state, &payload.thread_id, &payload.turn_id, &payload.item_id, &payload.delta);
+                append_reasoning_delta(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item_id,
+                    &payload.delta,
+                );
+            });
+        }
+        ServerNotification::ReasoningSummaryPartAdded(payload) => {
+            with_native_state(|state| {
+                let turn = state
+                    .turns
+                    .entry(payload.turn_id.clone())
+                    .or_insert_with(|| NativeTurnState {
+                        thread_id: payload.thread_id.clone(),
+                        status: "inProgress".to_string(),
+                        ..Default::default()
+                    });
+                turn.status = "inProgress".to_string();
+                turn.summary_title = "推理中".to_string();
+                push_turn_summary(turn, "推理摘要继续更新。".to_string());
+                append_reasoning_part_separator(
+                    state,
+                    &payload.thread_id,
+                    &payload.turn_id,
+                    &payload.item_id,
+                );
             });
         }
         ServerNotification::CommandExecutionOutputDelta(payload) => {
@@ -3959,6 +3998,19 @@ fn compact_text(value: &str, limit: usize) -> String {
     truncated
 }
 
+fn has_visible_reasoning_content(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty() && trimmed != REASONING_PENDING_CONTENT
+}
+
+fn normalize_reasoning_started_content(value: &str) -> String {
+    if value.trim() == REASONING_PENDING_CONTENT {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
 fn describe_started_item(item: &codex_app_server_protocol::ThreadItem) -> String {
     match item {
         codex_app_server_protocol::ThreadItem::Plan { .. } => "开始生成计划。".to_string(),
@@ -4158,7 +4210,7 @@ fn append_assistant_delta(
         } else {
             thread.messages.push(NativeMessage {
                 message_id: target_message_id,
-                author: "Codex".to_string(),
+                author: "ArkPilot".to_string(),
                 role: "assistant".to_string(),
                 content: delta.to_string(),
                 timestamp: current_timestamp_string(),
@@ -4197,10 +4249,15 @@ fn append_reasoning_delta(
             .iter_mut()
             .find(|message| message.message_id == target_message_id)
         {
-            // 如果消息已存在，追加增量内容
+            if message.content.trim() == REASONING_PENDING_CONTENT {
+                message.content.clear();
+            }
             message.content.push_str(delta);
+            message.author = "思考过程".to_string();
+            message.role = "reasoning".to_string();
+            message.item_type = Some("reasoning".to_string());
+            message.status = Some("inProgress".to_string());
         } else {
-            // 如果消息不存在，创建新的推理消息
             thread.messages.push(NativeMessage {
                 message_id: target_message_id,
                 author: "思考过程".to_string(),
@@ -4211,6 +4268,40 @@ fn append_reasoning_delta(
                 status: Some("inProgress".to_string()),
                 metadata: None,
             });
+        }
+        thread.messages.clone()
+    };
+
+    if let Some(turn) = state.turns.get_mut(turn_id) {
+        turn.messages = thread_messages;
+    }
+}
+
+fn append_reasoning_part_separator(
+    state: &mut NativeConversationState,
+    thread_id: &str,
+    turn_id: &str,
+    item_id: &str,
+) {
+    let thread_messages = {
+        let thread = state
+            .threads
+            .entry(thread_id.to_string())
+            .or_insert_with(|| NativeThreadState {
+                remote_thread_id: thread_id.to_string(),
+                cwd: None,
+                messages: Vec::new(),
+            });
+        let target_message_id = format!("{turn_id}:{item_id}");
+        if let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.message_id == target_message_id)
+        {
+            if has_visible_reasoning_content(&message.content) && !message.content.ends_with("\n\n")
+            {
+                message.content.push_str("\n\n");
+            }
         }
         thread.messages.clone()
     };
@@ -4246,7 +4337,7 @@ fn sync_thread_from_completed_item(
             } else {
                 thread.messages.push(NativeMessage {
                     message_id,
-                    author: "Codex".to_string(),
+                    author: "ArkPilot".to_string(),
                     role: "assistant".to_string(),
                     content: text.clone(),
                     timestamp: current_timestamp_string(),
@@ -4717,7 +4808,7 @@ fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<Nat
                 codex_app_server_protocol::ThreadItem::AgentMessage { id, text, .. } => {
                     messages.push(NativeMessage {
                         message_id: id.clone(),
-                        author: "Codex".to_string(),
+                        author: "ArkPilot".to_string(),
                         role: "assistant".to_string(),
                         content: text.clone(),
                         timestamp: current_timestamp_string(),
@@ -5134,6 +5225,10 @@ fn upsert_item_started_message(
     let message_id = format!("{}:{}", turn_id, item_id);
 
     if let Some(msg) = thread_item_started_to_message(item, &message_id) {
+        let is_reasoning = matches!(
+            item,
+            codex_app_server_protocol::ThreadItem::Reasoning { .. }
+        );
         let thread = state
             .threads
             .entry(thread_id.to_string())
@@ -5144,7 +5239,14 @@ fn upsert_item_started_message(
             });
 
         if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
-            *existing = msg.clone();
+            if is_reasoning && has_visible_reasoning_content(&existing.content) {
+                existing.author = "思考过程".to_string();
+                existing.role = "reasoning".to_string();
+                existing.item_type = Some("reasoning".to_string());
+                existing.status = Some("inProgress".to_string());
+            } else {
+                *existing = msg.clone();
+            }
         } else {
             thread.messages.push(msg.clone());
         }
@@ -5177,13 +5279,39 @@ fn upsert_item_completed_message(
                 messages: Vec::new(),
             });
 
-        // 检查是否是 Reasoning 消息，且已有内容
-        let is_reasoning = matches!(item, codex_app_server_protocol::ThreadItem::Reasoning { .. });
+        let is_reasoning = matches!(
+            item,
+            codex_app_server_protocol::ThreadItem::Reasoning { .. }
+        );
 
-        if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
-            // 对于 Reasoning 消息，如果已有内容，保留内容，只更新状态
-            if is_reasoning && !existing.content.is_empty() && existing.content != "正在思考..." {
-                existing.status = Some("completed".to_string());
+        if let Some(existing) = thread
+            .messages
+            .iter_mut()
+            .find(|m| m.message_id == message_id)
+        {
+            if is_reasoning {
+                if has_visible_reasoning_content(&msg.content) {
+                    let content = normalize_reasoning_started_content(&msg.content);
+                    let updated_msg = NativeMessage {
+                        message_id: message_id.clone(),
+                        content,
+                        ..msg
+                    };
+                    *existing = updated_msg;
+                } else if has_visible_reasoning_content(&existing.content) {
+                    existing.content = normalize_reasoning_started_content(&existing.content);
+                    existing.author = "思考过程".to_string();
+                    existing.role = "reasoning".to_string();
+                    existing.item_type = Some("reasoning".to_string());
+                    existing.status = Some("completed".to_string());
+                } else {
+                    let updated_msg = NativeMessage {
+                        message_id: message_id.clone(),
+                        content: String::new(),
+                        ..msg
+                    };
+                    *existing = updated_msg;
+                }
             } else {
                 let updated_msg = NativeMessage {
                     message_id: message_id.clone(),
@@ -5227,7 +5355,7 @@ fn thread_item_started_to_message(
                 message_id: message_id.to_string(),
                 author: "思考过程".to_string(),
                 role: "reasoning".to_string(),
-                content: "正在思考...".to_string(),
+                content: REASONING_PENDING_CONTENT.to_string(),
                 timestamp: current_timestamp_string(),
                 item_type: Some("reasoning".to_string()),
                 status: Some("inProgress".to_string()),
@@ -5417,8 +5545,10 @@ mod tests {
     use super::*;
     use codex_app_server_protocol::FileUpdateChange;
     use codex_app_server_protocol::ItemCompletedNotification;
+    use codex_app_server_protocol::ItemStartedNotification;
     use codex_app_server_protocol::PatchApplyStatus;
     use codex_app_server_protocol::PatchChangeKind;
+    use codex_app_server_protocol::ReasoningTextDeltaNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::ThreadItem;
     use std::fs;
@@ -5481,6 +5611,73 @@ mod tests {
                 .expect("turn state should exist after notification")
         });
         assert_eq!(stored.diff, diff);
+    }
+
+    #[test]
+    fn reasoning_delta_replaces_placeholder_and_survives_empty_completion() {
+        with_native_state(|state| {
+            *state = NativeConversationState::default();
+            state.turns.insert(
+                "turn".to_string(),
+                NativeTurnState {
+                    thread_id: "thread".to_string(),
+                    status: "inProgress".to_string(),
+                    ..Default::default()
+                },
+            );
+        });
+
+        apply_server_notification(
+            &ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id: "thread".to_string(),
+                turn_id: "turn".to_string(),
+                item: ThreadItem::Reasoning {
+                    id: "reason".to_string(),
+                    summary: vec![],
+                    content: vec![],
+                },
+            }),
+            Some("turn"),
+        );
+
+        apply_server_notification(
+            &ServerNotification::ReasoningTextDelta(ReasoningTextDeltaNotification {
+                thread_id: "thread".to_string(),
+                turn_id: "turn".to_string(),
+                item_id: "reason".to_string(),
+                delta: "先检查现有实现。".to_string(),
+                content_index: 0,
+            }),
+            Some("turn"),
+        );
+
+        apply_server_notification(
+            &ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id: "thread".to_string(),
+                turn_id: "turn".to_string(),
+                item: ThreadItem::Reasoning {
+                    id: "reason".to_string(),
+                    summary: vec![],
+                    content: vec![],
+                },
+            }),
+            Some("turn"),
+        );
+
+        let stored = with_native_state(|state| {
+            state
+                .turns
+                .get("turn")
+                .cloned()
+                .expect("turn state should exist after reasoning notifications")
+        });
+        let message = stored
+            .messages
+            .iter()
+            .find(|message| message.message_id == "turn:reason")
+            .expect("reasoning message should be present");
+        assert_eq!(message.content, "先检查现有实现。");
+        assert_eq!(message.status.as_deref(), Some("completed"));
     }
 
     #[test]

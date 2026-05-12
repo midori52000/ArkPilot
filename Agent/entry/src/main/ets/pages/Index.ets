@@ -28,12 +28,13 @@ import { providerCatalogService } from '../backend/ProviderCatalogService';
 import { SessionSummary, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, DailyTokenSnapshot, ProjectRecord } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import { projectStore } from '../backend/ProjectStore';
+import { common, OpenLinkOptions, Want, wantConstant } from '@kit.AbilityKit';
 import router from '@ohos.router';
 import pasteboard from '@ohos.pasteboard';
 import { promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { picker } from '@kit.CoreFileKit';
+import { fileUri, picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
 
 const INDEX_DOMAIN = 0x0000;
@@ -153,12 +154,26 @@ class MathSegment {
   kind: string;
   text: string;
   rawText: string;
+  target: string;
 
-  constructor(id: string, kind: string, text: string, rawText?: string) {
+  constructor(id: string, kind: string, text: string, rawText?: string, target?: string) {
     this.id = id;
     this.kind = kind;
     this.text = text;
     this.rawText = rawText ?? text;
+    this.target = target ?? '';
+  }
+}
+
+class InlineWebTargetMatch {
+  start: number;
+  end: number;
+  target: string;
+
+  constructor(start: number, end: number, target: string) {
+    this.start = start;
+    this.end = end;
+    this.target = target;
   }
 }
 
@@ -177,6 +192,20 @@ class MarkdownTextRun {
     this.level = level ?? 0;
   }
 }
+
+class HtmlTextRun {
+  id: string;
+  text: string;
+  isLink: boolean;
+
+  constructor(id: string, text: string, isLink: boolean) {
+    this.id = id;
+    this.text = text;
+    this.isLink = isLink;
+  }
+}
+
+type RightPanelTab = 'diff' | 'browser';
 
 class CodeToken {
   id: string;
@@ -252,7 +281,6 @@ struct MermaidWebDiagram {
 
   private mermaidHtml(): string {
     const sourceText: string = this.escapeHtml(this.source);
-    const scaleText: string = this.normalizedScale(this.fontScale).toFixed(2);
     return `<!doctype html>
 <html>
 <head>
@@ -278,13 +306,16 @@ struct MermaidWebDiagram {
       min-height: 40px;
       background: #FFFFFF !important;
       background-color: #FFFFFF !important;
+      overflow: visible;
       transform-origin: 0 0;
     }
     #diagram svg {
-      max-width: 100%;
+      display: block;
+      max-width: 180%;
       height: auto;
       background: #FFFFFF !important;
       background-color: #FFFFFF !important;
+      transform-origin: 0 0;
     }
     .render-error {
       white-space: pre-wrap;
@@ -307,7 +338,7 @@ struct MermaidWebDiagram {
     const target = document.getElementById('diagram');
     const minScale = 0.6;
     const maxScale = 1.8;
-    let diagramScale = ${scaleText};
+    let diagramScale = 1;
     const mermaidUrls = [
       'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js',
       'https://unpkg.com/mermaid@11/dist/mermaid.min.js'
@@ -318,21 +349,51 @@ struct MermaidWebDiagram {
       }
       return Math.min(maxScale, Math.max(minScale, Math.round(value * 100) / 100));
     }
+    function baseSvgWidth(svg) {
+      const cachedWidth = parseFloat(svg.getAttribute('data-arkpilot-base-width') || '0');
+      if (Number.isFinite(cachedWidth) && cachedWidth > 0) {
+        return cachedWidth;
+      }
+      svg.style.width = '100%';
+      svg.style.minWidth = '';
+      svg.style.maxWidth = 'none';
+      svg.style.height = 'auto';
+      const rect = svg.getBoundingClientRect();
+      let width = rect.width;
+      if (!Number.isFinite(width) || width <= 0) {
+        const attrWidth = parseFloat(svg.getAttribute('width') || '0');
+        width = Number.isFinite(attrWidth) && attrWidth > 0 ? attrWidth : 0;
+      }
+      if (width <= 0) {
+        width = Math.max(target.clientWidth, 320);
+      }
+      svg.setAttribute('data-arkpilot-base-width', width.toString());
+      return width;
+    }
     function applyDiagramScale() {
       diagramScale = clampScale(diagramScale);
-      if ('zoom' in target.style) {
-        target.style.zoom = diagramScale.toString();
-        target.style.transform = 'none';
-        target.style.width = '100%';
-      } else {
-        target.style.zoom = '';
-        target.style.transform = 'scale(' + diagramScale.toString() + ')';
-        target.style.width = (100 / diagramScale).toString() + '%';
+      target.style.zoom = '';
+      target.style.transform = 'none';
+      target.style.width = '100%';
+      const svg = target.querySelector('svg');
+      if (svg) {
+        const nextWidth = baseSvgWidth(svg) * diagramScale;
+        const nextWidthText = nextWidth.toFixed(2) + 'px';
+        svg.style.display = 'block';
+        svg.style.transform = 'none';
+        svg.style.transformOrigin = '0 0';
+        svg.style.width = nextWidthText;
+        svg.style.minWidth = nextWidthText;
+        svg.style.maxWidth = '180%';
+        svg.style.height = 'auto';
+        svg.setAttribute('width', nextWidth.toFixed(2));
+        return 'applied:' + nextWidthText;
       }
+      return 'pending';
     }
     window.__arkpilotApplyMermaidScale = function(value) {
       diagramScale = clampScale(value);
-      applyDiagramScale();
+      return applyDiagramScale();
     };
     function showError(error) {
       const detail = error && error.message ? error.message : String(error || 'Unknown Mermaid render error');
@@ -474,6 +535,7 @@ struct Index {
   ];
   private readonly longThinkingPulseThreshold: number = 50;
   private readonly thinkingPhrasePulseSpan: number = 30;
+  private readonly idleThinkingDelayMs: number = 3000;
   private readonly conversationFontScaleMin: number = 0.6;
   private readonly conversationFontScaleMax: number = 1.8;
   private readonly conversationFontScaleStep: number = 0.05;
@@ -501,6 +563,9 @@ struct Index {
   private reconnectTimerId: number = -1;
   private reconnectAttemptCount: number = 0;
   private thinkingTimerId: number = -1;
+  private idleThinkingTimerId: number = -1;
+  private lastTextOutputAt: number = 0;
+  private lastTextOutputSignature: string = '';
   private readonly workspaceRoots: Map<number, string> = new Map();
   private readonly workspaceIds: Map<number, string> = new Map();
   private readonly workspaceUris: Map<number, string> = new Map();
@@ -549,6 +614,10 @@ struct Index {
   @State private diffStat: string = '+0 -0';
   @State private diffFiles: CodeDiffFile[] = [];
   @State private selectedDiffFilePath: string = '';
+  @State private rightPanelTab: RightPanelTab = 'diff';
+  @State private browserPreviewSrc: string = '';
+  @State private browserPreviewTitle: string = '';
+  @State private browserPreviewError: string = '';
   @State private isRunning: boolean = false;
   @State private showLeftDrawer: boolean = true;
   @State private showRightDrawer: boolean = true;
@@ -556,6 +625,7 @@ struct Index {
   @State private rightPanelWidth: number = 360;
   private leftScrollOffset: number = 0;
   private leftScrollController: Scroller = new Scroller();
+  private browserPreviewController: webview.WebviewController = new webview.WebviewController();
   private readonly leftDrawerMinWidth: number = 100;
   private readonly rightDrawerMinWidth: number = 120;
   private readonly motionFastDuration: number = 160;
@@ -574,6 +644,7 @@ struct Index {
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
   @State private expandedIntermediateMessageIds: string[] = [];
+  @State private isTurnActivityCollapsed: boolean = true;
   @State private expandedCompactionIds: string[] = [];
   @State private selectableMessageIds: string[] = [];
   @State private hoveredMessageId: string = '';
@@ -587,6 +658,7 @@ struct Index {
   @State private thinkingSessionId: number = 0;
   @State private thinkingNormalPhrase: string = '';
   @State private thinkingFunPhrase: string = '';
+  @State private showIdleThinkingIndicator: boolean = false;
   @State private pendingUserPrompt: string = '';
   private thinkingMessageBoundary: number = -1;
   private thinkingNormalPhraseBucket: number = -1;
@@ -677,6 +749,7 @@ struct Index {
     }
     this.clearReconnectTimer();
     this.stopThinkingAnimation();
+    this.clearIdleThinkingTimer();
     this.clearCompactionClearTimer();
     this.clearMessageProgrammaticScrollTimer();
     this.clearMessageUserScrollTimer();
@@ -717,14 +790,10 @@ struct Index {
     const nextCompacting: boolean = isCurrentThread && (compaction.status === 'starting' || compaction.status === 'running');
     this.compacting = nextCompacting;
     if (compaction.status === 'idle') {
-      const activeNotice: CompactionNotice | null = this.latestActiveCompactionNotice();
-      if (activeNotice !== null && !this.isTerminalCompactionStatus(activeNotice.status)) {
-        this.finishLocalCompactionNotice(activeNotice.threadId);
-        this.compactError = '';
-        return;
-      }
+      this.compactError = '';
+      return;
     }
-    if (compaction.status !== 'idle' && compaction.threadId.trim().length > 0) {
+    if (compaction.threadId.trim().length > 0) {
       this.upsertCompactionNotice(
         compaction.threadId,
         compaction.status,
@@ -853,21 +922,6 @@ struct Index {
     return this.compactionNoticeById(this.activeCompactionNoticeId);
   }
 
-  private finishLocalCompactionNotice(threadId: string): void {
-    const latest: CompactionNotice | null = this.latestCompactionNoticeForThread(threadId);
-    if (latest === null || this.isTerminalCompactionStatus(latest.status)) {
-      return;
-    }
-    this.upsertCompactionNotice(
-      threadId,
-      'completed',
-      '',
-      latest.savedTokens,
-      latest.oldTotalTokens,
-      latest.newTotalTokens
-    );
-  }
-
   private scheduleBackendCompactionClear(threadId: string): void {
     this.clearCompactionClearTimer();
     this.compactionClearTimerId = setTimeout(() => {
@@ -886,15 +940,6 @@ struct Index {
   private compactionNoticeById(id: string): CompactionNotice | null {
     for (let index: number = 0; index < this.compactionNotices.length; index += 1) {
       if (this.compactionNotices[index].id === id) {
-        return this.compactionNotices[index];
-      }
-    }
-    return null;
-  }
-
-  private latestCompactionNoticeForThread(threadId: string): CompactionNotice | null {
-    for (let index: number = this.compactionNotices.length - 1; index >= 0; index -= 1) {
-      if (this.compactionNotices[index].threadId === threadId) {
         return this.compactionNotices[index];
       }
     }
@@ -1784,7 +1829,7 @@ struct Index {
 
   private visibleMessages(): ChatMessage[] {
     let visible: ChatMessage[] = this.messages.filter((item: ChatMessage) => {
-      return !this.isCompactionSystemMessage(item);
+      return this.shouldRenderMessage(item);
     });
     if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
       visible = [...visible, this.pendingUserMessage()];
@@ -1804,6 +1849,18 @@ struct Index {
     return visible;
   }
 
+  private shouldRenderMessage(item: ChatMessage): boolean {
+    if (this.isCompactionSystemMessage(item)) {
+      return false;
+    }
+    return !this.isEmptyReasoningMessage(item);
+  }
+
+  private isEmptyReasoningMessage(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    return type === 'reasoning' && item.content.trim().length === 0;
+  }
+
   private isCompactionSystemMessage(item: ChatMessage): boolean {
     const type: string = item.itemType ?? item.role;
     if (type !== 'system' && item.role !== 'system') {
@@ -1815,10 +1872,17 @@ struct Index {
   }
 
   private shouldShowTurnActivityLine(): boolean {
-    if (!this.isRunning) {
+    if (!this.shouldTrackIdleThinking()) {
       return false;
     }
-    return this.pendingApproval === null && this.pendingRequestUserInput === null;
+    if (this.pendingApproval !== null || this.pendingRequestUserInput !== null) {
+      return false;
+    }
+    return this.showIdleThinkingIndicator;
+  }
+
+  private toggleTurnActivityExpanded(): void {
+    this.isTurnActivityCollapsed = !this.isTurnActivityCollapsed;
   }
 
   private currentTurnHasAssistantOutput(): boolean {
@@ -1834,6 +1898,29 @@ struct Index {
     return false;
   }
 
+  private currentTurnTextOutputSignature(): string {
+    const parts: string[] = [];
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    for (let index: number = startIndex; index < this.messages.length; index += 1) {
+      const item: ChatMessage = this.messages[index];
+      if (this.isTextOutputMessage(item)) {
+        parts.push(`${item.id}:${item.role}:${item.itemType ?? ''}:${item.content.length}`);
+      }
+    }
+    return parts.join('|');
+  }
+
+  private isTextOutputMessage(item: ChatMessage): boolean {
+    if (item.content.trim().length === 0) {
+      return false;
+    }
+    const type: string = item.itemType ?? item.role;
+    if (type === 'system' || item.role === 'system' || item.role === 'user') {
+      return false;
+    }
+    return true;
+  }
+
   private isAssistantOutputMessage(item: ChatMessage): boolean {
     if (item.content.trim().length === 0) {
       return false;
@@ -1843,6 +1930,18 @@ struct Index {
       return false;
     }
     return item.role === 'assistant' || item.role === 'agent';
+  }
+
+  private currentTurnHasIntermediateOutput(): boolean {
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    for (let index: number = startIndex; index < this.messages.length; index += 1) {
+      const item: ChatMessage = this.messages[index];
+      const type: string = item.itemType ?? item.role;
+      if (this.isIntermediateMessageType(type) && !this.isEmptyReasoningMessage(item)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private isIntermediateMessageType(type: string): boolean {
@@ -1892,6 +1991,73 @@ struct Index {
     }, 500);
   }
 
+  private shouldTrackIdleThinking(): boolean {
+    return this.isRunning && this.currentTurnStatus === 'inProgress';
+  }
+
+  private resetIdleThinkingTimer(): void {
+    this.lastTextOutputAt = Date.now();
+    this.showIdleThinkingIndicator = false;
+    this.clearIdleThinkingTimer();
+    if (!this.shouldTrackIdleThinking()) {
+      return;
+    }
+    this.idleThinkingTimerId = setTimeout(() => {
+      this.idleThinkingTimerId = -1;
+      this.updateIdleThinkingIndicator();
+    }, this.idleThinkingDelayMs);
+  }
+
+  private clearIdleThinkingTimer(): void {
+    if (this.idleThinkingTimerId >= 0) {
+      clearTimeout(this.idleThinkingTimerId);
+      this.idleThinkingTimerId = -1;
+    }
+  }
+
+  private updateIdleThinkingIndicator(): void {
+    if (!this.shouldTrackIdleThinking()) {
+      this.showIdleThinkingIndicator = false;
+      this.clearIdleThinkingTimer();
+      return;
+    }
+    const elapsedMs: number = Date.now() - this.lastTextOutputAt;
+    if (elapsedMs >= this.idleThinkingDelayMs) {
+      if (!this.showIdleThinkingIndicator) {
+        this.showIdleThinkingIndicator = true;
+        this.scheduleMessageScrollToBottom();
+      }
+      if (this.idleThinkingTimerId < 0) {
+        this.idleThinkingTimerId = setTimeout(() => {
+          this.idleThinkingTimerId = -1;
+          this.updateIdleThinkingIndicator();
+        }, 500);
+      }
+      return;
+    }
+    this.clearIdleThinkingTimer();
+    this.idleThinkingTimerId = setTimeout(() => {
+      this.idleThinkingTimerId = -1;
+      this.updateIdleThinkingIndicator();
+    }, this.idleThinkingDelayMs - elapsedMs);
+  }
+
+  private syncTextOutputIdleState(): void {
+    if (!this.shouldTrackIdleThinking()) {
+      this.lastTextOutputSignature = '';
+      this.showIdleThinkingIndicator = false;
+      this.clearIdleThinkingTimer();
+      return;
+    }
+    const signature: string = this.currentTurnTextOutputSignature();
+    if (signature !== this.lastTextOutputSignature) {
+      this.lastTextOutputSignature = signature;
+      this.resetIdleThinkingTimer();
+      return;
+    }
+    this.updateIdleThinkingIndicator();
+  }
+
   private stopThinkingAnimation(): void {
     if (this.thinkingTimerId >= 0) {
       clearInterval(this.thinkingTimerId);
@@ -1909,6 +2075,28 @@ struct Index {
 
   private thinkingStatusText(): string {
     return `${this.thinkingLogoText()} ${this.thinkingStatusPhraseText()}`;
+  }
+
+  private displayBrandText(text: string): string {
+    return text.replace(/Codex/g, 'ArkPilot');
+  }
+
+  private turnActivityDetailLines(): string[] {
+    const lines: string[] = [];
+    const title: string = this.displayBrandText(this.summaryTitle).trim();
+    if (title.length > 0 && title !== '执行中') {
+      lines.push(title);
+    }
+    for (let index: number = 0; index < this.summaryPoints.length; index += 1) {
+      const line: string = this.displayBrandText(this.summaryPoints[index]).trim();
+      if (line.length > 0 && lines.indexOf(line) < 0) {
+        lines.push(line);
+      }
+    }
+    if (lines.length === 0) {
+      lines.push('正在等待可展示的思考内容。');
+    }
+    return lines;
   }
 
   private refreshThinkingNormalPhrase(): void {
@@ -2050,9 +2238,14 @@ struct Index {
     this.thinkingNormalPhraseBucket = -1;
     this.thinkingFunPhrase = '';
     this.thinkingFunPhraseBucket = -1;
+    this.showIdleThinkingIndicator = false;
+    this.lastTextOutputAt = Date.now();
+    this.lastTextOutputSignature = '';
+    this.clearIdleThinkingTimer();
     this.thinkingSessionId += 1;
     this.refreshThinkingNormalPhrase();
     this.startThinkingAnimation();
+    this.resetIdleThinkingTimer();
     if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
       this.applyWorkspaceRootBinding();
     }
@@ -2066,6 +2259,9 @@ struct Index {
       this.currentTurnStatus = '';
       this.pendingUserPrompt = '';
       this.thinkingMessageBoundary = -1;
+      this.showIdleThinkingIndicator = false;
+      this.lastTextOutputSignature = '';
+      this.clearIdleThinkingTimer();
       this.syncThinkingAnimation();
       return;
     }
@@ -2106,6 +2302,9 @@ struct Index {
       this.isRunning = false;
       this.pendingUserPrompt = '';
       this.thinkingMessageBoundary = -1;
+      this.showIdleThinkingIndicator = false;
+      this.lastTextOutputSignature = '';
+      this.clearIdleThinkingTimer();
       this.syncThinkingAnimation();
     }
   }
@@ -2119,7 +2318,7 @@ struct Index {
       this.pendingUserPrompt = '';
     }
     this.messages = result.messages.map((item) => {
-      return new ChatMessage(item.messageId, item.author, item.role, item.content, item.timestamp, item.itemType, item.status, item.metadata);
+      return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
     });
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
@@ -2132,14 +2331,15 @@ struct Index {
       this.diffFiles = [];
       this.selectedDiffFilePath = '';
     }
-    this.summaryTitle = result.summaryTitle;
-    this.summaryPoints = result.summaryPoints.length > 0 ? result.summaryPoints : ['没有可展示的摘要信息。'];
+    this.summaryTitle = this.displayBrandText(result.summaryTitle);
+    this.summaryPoints = result.summaryPoints.length > 0 ? result.summaryPoints.map((point: string) => this.displayBrandText(point)) : ['没有可展示的摘要信息。'];
     this.changedFiles = result.changedFiles;
     this.diffStat = result.diffStat;
     if (result.tokenUsage !== null) {
       this.tokenUsage = result.tokenUsage;
     }
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
+    this.syncTextOutputIdleState();
     this.scheduleMessageScrollToBottom();
   }
 
@@ -2770,7 +2970,7 @@ struct Index {
 
   private operationLabel(role: string): string {
     switch (role) {
-      case 'reasoning': return '推理';
+      case 'reasoning': return '思考';
       case 'command': return '命令';
       case 'tool': return '工具';
       case 'file': return '文件';
@@ -3025,6 +3225,56 @@ struct Index {
     });
   }
 
+  private selectRightPanelTab(tab: RightPanelTab): void {
+    this.rightPanelTab = tab;
+  }
+
+  private hasBrowserPreview(): boolean {
+    return this.browserPreviewSrc.trim().length > 0;
+  }
+
+  private browserPreviewTitleText(): string {
+    const title: string = this.browserPreviewTitle.trim();
+    if (title.length > 0) {
+      return title;
+    }
+    if (this.browserPreviewSrc.trim().length > 0) {
+      return this.fileNameFromTarget(this.browserPreviewSrc);
+    }
+    return '网页预览';
+  }
+
+  private browserPreviewSubtitleText(): string {
+    const src: string = this.browserPreviewSrc.trim();
+    return src.length > 0 ? src : '点击对话中的 HTML 文件后会在这里预览';
+  }
+
+  private showHtmlPreviewInRightPanel(targetUri: string, title: string): void {
+    this.browserPreviewSrc = targetUri;
+    this.browserPreviewTitle = title.length > 0 ? title : this.fileNameFromTarget(targetUri);
+    this.browserPreviewError = '';
+    this.rightPanelTab = 'browser';
+    this.showRightDrawer = true;
+  }
+
+  private closeBrowserPreview(): void {
+    this.browserPreviewSrc = '';
+    this.browserPreviewTitle = '';
+    this.browserPreviewError = '';
+    this.rightPanelTab = 'diff';
+  }
+
+  private refreshBrowserPreview(): void {
+    if (!this.hasBrowserPreview()) {
+      return;
+    }
+    try {
+      this.browserPreviewController.refresh();
+    } catch (err) {
+      promptAction.showToast({ message: `刷新网页预览失败: ${this.describeError(err)}`, duration: 2200 });
+    }
+  }
+
   private applyResponsiveLayoutProfile(force: boolean = false): void {
     if (!force && this.lastAppliedBreakpoint === this.currentBreakpoint) {
       return;
@@ -3054,6 +3304,260 @@ struct Index {
       return err.message;
     }
     return JSON.stringify(err);
+  }
+
+  private openWebTarget(rawTarget: string, label: string): void {
+    const target: string = this.cleanMarkdownLinkTarget(rawTarget);
+    if (target.length === 0) {
+      promptAction.showToast({ message: '链接地址为空', duration: 1600 });
+      return;
+    }
+    if (this.isHttpUrl(target)) {
+      this.openHttpTarget(target, label);
+      return;
+    }
+    if (this.isHtmlFileTarget(target)) {
+      const htmlUri: string = this.htmlTargetToUri(target);
+      if (htmlUri.length > 0) {
+        this.showHtmlPreviewInRightPanel(htmlUri, label.length > 0 ? label : this.fileNameFromTarget(target));
+      }
+      return;
+    }
+    if (this.isMarkdownFileTarget(target)) {
+      const markdownUri: string = this.markdownTargetToUri(target);
+      if (markdownUri.length > 0) {
+        this.openViewDataTarget(markdownUri, 'text/markdown', label.length > 0 ? label : this.fileNameFromTarget(target), true);
+      }
+      return;
+    }
+    promptAction.showToast({ message: '当前仅支持打开 HTTP/HTTPS 链接、HTML 文件和 Markdown 文件', duration: 2200 });
+  }
+
+  private openHtmlPreviewTarget(targetUri: string, title: string): void {
+    try {
+      router.pushUrl({
+        url: 'pages/WebPreviewPage',
+        params: {
+          src: targetUri,
+          title: title.length > 0 ? title : this.fileNameFromTarget(targetUri)
+        }
+      }).catch((err: Object) => {
+        promptAction.showToast({ message: `打开网页预览失败: ${this.describeError(err)}`, duration: 2600 });
+      });
+    } catch (err) {
+      promptAction.showToast({ message: `打开网页预览失败: ${this.describeError(err)}`, duration: 2600 });
+    }
+  }
+
+  private openHttpTarget(target: string, label: string): void {
+    const context: common.UIAbilityContext | null = this.currentAbilityContext();
+    if (context === null) {
+      promptAction.showToast({ message: '当前页面上下文不可用，无法打开浏览器', duration: 2200 });
+      return;
+    }
+    const options: OpenLinkOptions = {
+      appLinkingOnly: false
+    };
+    try {
+      context.openLink(target, options)
+        .then(() => {
+          promptAction.showToast({ message: '已在浏览器中打开', duration: 1400 });
+        })
+        .catch((_err: Object) => {
+          this.openViewDataTarget(target, 'text/html', label.length > 0 ? label : target, false);
+        });
+    } catch (_err) {
+      this.openViewDataTarget(target, 'text/html', label.length > 0 ? label : target, false);
+    }
+  }
+
+  private openViewDataTarget(targetUri: string, mimeType: string, title: string, grantRead: boolean): void {
+    const context: common.UIAbilityContext | null = this.currentAbilityContext();
+    if (context === null) {
+      promptAction.showToast({ message: '当前页面上下文不可用，无法打开链接', duration: 2200 });
+      return;
+    }
+    const params: Record<string, Object> = {};
+    params[wantConstant.Params.CONTENT_TITLE_KEY] = title;
+    if (grantRead) {
+      params[wantConstant.Params.PARAMS_STREAM] = [targetUri];
+    }
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: targetUri,
+      type: mimeType,
+      parameters: params,
+      flags: grantRead ? wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION : 0
+    };
+    try {
+      context.startAbility(want)
+        .then(() => {
+          promptAction.showToast({ message: '已打开链接', duration: 1400 });
+        })
+        .catch((err: Object) => {
+          promptAction.showToast({ message: `打开失败: ${this.describeError(err)}`, duration: 2600 });
+        });
+    } catch (err) {
+      promptAction.showToast({ message: `打开失败: ${this.describeError(err)}`, duration: 2600 });
+    }
+  }
+
+  private currentAbilityContext(): common.UIAbilityContext | null {
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined || hostContext === null) {
+      return null;
+    }
+    return hostContext as common.UIAbilityContext;
+  }
+
+  private isHttpUrl(target: string): boolean {
+    const lower: string = target.trim().toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://');
+  }
+
+  private isFileUri(target: string): boolean {
+    return target.trim().toLowerCase().startsWith('file://');
+  }
+
+  private isOpenableWebTarget(target: string): boolean {
+    const cleanTarget: string = this.cleanMarkdownLinkTarget(target);
+    return this.isHttpUrl(cleanTarget) || this.isHtmlFileTarget(cleanTarget) || this.isMarkdownFileTarget(cleanTarget);
+  }
+
+  private isHtmlFileTarget(target: string): boolean {
+    const pathPart: string = this.localFilePathPart(target);
+    return pathPart.endsWith('.html') || pathPart.endsWith('.htm');
+  }
+
+  private isMarkdownFileTarget(target: string): boolean {
+    const pathPart: string = this.localFilePathPart(target);
+    return pathPart.endsWith('.md') || pathPart.endsWith('.markdown');
+  }
+
+  private localFilePathPart(target: string): string {
+    return this.localFileTargetPath(target).toLowerCase();
+  }
+
+  private localFileTargetPath(target: string): string {
+    const cleanTarget: string = target.trim();
+    let end: number = cleanTarget.length;
+    const queryIndex: number = cleanTarget.indexOf('?');
+    if (queryIndex >= 0 && queryIndex < end) {
+      end = queryIndex;
+    }
+    const hashIndex: number = cleanTarget.indexOf('#');
+    if (hashIndex >= 0 && hashIndex < end) {
+      end = hashIndex;
+    }
+    return cleanTarget.substring(0, end);
+  }
+
+  private localFileTargetSuffix(target: string): string {
+    const cleanTarget: string = target.trim();
+    const pathPart: string = this.localFileTargetPath(cleanTarget);
+    return cleanTarget.substring(pathPart.length);
+  }
+
+  private htmlTargetToUri(target: string): string {
+    const cleanTarget: string = target.trim();
+    if (!this.isHtmlFileTarget(cleanTarget)) {
+      return '';
+    }
+    if (this.isHttpUrl(cleanTarget)) {
+      return cleanTarget;
+    }
+    if (this.isFileUri(cleanTarget)) {
+      return cleanTarget;
+    }
+    if (!this.isAbsoluteLocalPath(cleanTarget) && this.workspaceRoot.trim().length === 0) {
+      promptAction.showToast({ message: '打开相对 HTML 文件前请先设置工作目录', duration: 2400 });
+      return '';
+    }
+    const resolvedPath: string = this.resolveLocalPath(this.localFileTargetPath(cleanTarget));
+    const resolvedUri: string = this.pathToFileUri(resolvedPath);
+    return resolvedUri.length > 0 ? `${resolvedUri}${this.localFileTargetSuffix(cleanTarget)}` : '';
+  }
+
+  private markdownTargetToUri(target: string): string {
+    const cleanTarget: string = target.trim();
+    if (!this.isMarkdownFileTarget(cleanTarget)) {
+      return '';
+    }
+    if (this.isHttpUrl(cleanTarget)) {
+      return cleanTarget;
+    }
+    if (this.isFileUri(cleanTarget)) {
+      return cleanTarget;
+    }
+    if (!this.isAbsoluteLocalPath(cleanTarget) && this.workspaceRoot.trim().length === 0) {
+      promptAction.showToast({ message: '打开相对 Markdown 文件前请先设置工作目录', duration: 2400 });
+      return '';
+    }
+    const resolvedPath: string = this.resolveLocalPath(this.localFileTargetPath(cleanTarget));
+    const resolvedUri: string = this.pathToFileUri(resolvedPath);
+    return resolvedUri.length > 0 ? `${resolvedUri}${this.localFileTargetSuffix(cleanTarget)}` : '';
+  }
+
+  private resolveLocalPath(target: string): string {
+    const normalizedTarget: string = target.replace(/\\/g, '/');
+    if (this.isAbsoluteLocalPath(normalizedTarget)) {
+      return normalizedTarget;
+    }
+    const base: string = this.workspaceRoot.trim().replace(/\\/g, '/');
+    if (base.length === 0) {
+      return normalizedTarget;
+    }
+    return `${base.replace(/\/+$/g, '')}/${normalizedTarget.replace(/^\/+/g, '')}`;
+  }
+
+  private isAbsoluteLocalPath(path: string): boolean {
+    const normalizedPath: string = path.replace(/\\/g, '/');
+    return normalizedPath.startsWith('/') || /^[A-Za-z]:\//.test(normalizedPath);
+  }
+
+  private pathToFileUri(path: string): string {
+    const normalizedPath: string = path.replace(/\\/g, '/');
+    const publicDocsUri: string = this.publicDocsFileUriFromPath(normalizedPath);
+    if (publicDocsUri.length > 0) {
+      return publicDocsUri;
+    }
+    try {
+      return fileUri.getUriFromPath(normalizedPath);
+    } catch (_err) {
+      return this.fallbackFileUriFromPath(normalizedPath);
+    }
+  }
+
+  private publicDocsFileUriFromPath(path: string): string {
+    const normalizedPath: string = path.replace(/\\/g, '/');
+    const pathWithoutLeadingSlash: string = normalizedPath.replace(/^\/+/g, '');
+    if (pathWithoutLeadingSlash.toLowerCase().startsWith('storage/users/currentuser/')) {
+      return `file://docs/${this.encodeFileUriPath(pathWithoutLeadingSlash)}`;
+    }
+    return '';
+  }
+
+  private fallbackFileUriFromPath(path: string): string {
+    const normalizedPath: string = path.replace(/\\/g, '/');
+    const encodedPath: string = this.encodeFileUriPath(normalizedPath);
+    if (/^[A-Za-z]:\//.test(normalizedPath)) {
+      return `file:///${encodedPath}`;
+    }
+    if (normalizedPath.startsWith('/')) {
+      return `file://${encodedPath}`;
+    }
+    return `file://${encodedPath}`;
+  }
+
+  private encodeFileUriPath(path: string): string {
+    return encodeURI(path).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  }
+
+  private fileNameFromTarget(target: string): string {
+    const pathPart: string = target.split('?')[0].split('#')[0].replace(/\\/g, '/');
+    const slashIndex: number = pathPart.lastIndexOf('/');
+    return slashIndex >= 0 ? pathPart.substring(slashIndex + 1) : pathPart;
   }
 
   private copyPlainText(text: string, successMessage: string): void {
@@ -3790,33 +4294,75 @@ struct Index {
   @Builder
   private messageBody(item: ChatMessage) {
     if (item.status === 'inProgress' && item.content.trim().length === 0) {
-      Text(this.thinkingStatusText())
+      Text(this.emptyMessageBodyText(item))
         .copyOption(CopyOptions.None)
         .fontSize(this.conversationFontSize(12))
         .lineHeight(this.conversationLineHeight(19))
-        .fontColor(this.messageContentColor(item.itemType))
+        .fontColor(this.messageContentColor(item.itemType ?? item.role))
         .fontWeight(FontWeight.Medium)
         .margin({ top: 6 })
     } else if (this.isMessageCollapsed(item)) {
-      Text(item.content)
+      if (this.hasHtmlFileLinkContent(this.collapsedMessagePreview(item))) {
+        Column() {
+          Text() {
+            ForEach(this.htmlTextRuns(this.collapsedMessagePreview(item), `${item.id}:collapsed-html-runs`), (run: HtmlTextRun) => {
+              Span(run.text)
+                .fontSize(this.conversationFontSize(12))
+                .fontColor(run.isLink ? '#2563EB' : this.messageContentColor(item.itemType ?? item.role))
+                .fontWeight(run.isLink ? FontWeight.Medium : FontWeight.Regular)
+                .decoration(run.isLink ? { type: TextDecorationType.Underline, color: '#93C5FD' } : { type: TextDecorationType.None, color: 'transparent' })
+            }, (run: HtmlTextRun) => run.id)
+          }
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(this.conversationFontSize(12))
+            .lineHeight(this.conversationLineHeight(19))
+            .fontColor(this.messageContentColor(item.itemType ?? item.role))
+            .wordBreak(WordBreak.BREAK_WORD)
+            .margin({ top: 6 })
+            .hitTestBehavior(HitTestMode.Block)
+            .onClick(() => {
+              this.toggleMessageExpanded(item.id);
+            })
+          Text('点击展开完整输出')
+            .copyOption(CopyOptions.None)
+            .fontSize(this.conversationFontSize(10))
+            .fontColor(this.accentBorderColor(item.itemType ?? item.role))
+            .margin({ top: 4 })
+            .onClick(() => {
+              this.toggleMessageExpanded(item.id);
+            })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      } else {
+        Text(this.collapsedMessagePreview(item))
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(this.conversationFontSize(12))
+          .lineHeight(this.conversationLineHeight(19))
+          .fontColor(this.messageContentColor(item.itemType ?? item.role))
+          .wordBreak(WordBreak.BREAK_WORD)
+          .margin({ top: 6 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .hitTestBehavior(HitTestMode.Block)
+          .onClick(() => {
+            this.toggleMessageExpanded(item.id);
+          })
+      }
+    } else if (item.content.trim().length === 0) {
+      Text(this.emptyMessageBodyText(item))
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(this.conversationFontSize(12))
         .lineHeight(this.conversationLineHeight(19))
-        .fontColor(this.messageContentColor(item.itemType))
+        .fontColor(this.messageContentColor(item.itemType ?? item.role))
         .wordBreak(WordBreak.BREAK_WORD)
         .margin({ top: 6 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .hitTestBehavior(HitTestMode.Block)
-        .onClick(() => {
-          this.toggleMessageExpanded(item.id);
-        })
     } else if (this.isMessageSelectableMode(item.id) && this.shouldShowMessageSelectableAction(item)) {
       Text(this.messageOriginalText(item.content))
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(this.conversationFontSize(12))
         .lineHeight(this.conversationLineHeight(19))
-        .fontColor(this.messageContentColor(item.itemType))
+        .fontColor(this.messageContentColor(item.itemType ?? item.role))
         .width('100%')
         .wordBreak(WordBreak.BREAK_WORD)
         .padding({ left: 10, right: 10, top: 9, bottom: 9 })
@@ -3824,12 +4370,14 @@ struct Index {
         .backgroundColor('#F8FAFC')
         .border({ width: 0.5, color: '#CBD5E1' })
         .borderRadius(8)
+    } else if (this.hasHtmlFileLinkContent(item.content)) {
+      this.htmlFileMessageBody(item)
     } else if (!this.shouldRenderMarkdown(item.content)) {
       Text(item.content)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(this.conversationFontSize(12))
         .lineHeight(this.conversationLineHeight(19))
-        .fontColor(this.messageContentColor(item.itemType))
+        .fontColor(this.messageContentColor(item.itemType ?? item.role))
         .wordBreak(WordBreak.BREAK_WORD)
         .margin({ top: 6 })
     } else if (!this.hasRenderedOrCodeMarkdownSurface(item.content)) {
@@ -3846,7 +4394,7 @@ struct Index {
     Text() {
       ForEach(this.plainMarkdownTextRuns(item.content, item.id), (run: MarkdownTextRun) => {
         Span(run.text)
-          .fontColor(this.plainMarkdownRunColor(run, item.itemType))
+          .fontColor(this.plainMarkdownRunColor(run, item.itemType ?? item.role))
           .fontSize(this.plainMarkdownRunFontSize(run))
           .fontWeight(this.plainMarkdownRunWeight(run))
       }, (run: MarkdownTextRun) => run.id)
@@ -3854,7 +4402,7 @@ struct Index {
     .copyOption(CopyOptions.LocalDevice)
     .fontSize(this.conversationFontSize(12))
     .lineHeight(this.conversationLineHeight(19))
-    .fontColor(this.messageContentColor(item.itemType))
+    .fontColor(this.messageContentColor(item.itemType ?? item.role))
     .width('100%')
     .wordBreak(WordBreak.BREAK_WORD)
     .margin({ top: 6 })
@@ -3862,7 +4410,34 @@ struct Index {
 
   @Builder
   private inlineMessageMarkdownBody(item: ChatMessage) {
-    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType), this.conversationFontSize(12), this.conversationLineHeight(19), undefined, 6)
+    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType ?? item.role), this.conversationFontSize(12), this.conversationLineHeight(19), undefined, 6)
+  }
+
+  @Builder
+  private htmlFileMessageBody(item: ChatMessage) {
+    Column() {
+      Text() {
+        ForEach(this.htmlTextRuns(item.content, `${item.id}:html-runs`), (run: HtmlTextRun) => {
+          Span(run.text)
+            .fontSize(this.conversationFontSize(12))
+            .fontColor(run.isLink ? '#2563EB' : this.messageContentColor(item.itemType ?? item.role))
+            .fontWeight(run.isLink ? FontWeight.Medium : FontWeight.Regular)
+            .decoration(run.isLink ? { type: TextDecorationType.Underline, color: '#93C5FD' } : { type: TextDecorationType.None, color: 'transparent' })
+        }, (run: HtmlTextRun) => run.id)
+      }
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(this.conversationFontSize(12))
+        .lineHeight(this.conversationLineHeight(19))
+        .fontColor(this.messageContentColor(item.itemType ?? item.role))
+        .wordBreak(WordBreak.BREAK_WORD)
+        .margin({ top: 6 })
+        .hitTestBehavior(HitTestMode.Block)
+        .onClick(() => {
+          this.openFirstHtmlFileLinkContent(item.content);
+        })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -4066,7 +4641,7 @@ struct Index {
   }
 
   @Builder
-  private inlineMarkdownTextSegment(segment: MathSegment, color: string, fontSize: number, lineHeight: number, weight?: FontWeight) {
+  private inlineMathFlowSegment(segment: MathSegment, color: string, fontSize: number, lineHeight: number, weight?: FontWeight) {
     if (segment.kind === 'code') {
       Text(segment.text)
         .copyOption(CopyOptions.LocalDevice)
@@ -4098,7 +4673,7 @@ struct Index {
           if (segment.kind === 'math') {
             this.inlineMathSegment(segment, fontSize, lineHeight)
           } else {
-            this.inlineMarkdownTextSegment(segment, color, fontSize, lineHeight, weight)
+            this.inlineMathFlowSegment(segment, color, fontSize, lineHeight, weight)
           }
         }, (segment: MathSegment) => segment.id)
       }
@@ -4111,25 +4686,54 @@ struct Index {
 
   @Builder
   private inlineMarkdownTextLine(segments: MathSegment[], color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number) {
-    Text() {
-      ForEach(segments, (segment: MathSegment) => {
-        if (segment.kind === 'code') {
-          Span(this.inlineCodeSpanText(segment.text))
-            .fontColor('#0F172A')
-            .fontWeight(FontWeight.Medium)
-        } else {
-          Span(segment.text)
-            .fontColor(segment.kind === 'link' ? '#2563EB' : color)
-            .fontWeight(segment.kind === 'strong' ? FontWeight.Medium : (weight ?? FontWeight.Regular))
-        }
-      }, (segment: MathSegment) => segment.id)
+    if (this.hasInlineLinkSegment(segments)) {
+      Text() {
+        ForEach(segments, (segment: MathSegment) => {
+          if (segment.kind === 'code') {
+            Span(this.inlineCodeSpanText(segment.text))
+              .fontSize(Math.max(fontSize - this.conversationFontSize(1), this.conversationFontSize(10)))
+              .fontColor('#0F172A')
+              .fontWeight(FontWeight.Medium)
+          } else {
+            Span(segment.text)
+              .fontSize(fontSize)
+              .fontColor(segment.kind === 'link' ? '#2563EB' : color)
+              .fontWeight(segment.kind === 'strong' || segment.kind === 'link' ? FontWeight.Medium : (weight ?? FontWeight.Regular))
+          }
+        }, (segment: MathSegment) => segment.id)
+      }
+      .copyOption(CopyOptions.LocalDevice)
+      .fontSize(fontSize)
+      .lineHeight(lineHeight)
+      .width('100%')
+      .wordBreak(WordBreak.BREAK_WORD)
+      .margin({ top: topMargin })
+      .onClick(() => {
+        this.openFirstInlineLinkSegment(segments);
+      })
+    } else {
+      Text() {
+        ForEach(segments, (segment: MathSegment) => {
+          if (segment.kind === 'code') {
+            Span(this.inlineCodeSpanText(segment.text))
+              .fontSize(Math.max(fontSize - this.conversationFontSize(1), this.conversationFontSize(10)))
+              .fontColor('#0F172A')
+              .fontWeight(FontWeight.Medium)
+          } else {
+            Span(segment.text)
+              .fontSize(fontSize)
+              .fontColor(color)
+              .fontWeight(segment.kind === 'strong' ? FontWeight.Medium : (weight ?? FontWeight.Regular))
+          }
+        }, (segment: MathSegment) => segment.id)
+      }
+      .copyOption(CopyOptions.LocalDevice)
+      .fontSize(fontSize)
+      .lineHeight(lineHeight)
+      .width('100%')
+      .wordBreak(WordBreak.BREAK_WORD)
+      .margin({ top: topMargin })
     }
-    .copyOption(CopyOptions.LocalDevice)
-    .fontSize(fontSize)
-    .lineHeight(lineHeight)
-    .width('100%')
-    .wordBreak(WordBreak.BREAK_WORD)
-    .margin({ top: topMargin })
   }
 
   private hasInlineMathSegment(segments: MathSegment[]): boolean {
@@ -4143,6 +4747,70 @@ struct Index {
 
   private hasInlineMathText(text: string): boolean {
     return this.hasInlineMathSegment(this.inlineMarkdownSegments(text, 'inline-math-probe'));
+  }
+
+  private hasInlineLinkSegment(segments: MathSegment[]): boolean {
+    for (let index: number = 0; index < segments.length; index += 1) {
+      if (segments[index].kind === 'link') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasHtmlFileLinkContent(content: string): boolean {
+    return this.htmlFileLinkSegments(content, 'html-probe').length > 0;
+  }
+
+  private htmlFileLinkSegments(content: string, baseId: string): MathSegment[] {
+    const sourceSegments: MathSegment[] = this.inlineMarkdownSegments(content, `${baseId}:source`);
+    const result: MathSegment[] = [];
+    for (let index: number = 0; index < sourceSegments.length; index += 1) {
+      const segment: MathSegment = sourceSegments[index];
+      if (segment.kind === 'link' && this.isHtmlFileTarget(segment.target)) {
+        result.push(new MathSegment(`${baseId}:html:${result.length.toString()}`, 'link', segment.text, segment.rawText, segment.target));
+      }
+    }
+    return result;
+  }
+
+  private htmlTextRuns(content: string, baseId: string): HtmlTextRun[] {
+    const sourceSegments: MathSegment[] = this.inlineMarkdownSegments(content, `${baseId}:source`);
+    const result: HtmlTextRun[] = [];
+    let serial: number = 0;
+    for (let index: number = 0; index < sourceSegments.length; index += 1) {
+      const segment: MathSegment = sourceSegments[index];
+      const isHtmlLink: boolean = segment.kind === 'link' && this.isHtmlFileTarget(segment.target);
+      result.push(new HtmlTextRun(`${baseId}:run:${serial.toString()}`, segment.text, isHtmlLink));
+      serial += 1;
+    }
+    if (result.length === 0) {
+      result.push(new HtmlTextRun(`${baseId}:run:0`, content, false));
+    }
+    return result;
+  }
+
+  private openFirstHtmlFileLinkContent(content: string): void {
+    const segments: MathSegment[] = this.htmlFileLinkSegments(content, 'html-open');
+    if (segments.length > 0) {
+      this.openWebTarget(segments[0].target, segments[0].text);
+    }
+  }
+
+  private firstInlineLinkSegment(segments: MathSegment[]): MathSegment | null {
+    for (let index: number = 0; index < segments.length; index += 1) {
+      if (segments[index].kind === 'link') {
+        return segments[index];
+      }
+    }
+    return null;
+  }
+
+  private openFirstInlineLinkSegment(segments: MathSegment[]): void {
+    const linkSegment: MathSegment | null = this.firstInlineLinkSegment(segments);
+    if (linkSegment !== null) {
+      this.openWebTarget(linkSegment.target, linkSegment.text);
+    }
   }
 
   private inlineCodeSpanText(text: string): string {
@@ -4398,7 +5066,7 @@ struct Index {
 
       MermaidWebDiagram({
         source: block.text,
-        diagramHeight: this.mermaidDiagramHeight(block.text),
+        diagramHeight: this.mermaidDiagramHeight(block.text, this.mermaidScale(this.mermaidScaleKey(messageId, block))),
         fontScale: this.mermaidScale(this.mermaidScaleKey(messageId, block))
       })
     }
@@ -4428,11 +5096,10 @@ struct Index {
     Column() {
       Row() {
         Row() {
-          Text(this.messageIcon('reasoning'))
+          Text(this.isTurnActivityCollapsed ? '\u203A' : '\u2304')
             .copyOption(CopyOptions.None)
-            .fontSize(12)
+            .fontSize(16)
             .fontColor(this.accentBorderColor('reasoning'))
-            .fontWeight(FontWeight.Medium)
         }
         .width(20)
         .height(20)
@@ -4440,10 +5107,17 @@ struct Index {
         .alignItems(VerticalAlign.Center)
         .backgroundColor(this.eventSoftBackground('reasoning'))
         .border({ width: 0.5, color: this.eventBorderColor('reasoning') })
-        .borderRadius(6)
-        .margin({ right: 8 })
+          .borderRadius(6)
+          .margin({ right: 8 })
 
-        Text(this.thinkingLogoText())
+        Text(this.messageIcon('reasoning'))
+          .copyOption(CopyOptions.None)
+          .fontSize(this.conversationFontSize(12))
+          .fontColor(this.accentBorderColor('reasoning'))
+          .fontWeight(FontWeight.Medium)
+          .width(22)
+
+        Text('思考')
           .copyOption(CopyOptions.None)
           .fontSize(this.conversationFontSize(12))
           .fontWeight(FontWeight.Medium)
@@ -4466,16 +5140,62 @@ struct Index {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.Block)
+      .onClick(() => {
+        this.toggleTurnActivityExpanded();
+      })
 
-      Text(this.thinkingStatusPhraseText())
-        .copyOption(CopyOptions.None)
-        .fontSize(this.conversationFontSize(11))
-        .fontColor(this.accentBorderColor('reasoning'))
-        .lineHeight(this.conversationLineHeight(17))
+      if (this.isTurnActivityCollapsed) {
+        Text(this.thinkingStatusText())
+          .copyOption(CopyOptions.None)
+          .fontSize(this.conversationFontSize(11))
+          .fontColor(this.accentBorderColor('reasoning'))
+          .lineHeight(this.conversationLineHeight(17))
+          .width('100%')
+          .margin({ top: 6, left: 28 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .hitTestBehavior(HitTestMode.Block)
+          .onClick(() => {
+            this.toggleTurnActivityExpanded();
+          })
+      } else {
+        Column() {
+          Text(this.thinkingStatusText())
+            .copyOption(CopyOptions.None)
+            .fontSize(this.conversationFontSize(12))
+            .fontColor(this.messageContentColor('reasoning'))
+            .lineHeight(this.conversationLineHeight(19))
+            .fontWeight(FontWeight.Medium)
+            .margin({ top: 6 })
+
+          ForEach(this.turnActivityDetailLines(), (line: string, index?: number) => {
+            Text(line)
+              .copyOption(CopyOptions.LocalDevice)
+              .fontSize(this.conversationFontSize(12))
+              .fontColor(this.messageContentColor('reasoning'))
+              .lineHeight(this.conversationLineHeight(19))
+              .wordBreak(WordBreak.BREAK_WORD)
+              .margin({ top: index === 0 ? 6 : 4 })
+          }, (line: string, index?: number) => `turn-activity:${index ?? 0}:${line}`)
+
+          Text('收起思考内容')
+            .copyOption(CopyOptions.None)
+            .fontSize(this.conversationFontSize(10))
+            .fontColor(this.accentBorderColor('reasoning'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ top: 6 })
+            .backgroundColor(this.eventSoftBackground('reasoning'))
+            .border({ width: 0.5, color: this.eventBorderColor('reasoning') })
+            .borderRadius(6)
+            .onClick(() => {
+              this.toggleTurnActivityExpanded();
+            })
+        }
         .width('100%')
-        .margin({ top: 6, left: 28 })
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 28 })
+      }
     }
     .width('92%')
     .constraintSize({ maxWidth: '92%' })
@@ -4634,7 +5354,7 @@ struct Index {
         .borderRadius(6)
         .margin({ right: 8 })
 
-        Text(this.messageIcon(item.itemType))
+        Text(this.messageIcon(item.itemType ?? item.role))
           .copyOption(CopyOptions.None)
           .fontSize(this.conversationFontSize(12))
           .fontColor(this.accentBorderColor(item.itemType ?? item.role))
@@ -4691,6 +5411,9 @@ struct Index {
       } else {
         Column() {
           this.messageBody(item)
+          if (this.isReasoningMessage(item)) {
+            this.reasoningToggleText(item)
+          }
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
@@ -4706,9 +5429,25 @@ struct Index {
   }
 
   @Builder
+  private reasoningToggleText(item: ChatMessage) {
+    Text(this.isMessageCollapsed(item) ? '展开思考内容' : '收起思考内容')
+      .copyOption(CopyOptions.None)
+      .fontSize(this.conversationFontSize(10))
+      .fontColor(this.accentBorderColor(item.itemType ?? item.role))
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      .margin({ top: 6 })
+      .backgroundColor(this.eventSoftBackground(item.itemType ?? item.role))
+      .border({ width: 0.5, color: this.eventBorderColor(item.itemType ?? item.role) })
+      .borderRadius(6)
+      .onClick(() => {
+        this.toggleMessageExpanded(item.id);
+      })
+  }
+
+  @Builder
   private messageHeader(item: ChatMessage) {
     Row() {
-      Text(item.author)
+      Text(this.displayBrandText(item.author))
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(this.conversationFontSize(12))
         .fontWeight(FontWeight.Medium)
@@ -4827,9 +5566,10 @@ struct Index {
     return item.role === 'user';
   }
 
-  private mermaidDiagramHeight(source: string): number {
+  private mermaidDiagramHeight(source: string, scale?: number): number {
     const lineCount: number = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').length;
-    return Math.min(Math.max(220, lineCount * 28 + 120), 640);
+    const baseHeight: number = Math.min(Math.max(220, lineCount * 28 + 120), 640);
+    return Math.min(Math.max(220, Math.round(baseHeight * this.clampConversationFontScale(scale ?? 1))), 1152);
   }
 
   private shouldShowMessageActions(item: ChatMessage): boolean {
@@ -4848,6 +5588,9 @@ struct Index {
     const text: string = content.trim();
     if (text.length === 0 || !this.shouldRenderMarkdown(text)) {
       return false;
+    }
+    if (this.hasInlineLinkSegment(this.inlineMarkdownSegments(text, 'inline-link-probe'))) {
+      return true;
     }
     if (this.hasInlineMathText(text)) {
       return true;
@@ -5017,7 +5760,8 @@ struct Index {
       text.match(/__[^_]+__/) !== null ||
       text.match(/`[^`]+`/) !== null ||
       text.match(/!\[[^\]]*\]\([^)]+\)/) !== null ||
-      text.match(/\[[^\]]+\]\([^)]+\)/) !== null;
+      text.match(/\[[^\]]+\]\([^)]+\)/) !== null ||
+      this.findInlineWebTarget(text, 0) !== null;
   }
 
   private messageCardMaxWidth(item: ChatMessage): string {
@@ -5042,6 +5786,11 @@ struct Index {
   private isCollapsibleMessage(item: ChatMessage): boolean {
     const type: string = item.itemType ?? item.role;
     return this.isIntermediateMessageType(type);
+  }
+
+  private isReasoningMessage(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    return type === 'reasoning';
   }
 
   private isMessageCollapsed(item: ChatMessage): boolean {
@@ -5657,6 +6406,11 @@ struct Index {
     while (cursor < text.length) {
       let next: number = text.length;
       let kind: string = '';
+      const webTargetMatch: InlineWebTargetMatch | null = this.findInlineWebTarget(text, cursor);
+      if (webTargetMatch !== null && webTargetMatch.start < next) {
+        next = webTargetMatch.start;
+        kind = 'web-target';
+      }
       const codeStart: number = text.indexOf('`', cursor);
       if (codeStart >= 0 && codeStart < next) {
         next = codeStart;
@@ -5693,8 +6447,21 @@ struct Index {
       if (kind === 'code') {
         const end: number = text.indexOf('`', next + 1);
         if (end > next + 1) {
-          this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:code:${serial++}`, 'code', text.substring(next + 1, end), text.substring(next, end + 1)));
+          const codeText: string = text.substring(next + 1, end);
+          if (this.isOpenableWebTarget(codeText)) {
+            this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:link:${serial++}`, 'link', codeText, text.substring(next, end + 1), codeText));
+          } else {
+            this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:code:${serial++}`, 'code', codeText, text.substring(next, end + 1)));
+          }
           cursor = end + 1;
+          continue;
+        }
+      } else if (kind === 'web-target') {
+        const match: InlineWebTargetMatch | null = this.findInlineWebTarget(text, next);
+        if (match !== null && match.start === next && match.end > next) {
+          const display: string = text.substring(match.start, match.end);
+          this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:link:${serial++}`, 'link', display, display, match.target));
+          cursor = match.end;
           continue;
         }
       } else if (kind === 'strong-star') {
@@ -5738,9 +6505,194 @@ struct Index {
     }
     const label: string = text.substring(labelStart, labelEnd).trim();
     const url: string = text.substring(labelEnd + 2, urlEnd).trim();
+    const target: string = this.cleanMarkdownLinkTarget(url);
     const display: string = image ? (label.length > 0 ? `图片: ${label}` : '图片') : (label.length > 0 ? label : url);
-    this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:link:${serial}`, 'link', display, text.substring(start, urlEnd + 1)));
+    this.pushInlineMarkdownSegment(segments, new MathSegment(`${baseId}:link:${serial}`, 'link', display, text.substring(start, urlEnd + 1), target));
     return urlEnd + 1;
+  }
+
+  private findInlineWebTarget(text: string, cursor: number): InlineWebTargetMatch | null {
+    const httpMatch: InlineWebTargetMatch | null = this.findInlineHttpTarget(text, cursor);
+    const localFileMatch: InlineWebTargetMatch | null = this.findInlineLocalWebFileTarget(text, cursor);
+    if (httpMatch === null) {
+      return localFileMatch;
+    }
+    if (localFileMatch === null) {
+      return httpMatch;
+    }
+    return httpMatch.start <= localFileMatch.start ? httpMatch : localFileMatch;
+  }
+
+  private findInlineHttpTarget(text: string, cursor: number): InlineWebTargetMatch | null {
+    const lower: string = text.toLowerCase();
+    const httpIndex: number = lower.indexOf('http://', cursor);
+    const httpsIndex: number = lower.indexOf('https://', cursor);
+    let start: number = -1;
+    if (httpIndex >= 0 && httpsIndex >= 0) {
+      start = Math.min(httpIndex, httpsIndex);
+    } else if (httpIndex >= 0) {
+      start = httpIndex;
+    } else if (httpsIndex >= 0) {
+      start = httpsIndex;
+    }
+    if (start < 0) {
+      return null;
+    }
+    let end: number = start;
+    while (end < text.length && !this.isHttpTargetDelimiter(text[end])) {
+      end += 1;
+    }
+    const trimmedEnd: number = this.trimAutoTargetEnd(text, start, end);
+    if (trimmedEnd <= start) {
+      return null;
+    }
+    const target: string = text.substring(start, trimmedEnd);
+    return new InlineWebTargetMatch(start, trimmedEnd, target);
+  }
+
+  private findInlineLocalWebFileTarget(text: string, cursor: number): InlineWebTargetMatch | null {
+    const lower: string = text.toLowerCase();
+    let extensionIndex: number = this.nextOpenableFileExtensionIndex(lower, cursor);
+    while (extensionIndex >= 0) {
+      const extensionEnd: number = this.openableFileExtensionEnd(lower, extensionIndex);
+      if (extensionEnd > extensionIndex) {
+        let start: number = extensionIndex - 1;
+        while (start >= 0 && !this.isLocalFileTargetDelimiter(text[start])) {
+          start -= 1;
+        }
+        start += 1;
+        let end: number = extensionEnd;
+        if (end < text.length && (text[end] === '?' || text[end] === '#')) {
+          end += 1;
+          while (end < text.length && !this.isLocalFileTargetDelimiter(text[end])) {
+            end += 1;
+          }
+        }
+        end = this.trimAutoTargetEnd(text, start, end);
+        if (start < end) {
+          const rawTarget: string = text.substring(start, end);
+          const target: string = this.normalizeInlineLocalWebFileTarget(rawTarget);
+          if (this.isOpenableWebTarget(target)) {
+            return new InlineWebTargetMatch(end - target.length, end, target);
+          }
+        }
+      }
+      extensionIndex = this.nextOpenableFileExtensionIndex(lower, extensionIndex + 1);
+    }
+    return null;
+  }
+
+  private nextOpenableFileExtensionIndex(lowerText: string, cursor: number): number {
+    const extensions: string[] = ['.html', '.htm', '.markdown', '.md'];
+    let result: number = -1;
+    for (let index: number = 0; index < extensions.length; index += 1) {
+      const next: number = lowerText.indexOf(extensions[index], cursor);
+      if (next >= 0 && (result < 0 || next < result)) {
+        result = next;
+      }
+    }
+    return result;
+  }
+
+  private normalizeInlineLocalWebFileTarget(target: string): string {
+    const cleanTarget: string = target.trim();
+    if (this.isFileUri(cleanTarget) || this.isAbsoluteLocalPath(cleanTarget)) {
+      return cleanTarget;
+    }
+    for (let index: number = 0; index < cleanTarget.length; index += 1) {
+      if (!this.isAsciiLocalFileStart(cleanTarget[index])) {
+        continue;
+      }
+      const candidate: string = cleanTarget.substring(index);
+      if (this.isHtmlFileTarget(candidate) || this.isMarkdownFileTarget(candidate)) {
+        return candidate;
+      }
+    }
+    return cleanTarget;
+  }
+
+  private isAsciiLocalFileStart(ch: string): boolean {
+    return (ch >= 'A' && ch <= 'Z') ||
+      (ch >= 'a' && ch <= 'z') ||
+      (ch >= '0' && ch <= '9') ||
+      ch === '_' ||
+      ch === '-' ||
+      ch === '.';
+  }
+
+  private openableFileExtensionEnd(lowerText: string, extensionIndex: number): number {
+    if (lowerText.substring(extensionIndex, extensionIndex + 5) === '.html') {
+      return extensionIndex + 5;
+    }
+    if (lowerText.substring(extensionIndex, extensionIndex + 4) === '.htm') {
+      const next: string = extensionIndex + 4 < lowerText.length ? lowerText[extensionIndex + 4] : '';
+      if (next.length === 0 || next === '?' || next === '#' || this.isLocalFileTargetDelimiter(next)) {
+        return extensionIndex + 4;
+      }
+    }
+    if (lowerText.substring(extensionIndex, extensionIndex + 9) === '.markdown') {
+      return extensionIndex + 9;
+    }
+    if (lowerText.substring(extensionIndex, extensionIndex + 3) === '.md') {
+      const next: string = extensionIndex + 3 < lowerText.length ? lowerText[extensionIndex + 3] : '';
+      if (next.length === 0 || next === '?' || next === '#' || this.isLocalFileTargetDelimiter(next)) {
+        return extensionIndex + 3;
+      }
+    }
+    return -1;
+  }
+
+  private isHttpTargetDelimiter(ch: string): boolean {
+    return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' ||
+      ch === '<' || ch === '>' || ch === '"' || ch === '\'' || ch === '`';
+  }
+
+  private isLocalFileTargetDelimiter(ch: string): boolean {
+    return this.isHttpTargetDelimiter(ch) ||
+      ch === '[' || ch === ']' || ch === '(' || ch === ')' ||
+      ch === '{' || ch === '}' || ch === ',' || ch === ';' || ch === '!' || ch === '?';
+  }
+
+  private trimAutoTargetEnd(text: string, start: number, end: number): number {
+    let nextEnd: number = end;
+    while (nextEnd > start) {
+      const ch: string = text[nextEnd - 1];
+      if (ch === '.' || ch === ',' || ch === ';' || ch === ':' || ch === '!' || ch === '?') {
+        nextEnd -= 1;
+        continue;
+      }
+      if ((ch === ')' || ch === ']') && this.hasUnbalancedClosingTargetChar(text.substring(start, nextEnd), ch)) {
+        nextEnd -= 1;
+        continue;
+      }
+      break;
+    }
+    return nextEnd;
+  }
+
+  private hasUnbalancedClosingTargetChar(value: string, closing: string): boolean {
+    const opening: string = closing === ')' ? '(' : '[';
+    let openCount: number = 0;
+    let closeCount: number = 0;
+    for (let index: number = 0; index < value.length; index += 1) {
+      if (value[index] === opening) {
+        openCount += 1;
+      } else if (value[index] === closing) {
+        closeCount += 1;
+      }
+    }
+    return closeCount > openCount;
+  }
+
+  private cleanMarkdownLinkTarget(target: string): string {
+    let result: string = target.trim();
+    if (result.length >= 2 && result[0] === '<') {
+      const closeIndex: number = result.indexOf('>');
+      if (closeIndex > 0) {
+        result = result.substring(1, closeIndex).trim();
+      }
+    }
+    return result;
   }
 
   private pushInlineMarkdownSegment(segments: MathSegment[], segment: MathSegment): void {
@@ -6524,15 +7476,29 @@ struct Index {
     }
   }
 
-  private collapsedMessagePreview(item: ChatMessage): string {
-    const text: string = item.content.replace(/\s+/g, ' ').trim();
-    if (text.length > 0) {
-      return text;
+  private emptyMessageBodyText(item: ChatMessage): string {
+    const type: string = item.itemType ?? item.role;
+    if (type === 'reasoning') {
+      return item.status === 'inProgress' ? '等待可展示的思考内容。' : '本次没有返回可展示的思考内容。';
     }
     if (item.status === 'inProgress') {
       return this.thinkingStatusText();
     }
     return '没有可展示的输出。';
+  }
+
+  private collapsedMessagePreview(item: ChatMessage): string {
+    const text: string = item.content.replace(/\s+/g, ' ').trim();
+    if (this.isReasoningMessage(item)) {
+      if (text.length > 0) {
+        return text;
+      }
+      return item.status === 'inProgress' ? this.thinkingStatusPhraseText() : '点击展开查看思考内容。';
+    }
+    if (text.length > 0) {
+      return text;
+    }
+    return this.emptyMessageBodyText(item);
   }
 
   private compactionNoticeStatusLabel(status: string): string {
@@ -8078,10 +9044,206 @@ struct Index {
   }
 
   @Builder
+  private rightPanelTabButton(label: string, tab: RightPanelTab) {
+    Text(label)
+      .copyOption(CopyOptions.None)
+      .fontSize(11)
+      .fontWeight(this.rightPanelTab === tab ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.rightPanelTab === tab ? '#FFFFFF' : '#64748B')
+      .textAlign(TextAlign.Center)
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .backgroundColor(this.rightPanelTab === tab ? '#27272A' : 'transparent')
+      .borderRadius(7)
+      .onClick(() => {
+        this.selectRightPanelTab(tab);
+      })
+  }
+
+  @Builder
+  private rightPanelTabs() {
+    Row() {
+      this.rightPanelTabButton('Diff', 'diff')
+      this.rightPanelTabButton('浏览器', 'browser')
+    }
+    .padding(2)
+    .backgroundColor('#EEF2F7')
+    .borderRadius(9)
+  }
+
+  @Builder
+  private browserPreviewToolbar() {
+    Row() {
+      Column() {
+        Text(this.browserPreviewTitleText())
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#18181B')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.browserPreviewSubtitleText())
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(9)
+          .fontColor('#94A3B8')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 3 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text('↻')
+        .copyOption(CopyOptions.None)
+        .fontSize(13)
+        .fontColor(this.hasBrowserPreview() ? '#475569' : '#CBD5E1')
+        .textAlign(TextAlign.Center)
+        .width(28)
+        .height(28)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(7)
+        .margin({ left: 8 })
+        .onClick(() => {
+          this.refreshBrowserPreview();
+        })
+
+      Text('↗')
+        .copyOption(CopyOptions.None)
+        .fontSize(13)
+        .fontColor(this.hasBrowserPreview() ? '#475569' : '#CBD5E1')
+        .textAlign(TextAlign.Center)
+        .width(28)
+        .height(28)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(7)
+        .margin({ left: 6 })
+        .onClick(() => {
+          if (this.hasBrowserPreview()) {
+            this.openHtmlPreviewTarget(this.browserPreviewSrc, this.browserPreviewTitleText());
+          }
+        })
+
+      Text('×')
+        .copyOption(CopyOptions.None)
+        .fontSize(15)
+        .fontColor('#475569')
+        .textAlign(TextAlign.Center)
+        .width(28)
+        .height(28)
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(7)
+        .margin({ left: 6 })
+        .onClick(() => {
+          this.closeBrowserPreview();
+        })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 10, right: 10, top: 9, bottom: 9 })
+    .backgroundColor('#F8FAFC')
+    .border({ width: 0.5, color: '#E2E8F0' })
+    .borderRadius(10)
+  }
+
+  @Builder
+  private browserPreviewPanel() {
+    Column() {
+      this.browserPreviewToolbar()
+
+      if (!this.hasBrowserPreview()) {
+        Column() {
+          Text('点击对话中的 HTML 文件后会在这里打开')
+            .copyOption(CopyOptions.None)
+            .fontSize(12)
+            .fontColor('#64748B')
+            .lineHeight(18)
+            .textAlign(TextAlign.Center)
+            .padding({ left: 18, right: 18 })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        Stack() {
+          Web({ src: this.browserPreviewSrc, controller: this.browserPreviewController })
+            .javaScriptAccess(true)
+            .domStorageAccess(true)
+            .fileAccess(true)
+            .onlineImageAccess(true)
+            .imageAccess(true)
+            .darkMode(WebDarkMode.Off)
+            .forceDarkAccess(false)
+            .zoomAccess(true)
+            .textZoomRatio(100)
+            .onPageBegin(() => {
+              this.browserPreviewError = '';
+            })
+            .onErrorReceive((event) => {
+              if (event !== undefined && event.error !== undefined && event.request !== undefined && event.request.isMainFrame()) {
+                this.browserPreviewError = event.error.getErrorInfo();
+              }
+            })
+            .width('100%')
+            .height('100%')
+
+          if (this.browserPreviewError.length > 0) {
+            Column() {
+              Text('网页加载失败')
+                .copyOption(CopyOptions.None)
+                .fontSize(13)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#B91C1C')
+
+              Text(this.browserPreviewError)
+                .copyOption(CopyOptions.LocalDevice)
+                .fontSize(11)
+                .fontColor('#7F1D1D')
+                .lineHeight(17)
+                .margin({ top: 7 })
+            }
+            .width('88%')
+            .padding(12)
+            .backgroundColor('#FEF2F2')
+            .border({ width: 0.5, color: '#FECACA' })
+            .borderRadius(8)
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .margin({ top: 8 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(10)
+      }
+    }
+    .height('100%')
+    .width('100%')
+  }
+
+  @Builder
   private rightPanel() {
     Column() {
+      if (this.hasBrowserPreview()) {
+        Row() {
+          this.rightPanelTabs()
+          Blank()
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: 10 })
+      }
+
       Column() {
-        this.chatContextPanel()
+        if (this.hasBrowserPreview() && this.rightPanelTab === 'browser') {
+          this.browserPreviewPanel()
+        } else {
+          this.chatContextPanel()
+        }
       }
       .layoutWeight(1)
       .width('100%')
