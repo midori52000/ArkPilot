@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Test-Path *)",
+      "Bash(Copy-Item *)",
+      "Bash(cmd *)",
+      "Bash(powershell *)"
+    ]
+  }
+}
