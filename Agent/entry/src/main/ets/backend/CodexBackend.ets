@@ -632,7 +632,8 @@ export class ConfigManagerFacade {
       provider.healthLatencyMs,
       provider.lastValidatedAt,
       usageScript,
-      provider.createdAt
+      provider.createdAt,
+      provider.contextWindow
     );
   }
 

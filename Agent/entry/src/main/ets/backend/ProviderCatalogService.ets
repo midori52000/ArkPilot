@@ -56,7 +56,7 @@ function cloneProvider(provider: ProviderRecord): ProviderRecord {
     provider.category, provider.description, provider.websiteUrl,
     provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
     provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-    provider.usageScript, provider.createdAt
+    provider.usageScript, provider.createdAt, provider.contextWindow
   );
 }
 
@@ -192,7 +192,7 @@ export class ProviderCatalogService {
         provider.category, provider.description, provider.websiteUrl,
         provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
         provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-        provider.usageScript, provider.createdAt
+        provider.usageScript, provider.createdAt, provider.contextWindow
       ));
     }
     this.catalog.providers = newProviders;
@@ -249,7 +249,7 @@ export class ProviderCatalogService {
         provider.category, provider.description, provider.websiteUrl,
         provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
         provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-        provider.usageScript, provider.createdAt
+        provider.usageScript, provider.createdAt, provider.contextWindow
       );
       if (isActive) {
         activatedId = next.id;
@@ -310,7 +310,7 @@ export class ProviderCatalogService {
         provider.category, provider.description, provider.websiteUrl,
         provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
         provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-        provider.usageScript, provider.createdAt
+        provider.usageScript, provider.createdAt, provider.contextWindow
       ));
     }
     return new ProviderCatalog(catalog.version, activeId, providers, catalog.updatedAt);
@@ -327,7 +327,7 @@ export class ProviderCatalogService {
       defs.push(new ProviderDefinition(
         rec.id, rec.name, rec.baseUrl, rec.model,
         rec.wireApi, rec.isActive, rec.appType, rec.mode,
-        rec.syncStatus, rec.updatedAt
+        rec.syncStatus, rec.updatedAt, rec.contextWindow
       ));
       creds.set(rec.id, rec.apiKey);
     }

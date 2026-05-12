@@ -8300,10 +8300,17 @@ struct Index {
   }
 
   private contextWindow(): number {
-    if (this.tokenUsage === null || this.tokenUsage === undefined) return 0;
-    const v = this.tokenUsage.modelContextWindow;
-    if (typeof v !== 'number' || v !== v) return 0;
-    return v < 0 ? 0 : v;
+    if (this.tokenUsage !== null && this.tokenUsage !== undefined) {
+      const v = this.tokenUsage.modelContextWindow;
+      if (typeof v === 'number' && v === v && v > 0) {
+        return v;
+      }
+    }
+    const provider = providerCatalogService.activeProvider();
+    if (provider !== null && provider.contextWindow > 0) {
+      return provider.contextWindow;
+    }
+    return 0;
   }
 
   private contextRemainingPct(): number {

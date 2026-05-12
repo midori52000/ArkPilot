@@ -154,7 +154,8 @@ function loadProvidersFromStore(): ProviderRecord[] {
       def.isActive, def.syncStatus as ProviderSyncStatus, def.updatedAt,
       'apiKey', [], def.wireApi as ApiWireFormat,
       'custom', '', '', '', '',
-      [], 'unknown', 0, 0, null, Date.now()
+      [], 'unknown', 0, 0, null, Date.now(),
+      def.contextWindow
     ));
   }
   return providers;
@@ -168,7 +169,7 @@ function saveProvidersToStore(providers: ProviderRecord[]): void {
     defs.push(new ProviderDefinition(
       rec.id, rec.name, rec.baseUrl, rec.model,
       rec.wireApi, rec.isActive, rec.appType, rec.mode,
-      rec.syncStatus, rec.updatedAt
+      rec.syncStatus, rec.updatedAt, rec.contextWindow
     ));
     creds.set(rec.id, rec.apiKey);
   }
@@ -796,7 +797,7 @@ export class ApiManagementService {
         rec.category, rec.description, rec.websiteUrl,
         rec.icon, rec.iconColor, rec.endpoints,
         rec.healthStatus, rec.healthLatencyMs, rec.lastValidatedAt,
-        rec.usageScript, rec.createdAt
+        rec.usageScript, rec.createdAt, rec.contextWindow
       ));
     }
     const exportDoc: ProviderExportDoc = new ProviderExportDoc();
