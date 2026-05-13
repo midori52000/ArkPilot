@@ -2002,7 +2002,7 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
                 NativeThreadState {
                     remote_thread_id: response.thread.id.clone(),
                     cwd: Some(response.cwd.clone()),
-                    messages: collect_thread_messages(&response.thread.turns),
+                    messages: collect_thread_messages(&response.thread.turns, &[]),
                     latest_token_usage: latest_thread_token_usage_from_turns(&response.thread),
                 },
             );
