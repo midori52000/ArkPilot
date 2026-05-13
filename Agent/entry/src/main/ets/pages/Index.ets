@@ -699,6 +699,7 @@ struct Index {
   @State private newProjectPath: string = '';
   @State private renamingProjectId: string = '';
   @State private renameProjectText: string = '';
+  @State private showAboutDialog: boolean = false;
   @State private showNewSessionDialog: boolean = false;
   @State private newSessionProjectId: string = '';
   @State private newSessionName: string = '';
@@ -7938,6 +7939,7 @@ struct Index {
         .fontWeight(FontWeight.Bold)
         .fontColor('#18181B')
         .width('100%')
+        .onClick(() => { this.showAboutDialog = true; })
 
       Divider()
         .width('100%')
@@ -10157,6 +10159,50 @@ struct Index {
           .onClick(() => {
             // tap backdrop to dismiss — do nothing, user must approve/deny
           })
+        }
+
+        if (this.showAboutDialog) {
+          Stack() {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('#0F172A')
+              .opacity(0.4)
+              .onClick(() => { this.showAboutDialog = false; })
+
+            Column() {
+              Row() {
+                Text('关于我们')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#18181B')
+
+                Blank()
+                  .layoutWeight(1)
+
+                Text('✕')
+                  .fontSize(16)
+                  .fontColor('#94A3B8')
+                  .onClick(() => { this.showAboutDialog = false; })
+              }
+              .width('100%')
+
+              Image($r('app.media.splash_bg'))
+                .width('100%')
+                .margin({ top: 12 })
+                .borderRadius(12)
+                .objectFit(ImageFit.Contain)
+            }
+            .width(this.isPhoneBreakpoint() ? '98%' : '1280px')
+            .constraintSize({ minHeight: this.isPhoneBreakpoint() ? '80vh' : '80vh' })
+            .padding(20)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(16)
+            .shadow({ radius: 24, color: '#33000000', offsetX: 0, offsetY: 8 })
+          }
+          .width('100%')
+          .height('100%')
+          .transition(TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.FastOutSlowIn }))
         }
       }
       .width('100%')
