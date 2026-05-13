@@ -171,6 +171,9 @@ function serializeProviderDefToml(def: ProviderDefinition): string {
   if (def.contextWindow > 0) {
     result += `context_window = ${def.contextWindow}\n`;
   }
+  if (def.modelAutoCompactTokenLimit > 0) {
+    result += `model_auto_compact_token_limit = ${def.modelAutoCompactTokenLimit}\n`;
+  }
   return result;
 }
 
@@ -267,7 +270,8 @@ function tomlMapToDefinition(m: Map<string, string>): ProviderDefinition {
     parseTomlString(m.get('mode') ?? '"exclusive"'),
     parseTomlString(m.get('sync_status') ?? '"synced"'),
     parseTomlString(m.get('updated_at') ?? '""'),
-    parseTomlInt(m.get('context_window') ?? '0', 0)
+    parseTomlInt(m.get('context_window') ?? '0', 0),
+    parseTomlInt(m.get('model_auto_compact_token_limit') ?? '0', 0)
   );
 }
 
@@ -281,7 +285,8 @@ function definitionToRecord(
     def.isActive, def.syncStatus as ProviderSyncStatus, def.updatedAt,
     'apiKey', [], def.wireApi as ApiWireFormat,
     'custom', '', '', '', '',
-    [], 'unknown', 0, 0, null, Date.now(), def.contextWindow
+    [], 'unknown', 0, 0, null, Date.now(), def.contextWindow,
+    def.modelAutoCompactTokenLimit
   );
 }
 
@@ -289,7 +294,8 @@ function recordToDefinition(rec: ProviderRecord): ProviderDefinition {
   return new ProviderDefinition(
     rec.id, rec.name, rec.baseUrl, rec.model,
     rec.wireApi, rec.isActive, rec.appType, rec.mode,
-    rec.syncStatus, rec.updatedAt, rec.contextWindow
+    rec.syncStatus, rec.updatedAt, rec.contextWindow,
+    rec.modelAutoCompactTokenLimit
   );
 }
 
@@ -388,7 +394,13 @@ export class ProviderConfigStore {
   }
 
   activateOnNative(def: ProviderDefinition, apiKey: string): void {
-    saveEmbeddedCodexProviderConfig(def.baseUrl, apiKey, def.model);
+    saveEmbeddedCodexProviderConfig(
+      def.baseUrl,
+      apiKey,
+      def.model,
+      def.contextWindow,
+      def.modelAutoCompactTokenLimit
+    );
   }
 }
 

@@ -30,11 +30,21 @@ export class CodexProviderConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  contextWindow: number;
+  modelAutoCompactTokenLimit: number;
 
-  constructor(baseUrl: string, apiKey: string, model: string) {
+  constructor(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+    contextWindow: number = 0,
+    modelAutoCompactTokenLimit: number = 0
+  ) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.model = model;
+    this.contextWindow = contextWindow;
+    this.modelAutoCompactTokenLimit = modelAutoCompactTokenLimit;
   }
 }
 
@@ -93,7 +103,23 @@ function normalizeProviderRecord(rawRecord: NativeCodexProviderRecord | undefine
     rawRecord?.model ?? '',
     rawRecord?.isActive === true,
     syncStatus,
-    rawRecord?.updatedAt ?? ''
+    rawRecord?.updatedAt ?? '',
+    'apiKey',
+    [],
+    'responses',
+    'custom',
+    '',
+    '',
+    '',
+    '',
+    [],
+    'unknown',
+    0,
+    0,
+    null,
+    Date.now(),
+    rawRecord?.contextWindow ?? 0,
+    rawRecord?.modelAutoCompactTokenLimit ?? 0
   );
 }
 
@@ -126,12 +152,14 @@ function normalizeStatus(rawStatus: NativeCodexHostStatus | undefined): CodexHos
 
 function normalizeProviderConfig(rawConfig: NativeCodexProviderConfig | undefined): CodexProviderConfig {
   if (rawConfig === undefined) {
-    return new CodexProviderConfig('', '', '');
+    return new CodexProviderConfig('', '', '', 0, 0);
   }
   return new CodexProviderConfig(
     rawConfig.baseUrl ?? rawConfig.base_url ?? '',
     rawConfig.apiKey ?? rawConfig.api_key ?? '',
-    rawConfig.model ?? ''
+    rawConfig.model ?? '',
+    rawConfig.contextWindow ?? 0,
+    rawConfig.modelAutoCompactTokenLimit ?? 0
   );
 }
 
@@ -151,13 +179,13 @@ function normalizeWorkspaceAccessStatus(rawStatus: NativeWorkspaceAccessStatus |
 
 function parseProviderConfig(rawValue: string): CodexProviderConfig {
   if (rawValue.trim().length === 0) {
-    return new CodexProviderConfig('', '', '');
+    return new CodexProviderConfig('', '', '', 0, 0);
   }
   try {
     const rawConfig: NativeCodexProviderConfig = JSON.parse(rawValue) as NativeCodexProviderConfig;
     return normalizeProviderConfig(rawConfig);
   } catch (_err) {
-    return new CodexProviderConfig('', '', '');
+    return new CodexProviderConfig('', '', '', 0, 0);
   }
 }
 
@@ -237,23 +265,41 @@ export function getEmbeddedCodexHostStatus(): CodexHostStatus {
 
 export function getEmbeddedCodexProviderConfig(): CodexProviderConfig {
   if (nativeModuleUnavailable()) {
-    return new CodexProviderConfig('', '', '');
+    return new CodexProviderConfig('', '', '', 0, 0);
   }
   try {
     const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
     return parseProviderConfig(nativeBridge!.getProviderConfig(codexHome));
   } catch (_err) {
-    return new CodexProviderConfig('', '', '');
+    return new CodexProviderConfig('', '', '', 0, 0);
   }
 }
 
-export function saveEmbeddedCodexProviderConfig(baseUrl: string, apiKey: string, model: string): CodexProviderConfig {
+export function saveEmbeddedCodexProviderConfig(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  contextWindow?: number,
+  modelAutoCompactTokenLimit?: number
+): CodexProviderConfig {
   if (nativeModuleUnavailable()) {
     throw new Error('libentry.so failed to load.');
   }
   try {
     const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
-    const response = nativeBridge!.saveProviderConfig(codexHome, baseUrl, apiKey, model);
+    const currentConfig = contextWindow === undefined || modelAutoCompactTokenLimit === undefined
+      ? getEmbeddedCodexProviderConfig()
+      : null;
+    const resolvedContextWindow = contextWindow ?? currentConfig?.contextWindow ?? 0;
+    const resolvedModelAutoCompactTokenLimit = modelAutoCompactTokenLimit ?? currentConfig?.modelAutoCompactTokenLimit ?? 0;
+    const response = nativeBridge!.saveProviderConfig(
+      codexHome,
+      baseUrl,
+      apiKey,
+      model,
+      resolvedContextWindow > 0 ? String(resolvedContextWindow) : '',
+      resolvedModelAutoCompactTokenLimit > 0 ? String(resolvedModelAutoCompactTokenLimit) : ''
+    );
     const parsed = parseProviderConfig(response);
     if (parsed.baseUrl.trim().length === 0 && parsed.apiKey.trim().length === 0 && parsed.model.trim().length === 0) {
       throw new Error('native saveProviderConfig returned an empty provider config');

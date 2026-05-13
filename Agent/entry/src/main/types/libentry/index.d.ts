@@ -11,6 +11,8 @@ export interface NativeCodexProviderConfig {
   apiKey?: string;
   api_key?: string;
   model?: string;
+  contextWindow?: number;
+  modelAutoCompactTokenLimit?: number;
 }
 
 export interface NativeCodexProviderRecord {
@@ -26,6 +28,8 @@ export interface NativeCodexProviderRecord {
   isActive?: boolean;
   syncStatus?: string;
   updatedAt?: string;
+  contextWindow?: number;
+  modelAutoCompactTokenLimit?: number;
 }
 
 export interface NativeCodexProviderCatalog {
@@ -58,7 +62,14 @@ export interface EntryBridgeModule {
   getLastMessage: () => string;
   getServerUrl: () => string;
   getProviderConfig: (codexHome?: string) => string;
-  saveProviderConfig: (codexHome?: string, baseUrl?: string, apiKey?: string, model?: string) => string;
+  saveProviderConfig: (
+    codexHome?: string,
+    baseUrl?: string,
+    apiKey?: string,
+    model?: string,
+    contextWindow?: string,
+    modelAutoCompactTokenLimit?: string
+  ) => string;
   getProviderCatalog: (codexHome?: string) => string;
   saveProviderCatalog: (codexHome?: string, catalogJson?: string) => string;
   getSkillsRegistry: (codexHome?: string) => string;
