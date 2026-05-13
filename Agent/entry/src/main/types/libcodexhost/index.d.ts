@@ -52,9 +52,6 @@ interface NativeCodexHostModule {
   getSkillsRepos: (codexHome?: string) => string;
   saveSkillsRepos: (codexHome?: string, reposJson?: string) => number;
   computeDirHash: (dirPath?: string) => string;
-  getSkillsBackups: (codexHome?: string) => string;
-  createSkillBackup: (codexHome?: string, skillDir?: string, skillJson?: string) => string;
-  deleteSkillBackup: (codexHome?: string, backupId?: string) => number;
 
   // Prompts management
   getPromptsRegistry: (codexHome?: string) => string;

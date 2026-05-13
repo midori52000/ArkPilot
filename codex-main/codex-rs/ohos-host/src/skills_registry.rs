@@ -217,6 +217,33 @@ pub struct ReconcileResult {
     pub registered: Vec<String>,
 }
 
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest)
+        .map_err(|e| format!("mkdir {}: {}", dest.display(), e))?;
+
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| format!("read_dir {}: {}", src.display(), e))?
+    {
+        let entry = entry.map_err(|e| format!("entry: {}", e))?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            std::fs::copy(&src_path, &dest_path).map_err(|e| {
+                format!(
+                    "copy {} -> {}: {}",
+                    src_path.display(),
+                    dest_path.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 /// 从源目录安装 Skill 到 SSOT
 ///
 /// 操作流程：
@@ -265,8 +292,7 @@ pub fn install_skill_from_dir(
     }
 
     // 复制文件
-    super::skills_backup::copy_dir_recursive(source_dir, &dest)
-        .map_err(|e| format!("copy to ssot: {}", e))?;
+    copy_dir_recursive(source_dir, &dest).map_err(|e| format!("copy to ssot: {}", e))?;
 
     // 解析 SKILL.md
     let skill_md_path = dest.join("SKILL.md");
@@ -341,9 +367,8 @@ pub fn install_skill_from_dir(
 ///
 /// 操作流程：
 /// 1. 从 registry 查找
-/// 2. 创建备份
-/// 3. 删除 SSOT 目录
-/// 4. 从 registry 移除
+/// 2. 删除 SSOT 目录
+/// 3. 从 registry 移除
 pub fn uninstall_skill(
     codex_home: &Path,
     id: &str,
@@ -356,30 +381,16 @@ pub fn uninstall_skill(
         .cloned()
         .ok_or_else(|| format!("skill not found: {}", id))?;
 
-    // 创建备份
-    let ssot = ssot_dir(codex_home);
-    let skill_dir = ssot.join(&skill.directory);
-    let skill_json = serde_json::to_string(&skill).unwrap_or_default();
-    let backup_path = if skill_dir.exists() {
-        super::skills_backup::create_uninstall_backup(codex_home, &skill_dir, &skill_json)
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-    } else {
-        String::new()
-    };
-
-    // 删除 SSOT 目录
+    let skill_dir = ssot_dir(codex_home).join(&skill.directory);
     if skill_dir.exists() {
         std::fs::remove_dir_all(&skill_dir)
             .map_err(|e| format!("remove skill dir: {}", e))?;
     }
 
-    // 从 registry 移除
     registry.remove(id);
     registry.save(codex_home)?;
 
-    Ok(backup_path)
+    Ok(skill.id)
 }
 
 /// 切换 Skill 启用/禁用状态

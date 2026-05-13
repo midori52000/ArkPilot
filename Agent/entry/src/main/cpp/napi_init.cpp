@@ -16,7 +16,7 @@ constexpr size_t MAX_CATALOG_JSON_ARG_LEN = 65536;
 constexpr size_t MAX_REGISTRY_JSON_ARG_LEN = 65536;
 constexpr size_t MAX_DIR_PATH_ARG_LEN = 4096;
 constexpr size_t MAX_SKILL_JSON_ARG_LEN = 8192;
-constexpr size_t MAX_BACKUP_ID_ARG_LEN = 512;
+constexpr size_t MAX_ENTITY_ID_ARG_LEN = 512;
 constexpr size_t MAX_PROMPTS_CONTENT_ARG_LEN = 262144;
 constexpr size_t MAX_JSON_ARG_LEN = 262144;
 constexpr const char* OHOS_DEFAULT_PATH = "/system/bin:/vendor/bin:/system/xbin:/bin";
@@ -38,9 +38,6 @@ struct BridgeApi {
     const char* (*skills_repos_json)(const char*) = nullptr;
     int32_t (*save_skills_repos)(const char*, const char*) = nullptr;
     const char* (*compute_dir_hash)(const char*) = nullptr;
-    const char* (*skills_backups_json)(const char*) = nullptr;
-    const char* (*create_skill_backup)(const char*, const char*, const char*) = nullptr;
-    int32_t (*delete_skill_backup)(const char*, const char*) = nullptr;
     const char* (*install_skill_from_dir)(const char*, const char*, const char*) = nullptr;
     const char* (*uninstall_skill)(const char*, const char*) = nullptr;
     const char* (*set_skill_enabled)(const char*, const char*, int32_t) = nullptr;
@@ -107,9 +104,6 @@ bool LoadBridgeApi(BridgeApi* api) {
         LoadSymbol(api->handle, "codex_ohos_host_skills_repos_json", &api->skills_repos_json) &&
         LoadSymbol(api->handle, "codex_ohos_host_save_skills_repos", &api->save_skills_repos) &&
         LoadSymbol(api->handle, "codex_ohos_host_compute_dir_hash", &api->compute_dir_hash) &&
-        LoadSymbol(api->handle, "codex_ohos_host_skills_backups_json", &api->skills_backups_json) &&
-        LoadSymbol(api->handle, "codex_ohos_host_create_skill_backup", &api->create_skill_backup) &&
-        LoadSymbol(api->handle, "codex_ohos_host_delete_skill_backup", &api->delete_skill_backup) &&
         LoadSymbol(api->handle, "codex_ohos_host_install_skill_from_dir", &api->install_skill_from_dir) &&
         LoadSymbol(api->handle, "codex_ohos_host_uninstall_skill", &api->uninstall_skill) &&
         LoadSymbol(api->handle, "codex_ohos_host_set_skill_enabled", &api->set_skill_enabled) &&
@@ -432,28 +426,6 @@ napi_value SaveSkillsRepos(napi_env env, napi_callback_info info) {
     return result;
 }
 napi_value ComputeDirHash(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->compute_dir_hash); return result; }
-napi_value GetSkillsBackups(napi_env env, napi_callback_info info) { BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env); napi_value result = CallString1(env, info, api->skills_backups_json); return result; }
-
-napi_value CreateSkillBackup(napi_env env, napi_callback_info info) {
-    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
-    size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    char codex_home[MAX_HOME_ARG_LEN], skill_dir[MAX_DIR_PATH_ARG_LEN], skill_json[MAX_SKILL_JSON_ARG_LEN]; codex_home[0] = '\0'; skill_dir[0] = '\0'; skill_json[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_dir, sizeof(skill_dir))) { return nullptr; }
-    if (argc >= 3 && !ReadOptionalUtf8(env, args[2], skill_json, sizeof(skill_json))) { return nullptr; }
-    napi_value result = CreateUtf8String(env, api->create_skill_backup(codex_home[0] == '\0' ? nullptr : codex_home, skill_dir[0] == '\0' ? nullptr : skill_dir, skill_json[0] == '\0' ? nullptr : skill_json));
-    return result;
-}
-
-napi_value DeleteSkillBackup(napi_env env, napi_callback_info info) {
-    BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
-    size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    char codex_home[MAX_HOME_ARG_LEN], backup_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; backup_id[0] = '\0';
-    if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
-    if (argc >= 2 && !ReadOptionalUtf8(env, args[1], backup_id, sizeof(backup_id))) { return nullptr; }
-    napi_value result = CreateInt32(env, api->delete_skill_backup(codex_home[0] == '\0' ? nullptr : codex_home, backup_id[0] == '\0' ? nullptr : backup_id));
-    return result;
-}
 
 napi_value InstallSkillFromDir(napi_env env, napi_callback_info info) {
     BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
@@ -469,7 +441,7 @@ napi_value InstallSkillFromDir(napi_env env, napi_callback_info info) {
 napi_value UninstallSkill(napi_env env, napi_callback_info info) {
     BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
+    char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_ENTITY_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
     if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
     if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { return nullptr; }
     napi_value result = CreateUtf8String(env, api->uninstall_skill(codex_home[0] == '\0' ? nullptr : codex_home, skill_id[0] == '\0' ? nullptr : skill_id));
@@ -479,7 +451,7 @@ napi_value UninstallSkill(napi_env env, napi_callback_info info) {
 napi_value SetSkillEnabled(napi_env env, napi_callback_info info) {
     BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 3; napi_value args[3] = {nullptr, nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
+    char codex_home[MAX_HOME_ARG_LEN], skill_id[MAX_ENTITY_ID_ARG_LEN]; codex_home[0] = '\0'; skill_id[0] = '\0';
     int32_t enabled = 1;
     if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
     if (argc >= 2 && !ReadOptionalUtf8(env, args[1], skill_id, sizeof(skill_id))) { return nullptr; }
@@ -515,7 +487,7 @@ napi_value WriteAgentsMd(napi_env env, napi_callback_info info) {
 napi_value EnablePrompt(napi_env env, napi_callback_info info) {
     BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
     size_t argc = 2; napi_value args[2] = {nullptr, nullptr}; napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    char codex_home[MAX_HOME_ARG_LEN], prompt_id[MAX_BACKUP_ID_ARG_LEN]; codex_home[0] = '\0'; prompt_id[0] = '\0';
+    char codex_home[MAX_HOME_ARG_LEN], prompt_id[MAX_ENTITY_ID_ARG_LEN]; codex_home[0] = '\0'; prompt_id[0] = '\0';
     if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
     if (argc >= 2 && !ReadOptionalUtf8(env, args[1], prompt_id, sizeof(prompt_id))) { return nullptr; }
     napi_value result = CreateUtf8String(env, api->enable_prompt(codex_home[0] == '\0' ? nullptr : codex_home, prompt_id[0] == '\0' ? nullptr : prompt_id));
@@ -599,9 +571,6 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getSkillsRepos", nullptr, GetSkillsRepos, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"saveSkillsRepos", nullptr, SaveSkillsRepos, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"computeDirHash", nullptr, ComputeDirHash, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"getSkillsBackups", nullptr, GetSkillsBackups, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"createSkillBackup", nullptr, CreateSkillBackup, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"deleteSkillBackup", nullptr, DeleteSkillBackup, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"installSkillFromDir", nullptr, InstallSkillFromDir, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"uninstallSkill", nullptr, UninstallSkill, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setSkillEnabled", nullptr, SetSkillEnabled, nullptr, nullptr, nullptr, napi_default, nullptr},

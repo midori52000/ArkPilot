@@ -139,9 +139,8 @@ Settings 中包含 Skills 管理界面与后端服务。
 
 - 已安装 Skill 注册表读写
 - GitHub 仓库配置管理
-- Skill 发现、安装、卸载、更新检测
+- Skill 发现、安装、卸载、启用/禁用、更新检测
 - 本地 Skill 导入
-- 备份管理
 - `skills.sh` 搜索
 
 相关实现：
@@ -183,7 +182,7 @@ NAPI 模块 `libentry.so` 负责把 ArkTS 调用转发给动态加载的 Native 
 
 - host 生命周期接口
 - provider 配置接口
-- prompts / skills / backups 接口
+- prompts / skills 接口
 - initialize / thread / turn / approval 接口
 - MCP 配置与 OAuth 接口
 - account 登录状态接口
@@ -274,7 +273,6 @@ CMake 会从以下目录查找 Rust 桥接库：
 - Provider catalog
 - Skills registry
 - Skills repos
-- Skills backups
 - Prompts registry
 - `AGENTS.md`
 

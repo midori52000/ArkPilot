@@ -49,7 +49,6 @@ ArkTS UI (Index.ets, SettingsPage.ets, etc.)
 - `Agent/entry/src/main/types/libentry/index.d.ts` — ArkTS 类型声明，定义 `EntryBridgeModule` 接口
 - `codex-main/codex-rs/ohos-host/src/lib.rs` — Rust host 主入口
 - `codex-main/codex-rs/ohos-host/src/skills_registry.rs` — Skills 注册表
-- `codex-main/codex-rs/ohos-host/src/skills_backup.rs` — Skills 备份
 - `codex-main/codex-rs/ohos-host/src/skills_hash.rs` — Skills 目录哈希
 - `codex-main/codex-rs/ohos-host/src/prompts_registry.rs` — Prompts 注册表
 

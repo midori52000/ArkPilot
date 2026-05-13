@@ -28,6 +28,8 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::CollaborationModeListParams;
 use codex_app_server_protocol::CollaborationModeListResponse;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
+use codex_app_server_protocol::ConfigBatchWriteParams;
+use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
 use codex_app_server_protocol::FileChangeApprovalDecision;
 use codex_app_server_protocol::FileChangeRequestApprovalResponse;
@@ -89,7 +91,6 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 
 mod prompts_registry;
-mod skills_backup;
 mod skills_hash;
 mod skills_registry;
 
@@ -558,13 +559,9 @@ static LAST_SKILLS_REPOS_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
 static LAST_HASH_RESULT: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
-static LAST_BACKUPS_JSON: Lazy<Mutex<CString>> =
-    Lazy::new(|| Mutex::new(CString::new("[]").expect("empty cstring")));
-static LAST_BACKUP_PATH: Lazy<Mutex<CString>> =
-    Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
 static LAST_INSTALL_SKILL_RESULT_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
-static LAST_UNINSTALL_BACKUP_PATH: Lazy<Mutex<CString>> =
+static LAST_UNINSTALL_SKILL_RESULT: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("").expect("empty cstring")));
 static LAST_SET_ENABLED_RESULT_JSON: Lazy<Mutex<CString>> =
     Lazy::new(|| Mutex::new(CString::new("{}").expect("empty cstring")));
@@ -928,54 +925,6 @@ pub extern "C" fn codex_ohos_host_compute_dir_hash(dir_path: *const c_char) -> *
     write_cstring(&LAST_HASH_RESULT, &hash)
 }
 
-// ========== Skills Backups ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_skills_backups_json(codex_home: *const c_char) -> *const c_char {
-    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
-    let backups = skills_backup::list_backups(&codex_home);
-    let json = serde_json::to_string(&backups).unwrap_or_else(|_| "[]".into());
-    write_cstring(&LAST_BACKUPS_JSON, &json)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_create_skill_backup(
-    codex_home: *const c_char,
-    skill_dir: *const c_char,
-    skill_json: *const c_char,
-) -> *const c_char {
-    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
-    let skill_dir = PathBuf::from(ffi_string(skill_dir).unwrap_or_default());
-    let skill_json = ffi_string(skill_json).unwrap_or_default();
-
-    match skills_backup::create_uninstall_backup(&codex_home, &skill_dir, &skill_json) {
-        Ok(path) => write_cstring(&LAST_BACKUP_PATH, &path.to_string_lossy()),
-        Err(e) => write_cstring(&LAST_BACKUP_PATH, &format!("error:{}", e)),
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn codex_ohos_host_delete_skill_backup(
-    codex_home: *const c_char,
-    backup_id: *const c_char,
-) -> i32 {
-    let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
-    let Some(backup_id) = ffi_string(backup_id) else {
-        return 1;
-    };
-
-    // 安全检查：防止路径穿越
-    if backup_id.contains("..") || backup_id.contains('/') || backup_id.contains('\\') {
-        return 1;
-    }
-
-    let backup_path = codex_home.join("skill-backups").join(&backup_id);
-    match std::fs::remove_dir_all(&backup_path) {
-        Ok(()) => 0,
-        Err(_) => 1,
-    }
-}
-
 // ========== Skills Install / Uninstall / Enable / Reconcile ==========
 
 #[unsafe(no_mangle)]
@@ -1011,11 +960,11 @@ pub extern "C" fn codex_ohos_host_uninstall_skill(
 ) -> *const c_char {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     let Some(skill_id) = ffi_string(skill_id) else {
-        return write_cstring(&LAST_UNINSTALL_BACKUP_PATH, "");
+        return write_cstring(&LAST_UNINSTALL_SKILL_RESULT, "");
     };
     match skills_registry::uninstall_skill(&codex_home, &skill_id) {
-        Ok(backup_path) => write_cstring(&LAST_UNINSTALL_BACKUP_PATH, &backup_path),
-        Err(e) => write_cstring(&LAST_UNINSTALL_BACKUP_PATH, &format!("error:{}", e)),
+        Ok(backup_path) => write_cstring(&LAST_UNINSTALL_SKILL_RESULT, &backup_path),
+        Err(e) => write_cstring(&LAST_UNINSTALL_SKILL_RESULT, &format!("error:{}", e)),
     }
 }
 
@@ -1029,15 +978,26 @@ pub extern "C" fn codex_ohos_host_set_skill_enabled(
     let Some(skill_id) = ffi_string(skill_id) else {
         return write_cstring(&LAST_SET_ENABLED_RESULT_JSON, "{}");
     };
-    match skills_registry::set_skill_enabled(&codex_home, &skill_id, enabled != 0) {
+    let enabled = enabled != 0;
+    match skills_registry::set_skill_enabled(&codex_home, &skill_id, enabled) {
         Ok(entry) => {
+            if let Err(err) = sync_skill_enabled_to_config(&codex_home, &entry.directory, enabled) {
+                let _ = skills_registry::set_skill_enabled(&codex_home, &skill_id, !enabled);
+                let json = serde_json::json!({ "error": err.to_string() }).to_string();
+                return write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &json);
+            }
+            if let Err(err) = reload_user_config_if_connected() {
+                set_host_message(format!(
+                    "skill config updated but reload_user_config failed: {err}"
+                ));
+            }
             let json = serde_json::to_string(&entry).unwrap_or_else(|_| "{}".into());
             write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &json)
         }
-        Err(e) => write_cstring(
-            &LAST_SET_ENABLED_RESULT_JSON,
-            &format!("{{\"error\":\"{}\"}}", e),
-        ),
+        Err(e) => {
+            let json = serde_json::json!({ "error": e }).to_string();
+            write_cstring(&LAST_SET_ENABLED_RESULT_JSON, &json)
+        }
     }
 }
 
@@ -3029,6 +2989,53 @@ fn write_mcp_servers(codex_home: &Path, servers: &BTreeMap<String, McpServerConf
     ConfigEditsBuilder::new(codex_home)
         .replace_mcp_servers(servers)
         .apply_blocking()
+}
+
+fn sync_skill_enabled_to_config(
+    codex_home: &Path,
+    skill_directory: &str,
+    enabled: bool,
+) -> Result<()> {
+    let skill_md_path = skills_registry::ssot_dir(codex_home)
+        .join(skill_directory)
+        .join("SKILL.md");
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([ConfigEdit::SetSkillConfig {
+            path: skill_md_path,
+            enabled,
+        }])
+        .apply_blocking()
+        .with_context(|| format!("failed to sync skill config for {skill_directory}"))?;
+    Ok(())
+}
+
+fn reload_user_config_if_connected() -> Result<()> {
+    with_runtime_result(async {
+        let request = with_native_handle(|state| {
+            let Some(handle) = state.client.as_ref().map(RemoteAppServerClient::request_handle) else {
+                return Ok::<_, anyhow::Error>(None);
+            };
+            let request_id = next_request_id(state);
+            Ok::<_, anyhow::Error>(Some((handle, request_id)))
+        })?;
+        let Some((handle, request_id)) = request else {
+            return Ok(());
+        };
+
+        let _: ConfigWriteResponse = handle
+            .request_typed(ClientRequest::ConfigBatchWrite {
+                request_id,
+                params: ConfigBatchWriteParams {
+                    edits: Vec::new(),
+                    file_path: None,
+                    expected_version: None,
+                    reload_user_config: true,
+                },
+            })
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok(())
+    })
 }
 
 fn apply_mcp_batch_edits(

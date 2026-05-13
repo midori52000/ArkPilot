@@ -20,9 +20,6 @@ int32_t codex_ohos_host_save_skills_registry(const char* codex_home, const char*
 const char* codex_ohos_host_skills_repos_json(const char* codex_home);
 int32_t codex_ohos_host_save_skills_repos(const char* codex_home, const char* repos_json);
 const char* codex_ohos_host_compute_dir_hash(const char* dir_path);
-const char* codex_ohos_host_skills_backups_json(const char* codex_home);
-const char* codex_ohos_host_create_skill_backup(const char* codex_home, const char* skill_dir, const char* skill_json);
-int32_t codex_ohos_host_delete_skill_backup(const char* codex_home, const char* backup_id);
 const char* codex_ohos_host_prompts_registry_json(const char* codex_home);
 int32_t codex_ohos_host_save_prompts_registry(const char* codex_home, const char* registry_json);
 const char* codex_ohos_host_read_agents_md(const char* codex_home);

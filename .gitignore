@@ -22,3 +22,4 @@
 
 # Native shared libraries (built artifacts)
 *.so
+Agent/build-profile.json5

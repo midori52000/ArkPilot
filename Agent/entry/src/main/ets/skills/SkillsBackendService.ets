@@ -1,13 +1,13 @@
 import {
   getSkillsRegistry, saveSkillsRegistry, getSkillsRepos, saveSkillsRepos,
-  computeDirHash, getSkillsBackups, createSkillBackup, deleteSkillBackup,
-  installSkillFromDir, uninstallSkill, setSkillEnabledNative, reconcileSkills
+  computeDirHash, installSkillFromDir, uninstallSkill,
+  setSkillEnabledNative, reconcileSkills
 } from '../backend/CodexNative';
 import {
   InstalledSkill, DiscoverableSkill, UnmanagedSkill, SkillRepo,
-  SkillUpdateInfo, SkillBackupEntry, SkillsShSearchResult, SkillsShItem,
+  SkillUpdateInfo, SkillsShSearchResult, SkillsShItem,
   DEFAULT_SKILL_REPOS, SkillSource, SkillEntryJson, SkillsRegistryJson,
-  SkillRepoEntryJson, SkillsRepoListJson, SkillBackupJson, ReconcileResult
+  SkillRepoEntryJson, SkillsRepoListJson, ReconcileResult
 } from './SkillTypes';
 import http from '@ohos.net.http';
 import fileIo from '@ohos.file.fs';
@@ -48,7 +48,6 @@ export enum SkillErrorCode {
   SKILL_DIRECTORY_CONFLICT = 'SKILL_DIRECTORY_CONFLICT',
   SKILL_NOT_FOUND = 'SKILL_NOT_FOUND',
   UPDATE_NOT_SUPPORTED = 'UPDATE_NOT_SUPPORTED',
-  BACKUP_NOT_FOUND = 'BACKUP_NOT_FOUND',
   DOWNLOAD_FAILED = 'DOWNLOAD_FAILED',
   EMPTY_ARCHIVE = 'EMPTY_ARCHIVE',
 }
@@ -73,7 +72,6 @@ export const SKILL_ERROR_MESSAGES: Map<SkillErrorCode, string> = new Map([
   [SkillErrorCode.SKILL_DIRECTORY_CONFLICT, '已存在同名 Skill（来自不同仓库），请先卸载现有 Skill 再重试'],
   [SkillErrorCode.SKILL_NOT_FOUND, '未找到指定的 Skill，可能已被卸载'],
   [SkillErrorCode.UPDATE_NOT_SUPPORTED, '仅支持更新来自 GitHub 的 Skill'],
-  [SkillErrorCode.BACKUP_NOT_FOUND, '备份文件不存在或已被清理'],
   [SkillErrorCode.DOWNLOAD_FAILED, '下载仓库失败，请检查仓库地址和网络连接'],
   [SkillErrorCode.EMPTY_ARCHIVE, '下载的 ZIP 文件为空，请确认仓库是否存在'],
 ]);
@@ -84,11 +82,10 @@ export const SKILL_ERROR_MESSAGES: Map<SkillErrorCode, string> = new Map([
  * 职责：
  * - GitHub 仓库 Skill 发现
  * - Skill 安装（下载 → 解压 → 复制到 SSOT → 注册）
- * - Skill 卸载（备份 → 删除 → 移除注册）
+ * - Skill 卸载（删除 → 移除注册）
  * - 更新检测（SHA-256 对比）
  * - skills.sh 公共目录搜索
  * - 未管理 Skill 扫描
- * - 备份管理
  */
 export class SkillsBackendService {
   private codexHome: string;
@@ -99,10 +96,6 @@ export class SkillsBackendService {
 
   getSsotDir(): string {
     return `${this.codexHome}/skills`;
-  }
-
-  getBackupDir(): string {
-    return `${this.codexHome}/skill-backups`;
   }
 
   // ================================================================
@@ -420,15 +413,6 @@ export class SkillsBackendService {
       await this.removeDir(tempDir);
       throw new SkillError(SkillErrorCode.SKILL_DIR_NOT_FOUND, `directory=${skill.directory}`, '');
     }
-
-    // 备份旧文件（best-effort）
-    try {
-      createSkillBackup(
-        this.codexHome,
-        `${this.getSsotDir()}/${skill.directory}`,
-        JSON.stringify(skill)
-      );
-    } catch (_) { /* 备份失败不中断更新 */ }
 
     // 替换文件
     const dest = `${this.getSsotDir()}/${skill.directory}`;
@@ -783,59 +767,6 @@ export class SkillsBackendService {
       });
 
     return new SkillsShSearchResult(skills, data.count, data.query);
-  }
-
-  // ================================================================
-  // 备份管理
-  // ================================================================
-
-  async getBackups(): Promise<SkillBackupEntry[]> {
-    const json = getSkillsBackups(this.codexHome);
-    const rawBackups: SkillBackupJson[] = JSON.parse(json) as SkillBackupJson[];
-    return rawBackups.map((backup: SkillBackupJson) => SkillBackupEntry.fromBackupJson(backup));
-  }
-
-  async removeBackup(backupId: string): Promise<void> {
-    deleteSkillBackup(this.codexHome, backupId);
-  }
-
-  async restoreBackup(backupId: string): Promise<InstalledSkill> {
-    const backups = await this.getBackups();
-    const backup = backups.find((b: SkillBackupEntry): boolean => b.backupId === backupId);
-    if (!backup) {
-      throw new SkillError(
-        SkillErrorCode.BACKUP_NOT_FOUND,
-        `backupId=${backupId}`,
-        '备份文件不存在或被清理'
-      );
-    }
-
-    const installed = await this.getInstalled();
-    if (installed.some((s: InstalledSkill): boolean => s.id === backup.skill.id)) {
-      throw new SkillError(
-        SkillErrorCode.SKILL_DIRECTORY_CONFLICT,
-        `directory=${backup.skill.directory}`,
-        '同名 Skill 已存在，请先卸载'
-      );
-    }
-
-    const dest = `${this.getSsotDir()}/${backup.skill.directory}`;
-    const backupSkillDir = `${backup.backupPath}/skill`;
-    await this.copyDirRecursive(backupSkillDir, dest);
-
-    const restored = InstalledSkill.fromJSON(backup.skill as SkillEntryJson);
-    restored.installedAt = Date.now();
-    restored.updatedAt = 0;
-    restored.enabled = true;
-
-    try {
-      restored.contentHash = computeDirHash(dest);
-    } catch (_) { /* 哈希计算不应中断恢复 */ }
-
-    installed.push(restored);
-    await this.saveInstalled(installed);
-
-    return restored;
   }
 
   // ================================================================

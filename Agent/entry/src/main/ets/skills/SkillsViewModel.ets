@@ -1,9 +1,8 @@
 import { configManagerFacade, ConfigActionError } from '../backend/CodexBackend';
 import {
   InstalledSkill, DiscoverableSkill, UnmanagedSkill,
-  SkillRepo, SkillUpdateInfo, SkillBackupEntry, SkillsShSearchResult
+  SkillRepo, SkillUpdateInfo, SkillsShSearchResult
 } from './SkillTypes';
-
 @Observed
 export class SkillsState {
   installed: InstalledSkill[] = [];
@@ -11,11 +10,9 @@ export class SkillsState {
   unmanaged: UnmanagedSkill[] = [];
   updates: SkillUpdateInfo[] = [];
   repos: SkillRepo[] = [];
-  backups: SkillBackupEntry[] = [];
   installedLoading: boolean = false;
   discoverableLoading: boolean = false;
   updatesLoading: boolean = false;
-  backupsLoading: boolean = false;
   statusText: string = '';
   errorText: string = '';
 }
@@ -163,45 +160,6 @@ export class SkillsViewModel {
       s.id === id ? result.data as InstalledSkill : s
     );
     this.state.updates = this.state.updates.filter(u => u.id !== id);
-    this.state.errorText = '';
-  }
-
-  async loadBackups(): Promise<void> {
-    this.state.backupsLoading = true;
-    try {
-      const result = await configManagerFacade.listSkillBackups();
-      if (!result.ok || result.data === null) {
-        this.state.backups = [];
-        this.state.errorText = this.describeActionError(result.error);
-        return;
-      }
-      this.state.backups = result.data;
-      this.state.errorText = '';
-    } finally {
-      this.state.backupsLoading = false;
-    }
-  }
-
-  async deleteBackup(backupId: string): Promise<void> {
-    const result = await configManagerFacade.removeSkillBackup(backupId);
-    if (!result.ok || result.data === null) {
-      this.state.errorText = this.describeActionError(result.error);
-      return;
-    }
-    this.state.backups = this.state.backups.filter(b => b.backupId !== backupId);
-    this.state.errorText = '';
-    this.state.statusText = '备份已删除';
-  }
-
-  async restoreBackup(backupId: string): Promise<void> {
-    const result = await configManagerFacade.restoreSkillBackup(backupId);
-    if (!result.ok || result.data === null) {
-      this.state.errorText = this.describeActionError(result.error);
-      return;
-    }
-    const restored = result.data;
-    this.state.installed = [...this.state.installed.filter(s => s.id !== restored.id), restored];
-    await this.loadBackups();
     this.state.errorText = '';
   }
 

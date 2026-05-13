@@ -62,7 +62,6 @@ import { apiManagementService } from '../apim/ApiManagementService';
 import {
   DiscoverableSkill,
   InstalledSkill,
-  SkillBackupEntry,
   SkillRepo,
   SkillsShSearchResult,
   SkillUpdateInfo,
@@ -94,7 +93,7 @@ const UNRECOGNIZED_CHANGED_FILES_TEXT: string = '\u5c1a\u672a\u8bc6\u522b\u53d8\
 
 export type ConfigKind = 'provider' | 'skill';
 export type ConfigAction = 'list' | 'get' | 'add' | 'update' | 'remove' | 'enable' | 'disable' | 'setActive';
-export type SkillConfigScope = 'installed' | 'repos' | 'backups' | 'discoverable' | 'unmanaged' | 'updates';
+export type SkillConfigScope = 'installed' | 'repos' | 'discoverable' | 'unmanaged' | 'updates';
 
 export class ConfigActionError {
   code: string;
@@ -151,8 +150,6 @@ export class ConfigManagerFacade {
   private skillInstalledStore: InstalledSkill[] = [];
   private skillsReposLoaded: boolean = false;
   private skillRepoStore: SkillRepo[] = [];
-  private skillsBackupsLoaded: boolean = false;
-  private skillBackupStore: SkillBackupEntry[] = [];
 
   private skillsService(): SkillsBackendService {
     const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
@@ -175,12 +172,6 @@ export class ConfigManagerFacade {
     this.skillRepoStore = this.cloneSkillRepos(await this.skillsService().getRepos());
     this.skillsReposLoaded = true;
     return this.cloneSkillRepos(this.skillRepoStore);
-  }
-
-  private async reloadSkillBackups(): Promise<SkillBackupEntry[]> {
-    this.skillBackupStore = this.cloneSkillBackups(await this.skillsService().getBackups());
-    this.skillsBackupsLoaded = true;
-    return this.cloneSkillBackups(this.skillBackupStore);
   }
 
   private configFailureFromError<T>(err: Object, fallbackCode: string, fallbackMessage: string): ConfigActionResult<T> {
@@ -230,18 +221,6 @@ export class ConfigManagerFacade {
       this.skillRepoStore = [];
     }
     this.skillsReposLoaded = true;
-  }
-
-  private async ensureSkillBackupsLoaded(): Promise<void> {
-    if (this.skillsBackupsLoaded) {
-      return;
-    }
-    try {
-      this.skillBackupStore = this.cloneSkillBackups(await this.skillsService().getBackups());
-    } catch (_err) {
-      this.skillBackupStore = [];
-    }
-    this.skillsBackupsLoaded = true;
   }
 
   listProviders(): ConfigActionResult<ProviderRecord[]> {
@@ -391,7 +370,6 @@ export class ConfigManagerFacade {
     try {
       await this.skillsService().uninstall(id);
       await this.reloadInstalledSkills();
-      await this.reloadSkillBackups();
       return configSuccess<string>(id);
     } catch (err) {
       return this.configFailureFromError<string>(err as Object, 'REMOVE_SKILL_FAILED', '卸载 Skill 失败。');
@@ -457,26 +435,6 @@ export class ConfigManagerFacade {
       return configSuccess<string>(`${owner}/${name}`);
     } catch (err) {
       return this.configFailureFromError<string>(err as Object, 'REMOVE_SKILL_REPO_FAILED', '移除 Skill 仓库失败。');
-    }
-  }
-
-  async listSkillBackups(): Promise<ConfigActionResult<SkillBackupEntry[]>> {
-    await this.ensureSkillBackupsLoaded();
-    return configSuccess<SkillBackupEntry[]>(this.cloneSkillBackups(this.skillBackupStore));
-  }
-
-  async removeSkillBackup(backupId: string): Promise<ConfigActionResult<string>> {
-    try {
-      const backups = await this.reloadSkillBackups();
-      const exists = backups.some((backup: SkillBackupEntry) => backup.backupId === backupId);
-      if (!exists) {
-        return configFailure<string>('NOT_FOUND', '备份不存在。', backupId);
-      }
-      await this.skillsService().removeBackup(backupId);
-      await this.reloadSkillBackups();
-      return configSuccess<string>(backupId);
-    } catch (err) {
-      return this.configFailureFromError<string>(err as Object, 'REMOVE_SKILL_BACKUP_FAILED', '删除 Skill 备份失败。');
     }
   }
 
@@ -553,17 +511,6 @@ export class ConfigManagerFacade {
       return configSuccess<InstalledSkill[]>(this.cloneInstalledSkills(imported));
     } catch (err) {
       return this.configFailureFromError<InstalledSkill[]>(err as Object, 'IMPORT_ZIP_SKILLS_FAILED', '从 ZIP 导入 Skill 失败。');
-    }
-  }
-
-  async restoreSkillBackup(backupId: string): Promise<ConfigActionResult<InstalledSkill>> {
-    try {
-      const restored = await this.skillsService().restoreBackup(backupId);
-      await this.reloadInstalledSkills();
-      await this.reloadSkillBackups();
-      return configSuccess<InstalledSkill>(this.cloneInstalledSkill(restored));
-    } catch (err) {
-      return this.configFailureFromError<InstalledSkill>(err as Object, 'RESTORE_SKILL_BACKUP_FAILED', '恢复 Skill 备份失败。');
     }
   }
 
@@ -675,15 +622,6 @@ export class ConfigManagerFacade {
     const cloned: SkillRepo[] = [];
     for (let index = 0; index < repos.length; index += 1) {
       cloned.push(new SkillRepo(repos[index].owner, repos[index].name, repos[index].branch, repos[index].enabled));
-    }
-    return cloned;
-  }
-
-  private cloneSkillBackups(backups: SkillBackupEntry[]): SkillBackupEntry[] {
-    const cloned: SkillBackupEntry[] = [];
-    for (let index = 0; index < backups.length; index += 1) {
-      const backup = backups[index];
-      cloned.push(new SkillBackupEntry(backup.backupId, backup.backupPath, backup.createdAt, this.cloneInstalledSkill(backup.skill)));
     }
     return cloned;
   }
