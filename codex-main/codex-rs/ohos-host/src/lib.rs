@@ -153,9 +153,10 @@ struct NativeThreadState {
     remote_thread_id: String,
     cwd: Option<PathBuf>,
     messages: Vec<NativeMessage>,
+    latest_token_usage: Option<NativeTokenUsage>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeTokenUsageBreakdown {
     input_tokens: i64,
@@ -165,7 +166,7 @@ struct NativeTokenUsageBreakdown {
     total_tokens: i64,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeTokenUsage {
     total: NativeTokenUsageBreakdown,
@@ -207,6 +208,22 @@ struct DailyTokenSnapshot {
     request_count: i64,
 }
 
+#[derive(Default, Serialize, Deserialize, Clone)]
+struct ThreadContextSnapshotFile {
+    #[serde(default)]
+    threads: HashMap<String, ThreadContextSnapshot>,
+}
+
+#[derive(Default, Serialize, Deserialize, Clone)]
+struct ThreadContextSnapshot {
+    updated_at: i64,
+    latest_token_usage: Option<NativeTokenUsage>,
+}
+
+fn thread_context_snapshot_path(codex_home: &Path) -> PathBuf {
+    codex_home.join("runtime").join("thread-context.json")
+}
+
 fn load_token_usage_aggregate(codex_home: &Path) -> Result<TokenUsageAggregateFile> {
     let path = codex_home.join("runtime").join("token-usage.json");
     if !path.exists() {
@@ -226,6 +243,56 @@ fn persist_token_usage_aggregate(
     let json = serde_json::to_string_pretty(agg)?;
     std::fs::write(&path, json)?;
     Ok(())
+}
+
+fn load_thread_context_snapshots(codex_home: &Path) -> Result<ThreadContextSnapshotFile> {
+    let path = thread_context_snapshot_path(codex_home);
+    if !path.exists() {
+        return Ok(ThreadContextSnapshotFile::default());
+    }
+    let data = std::fs::read_to_string(&path)?;
+    Ok(serde_json::from_str(&data)?)
+}
+
+fn persist_thread_context_snapshots(
+    codex_home: &Path,
+    snapshots: &ThreadContextSnapshotFile,
+) -> Result<()> {
+    let dir = codex_home.join("runtime");
+    std::fs::create_dir_all(&dir)?;
+    let path = thread_context_snapshot_path(codex_home);
+    let json = serde_json::to_string_pretty(snapshots)?;
+    std::fs::write(&path, json)?;
+    Ok(())
+}
+
+fn load_persisted_thread_token_usage(codex_home: &Path, thread_id: &str) -> Option<NativeTokenUsage> {
+    load_thread_context_snapshots(codex_home)
+        .ok()
+        .and_then(|snapshots| snapshots.threads.get(thread_id).cloned())
+        .and_then(|snapshot| snapshot.latest_token_usage)
+}
+
+fn store_thread_context_snapshot(
+    codex_home: &Path,
+    thread_id: &str,
+    usage: &NativeTokenUsage,
+) -> Result<()> {
+    let mut snapshots = load_thread_context_snapshots(codex_home).unwrap_or_default();
+    snapshots.threads.insert(
+        thread_id.to_string(),
+        ThreadContextSnapshot {
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            latest_token_usage: Some(usage.clone()),
+        },
+    );
+    persist_thread_context_snapshots(codex_home, &snapshots)
+}
+
+fn remove_thread_context_snapshot(codex_home: &Path, thread_id: &str) -> Result<()> {
+    let mut snapshots = load_thread_context_snapshots(codex_home).unwrap_or_default();
+    snapshots.threads.remove(thread_id);
+    persist_thread_context_snapshots(codex_home, &snapshots)
 }
 
 fn compute_aggregate(file: &TokenUsageAggregateFile) -> serde_json::Value {
@@ -268,6 +335,16 @@ fn compute_aggregate(file: &TokenUsageAggregateFile) -> serde_json::Value {
     })
 }
 
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum NativeTurnEvent {
+    Status { status: String, summary_title: String },
+    SummaryLine { line: String },
+    MessageSnapshot { messages: Vec<NativeMessage> },
+    DiffSnapshot { diff: String },
+    TokenUsage { token_usage: serde_json::Value },
+}
+
 #[derive(Clone, Default)]
 struct NativeTurnState {
     thread_id: String,
@@ -281,6 +358,7 @@ struct NativeTurnState {
     cwd: Option<PathBuf>,
     local_diff_tracker: Option<Arc<AsyncMutex<TurnDiffTracker>>>,
     token_usage: Option<NativeTokenUsage>,
+    pending_events: Vec<NativeTurnEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -490,6 +568,8 @@ struct ProviderSettings {
     model: String,
     #[serde(default)]
     context_window: Option<i64>,
+    #[serde(default)]
+    model_auto_compact_token_limit: Option<i64>,
 }
 
 impl Default for ProviderSettings {
@@ -499,6 +579,7 @@ impl Default for ProviderSettings {
             api_key: DEFAULT_PROVIDER_API_KEY.to_string(),
             model: DEFAULT_PROVIDER_MODEL.to_string(),
             context_window: None,
+            model_auto_compact_token_limit: None,
         }
     }
 }
@@ -518,6 +599,8 @@ struct ProviderCatalogRecord {
     updated_at: String,
     #[serde(default)]
     context_window: Option<i64>,
+    #[serde(default)]
+    model_auto_compact_token_limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -789,6 +872,8 @@ pub extern "C" fn codex_ohos_host_save_provider_config(
     base_url: *const c_char,
     api_key: *const c_char,
     model: *const c_char,
+    context_window: *const c_char,
+    model_auto_compact_token_limit: *const c_char,
 ) -> i32 {
     let codex_home = resolve_codex_home(ffi_string(codex_home).map(PathBuf::from));
     let settings = ProviderSettings {
@@ -797,7 +882,12 @@ pub extern "C" fn codex_ohos_host_save_provider_config(
             .unwrap_or_else(|| DEFAULT_PROVIDER_BASE_URL.to_string()),
         api_key: ffi_string(api_key).unwrap_or_default(),
         model: ffi_string(model).unwrap_or_default(),
-        context_window: None,
+        context_window: ffi_string(context_window)
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .filter(|value| *value > 0),
+        model_auto_compact_token_limit: ffi_string(model_auto_compact_token_limit)
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .filter(|value| *value > 0),
     };
 
     match persist_provider_settings(&codex_home, &settings) {
@@ -1279,6 +1369,9 @@ fn sync_config_toml_to_provider_settings(codex_home: &Path) {
     let context_window = doc
         .get("model_context_window")
         .and_then(|v| v.as_integer());
+    let model_auto_compact_token_limit = doc
+        .get("model_auto_compact_token_limit")
+        .and_then(|v| v.as_integer());
 
     // 同步到 harmony-provider.json
     let current = load_provider_settings(codex_home).unwrap_or_default();
@@ -1297,11 +1390,17 @@ fn sync_config_toml_to_provider_settings(codex_home: &Path) {
             updated.context_window = Some(cw);
         }
     }
+    if let Some(limit) = model_auto_compact_token_limit {
+        if limit > 0 {
+            updated.model_auto_compact_token_limit = Some(limit);
+        }
+    }
 
     let changed = updated.model != current.model
         || updated.base_url != current.base_url
         || updated.api_key != current.api_key
-        || updated.context_window != current.context_window;
+        || updated.context_window != current.context_window
+        || updated.model_auto_compact_token_limit != current.model_auto_compact_token_limit;
 
     if changed {
         let path = provider_settings_path(codex_home);
@@ -1323,6 +1422,7 @@ fn sync_config_toml_to_provider_settings(codex_home: &Path) {
                     active.api_key = updated.api_key.clone();
                     active.model = updated.model.clone();
                     active.context_window = updated.context_window;
+                    active.model_auto_compact_token_limit = updated.model_auto_compact_token_limit;
                     if let Ok(cat_json) = serde_json::to_string_pretty(&catalog) {
                         let _ = std::fs::write(&catalog_path, cat_json);
                     }
@@ -1423,6 +1523,15 @@ fn persist_provider_settings(codex_home: &Path, settings: &ProviderSettings) -> 
         }
     }
 
+    if let Some(model_auto_compact_token_limit) = settings.model_auto_compact_token_limit {
+        if model_auto_compact_token_limit > 0 {
+            edits.push(ConfigEdit::SetPath {
+                segments: vec!["model_auto_compact_token_limit".to_string()],
+                value: toml_edit::value(model_auto_compact_token_limit),
+            });
+        }
+    }
+
     ConfigEditsBuilder::new(codex_home)
         .with_edits(edits)
         .apply_blocking()
@@ -1473,6 +1582,7 @@ fn persist_provider_catalog(codex_home: &Path, catalog: &ProviderCatalog) -> Res
             api_key: active.api_key.clone(),
             model: active.model.clone(),
             context_window: active.context_window,
+            model_auto_compact_token_limit: active.model_auto_compact_token_limit,
         };
         persist_provider_settings(codex_home, &settings)?;
     }
@@ -1501,6 +1611,14 @@ fn render_config_toml(settings: &ProviderSettings) -> String {
         ));
     }
 
+    if let Some(model_auto_compact_token_limit) = settings.model_auto_compact_token_limit {
+        if model_auto_compact_token_limit > 0 {
+            lines.push(format!(
+                "model_auto_compact_token_limit = {model_auto_compact_token_limit}"
+            ));
+        }
+    }
+
     if !settings.model.trim().is_empty() {
         lines.insert(3, format!("model = {}", toml_string(&settings.model)));
     }
@@ -1526,6 +1644,7 @@ fn catalog_record_from_settings(
         sync_status: DEFAULT_PROVIDER_SYNC_STATUS.to_string(),
         updated_at: current_timestamp_string(),
         context_window: settings.context_window,
+        model_auto_compact_token_limit: settings.model_auto_compact_token_limit,
     }
 }
 
@@ -1883,7 +2002,8 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
                 NativeThreadState {
                     remote_thread_id: response.thread.id.clone(),
                     cwd: Some(response.cwd.clone()),
-                    messages: collect_thread_messages(&response.thread.turns, &[]),
+                    messages: collect_thread_messages(&response.thread.turns),
+                    latest_token_usage: latest_thread_token_usage_from_turns(&response.thread),
                 },
             );
         });
@@ -1989,7 +2109,7 @@ pub extern "C" fn codex_ohos_host_thread_read(params_json: *const c_char) -> *co
     });
 
     let json = match response {
-        Ok(response) => build_thread_read_payload(&response.thread).to_string(),
+        Ok(response) => with_native_state(|state| build_thread_read_payload(state, &response.thread)).to_string(),
         Err(err) => serde_json::json!({
             "thread": { "id": request.thread_id },
             "messages": [],
@@ -2154,6 +2274,8 @@ pub extern "C" fn codex_ohos_host_thread_archive(params_json: *const c_char) -> 
                 .turns
                 .retain(|_, turn| turn.thread_id != request.thread_id);
         });
+        let codex_home = resolve_codex_home(None);
+        let _ = remove_thread_context_snapshot(&codex_home, &request.thread_id);
 
         Ok::<(), anyhow::Error>(())
     });
@@ -2301,6 +2423,7 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
         let local_diff_tracker = build_local_turn_diff_tracker(turn_cwd.as_deref());
 
         with_native_state(|state| {
+            prune_terminal_turn_states_for_thread(state, &request.thread_id);
             state.turns.insert(
                 response.turn.id.clone(),
                 NativeTurnState {
@@ -2315,6 +2438,7 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
                     cwd: turn_cwd,
                     local_diff_tracker,
                     token_usage: None,
+                    pending_events: Vec::new(),
                 },
             );
         });
@@ -2345,9 +2469,31 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
 #[unsafe(no_mangle)]
 pub extern "C" fn codex_ohos_host_turn_events(
     _thread_id: *const c_char,
-    _turn_id: *const c_char,
+    turn_id: *const c_char,
 ) -> *const c_char {
-    write_cstring(&LAST_TURN_EVENTS_JSON, "[]")
+    let turn_id = ffi_string(turn_id).unwrap_or_default();
+    let response = with_runtime_result(async {
+        process_pending_events(Some(&turn_id)).await?;
+        if should_wait_for_trailing_turn_diff(&turn_id) {
+            process_pending_events_with_idle_timeout(Some(&turn_id), Duration::from_millis(300))
+                .await?;
+        }
+        if should_refresh_turn_diff_from_local_tracker(&turn_id) {
+            refresh_turn_diff_from_local_tracker(&turn_id).await?;
+        }
+        Ok(())
+    });
+
+    let json = match response {
+        Ok(()) => with_native_state(|state| {
+            serde_json::to_string(&drain_turn_events(state, &turn_id)).unwrap_or_else(|_| "[]".to_string())
+        }),
+        Err(err) => {
+            set_host_message(format!("turn_events failed: {err}"));
+            "[]".to_string()
+        }
+    };
+    write_cstring(&LAST_TURN_EVENTS_JSON, &json)
 }
 
 #[unsafe(no_mangle)]
@@ -3469,6 +3615,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 if entry.summary.is_empty() {
                     entry.summary.push("ArkPilot 正在处理请求。".to_string());
                 }
+                push_turn_status_event(entry);
             });
         }
         ServerNotification::ItemStarted(payload) => {
@@ -3483,6 +3630,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "执行中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(turn, describe_started_item(&payload.item));
                 upsert_item_started_message(
                     state,
@@ -3528,6 +3676,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "计划中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(turn, format!("计划: {}", compact_text(&payload.delta, 160)));
             });
         }
@@ -3543,6 +3692,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(
                     turn,
                     format!("推理摘要: {}", compact_text(&payload.delta, 160)),
@@ -3568,6 +3718,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(turn, format!("推理: {}", compact_text(&payload.delta, 160)));
                 append_reasoning_delta(
                     state,
@@ -3590,6 +3741,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "推理中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(turn, "推理摘要继续更新。".to_string());
                 append_reasoning_part_separator(
                     state,
@@ -3611,6 +3763,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "执行工具中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(
                     turn,
                     format!("命令输出: {}", compact_text(&payload.delta, 160)),
@@ -3629,6 +3782,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "更改文件中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(
                     turn,
                     format!("文件变更: {}", compact_text(&payload.delta, 160)),
@@ -3647,6 +3801,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 turn.status = "inProgress".to_string();
                 turn.summary_title = "执行工具中".to_string();
+                push_turn_status_event(turn);
                 push_turn_summary(
                     turn,
                     format!("工具进度: {}", compact_text(&payload.message, 160)),
@@ -3711,7 +3866,11 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     push_turn_summary(entry, "本轮对话已完成。".to_string());
                 } else {
                     entry.summary = vec![entry.error_message.clone()];
+                    entry.pending_events.push(NativeTurnEvent::SummaryLine {
+                        line: entry.error_message.clone(),
+                    });
                 }
+                push_turn_status_event(entry);
             });
         }
         ServerNotification::TurnDiffUpdated(payload) => {
@@ -3725,6 +3884,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 entry.diff = payload.diff.clone();
                 entry.diff_authoritative = true;
+                push_turn_diff_snapshot(entry);
             });
         }
         ServerNotification::Error(payload) => {
@@ -3740,6 +3900,10 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 entry.error_message = payload.error.message.clone();
                 entry.summary_title = "本轮失败".to_string();
                 entry.summary = vec![payload.error.message.clone()];
+                entry.pending_events.push(NativeTurnEvent::SummaryLine {
+                    line: payload.error.message.clone(),
+                });
+                push_turn_status_event(entry);
             });
         }
         ServerNotification::ThreadTokenUsageUpdated(payload) => {
@@ -3762,14 +3926,31 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             };
             with_native_state(|state| {
                 let thread_id = payload.thread_id.clone();
+                let thread = state
+                    .threads
+                    .entry(thread_id.clone())
+                    .or_insert_with(|| NativeThreadState {
+                        remote_thread_id: thread_id.clone(),
+                        cwd: None,
+                        messages: Vec::new(),
+                        latest_token_usage: None,
+                    });
+                thread.latest_token_usage = Some(usage.clone());
                 for (_, turn) in state.turns.iter_mut() {
                     if turn.thread_id == thread_id {
                         turn.token_usage = Some(usage.clone());
+                        push_turn_token_usage_event(turn);
                     }
                 }
             });
-            // 更新 token 用量聚合
             let codex_home = resolve_codex_home(None);
+            if let Err(err) = store_thread_context_snapshot(&codex_home, &payload.thread_id, &usage) {
+                eprintln!(
+                    "failed to persist thread context snapshot thread_id={} error={err}",
+                    payload.thread_id
+                );
+            }
+            // 更新 token 用量聚合
             if let Ok(mut agg) = load_token_usage_aggregate(&codex_home) {
                 let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
                 let new_total = payload.token_usage.total.total_tokens.max(0);
@@ -3975,6 +4156,39 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
     0
 }
 
+fn push_turn_status_event(turn: &mut NativeTurnState) {
+    turn.pending_events.push(NativeTurnEvent::Status {
+        status: turn.status.clone(),
+        summary_title: turn.summary_title.clone(),
+    });
+}
+
+fn push_turn_message_snapshot(turn: &mut NativeTurnState) {
+    turn.pending_events.push(NativeTurnEvent::MessageSnapshot {
+        messages: turn.messages.clone(),
+    });
+}
+
+fn push_turn_diff_snapshot(turn: &mut NativeTurnState) {
+    turn.pending_events.push(NativeTurnEvent::DiffSnapshot {
+        diff: turn.diff.clone(),
+    });
+}
+
+fn push_turn_token_usage_event(turn: &mut NativeTurnState) {
+    turn.pending_events.push(NativeTurnEvent::TokenUsage {
+        token_usage: build_token_usage_payload(turn.token_usage.as_ref()),
+    });
+}
+
+fn drain_turn_events(state: &mut NativeConversationState, turn_id: &str) -> Vec<NativeTurnEvent> {
+    state
+        .turns
+        .get_mut(turn_id)
+        .map(|turn| std::mem::take(&mut turn.pending_events))
+        .unwrap_or_default()
+}
+
 fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -3989,6 +4203,9 @@ fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
         return;
     }
     turn.summary.push(trimmed.to_string());
+    turn.pending_events.push(NativeTurnEvent::SummaryLine {
+        line: trimmed.to_string(),
+    });
     const MAX_SUMMARY_LINES: usize = 12;
     if turn.summary.len() > MAX_SUMMARY_LINES {
         let drain_count = turn.summary.len() - MAX_SUMMARY_LINES;
@@ -4207,6 +4424,7 @@ fn append_assistant_delta(
                 remote_thread_id: thread_id.to_string(),
                 cwd: None,
                 messages: Vec::new(),
+                latest_token_usage: None,
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4232,6 +4450,7 @@ fn append_assistant_delta(
 
     if let Some(turn) = state.turns.get_mut(turn_id) {
         turn.messages = thread_messages;
+        push_turn_message_snapshot(turn);
     }
 }
 
@@ -4250,6 +4469,7 @@ fn append_reasoning_delta(
                 remote_thread_id: thread_id.to_string(),
                 cwd: None,
                 messages: Vec::new(),
+                latest_token_usage: None,
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4282,6 +4502,7 @@ fn append_reasoning_delta(
 
     if let Some(turn) = state.turns.get_mut(turn_id) {
         turn.messages = thread_messages;
+        push_turn_message_snapshot(turn);
     }
 }
 
@@ -4299,6 +4520,7 @@ fn append_reasoning_part_separator(
                 remote_thread_id: thread_id.to_string(),
                 cwd: None,
                 messages: Vec::new(),
+                latest_token_usage: None,
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4316,6 +4538,7 @@ fn append_reasoning_part_separator(
 
     if let Some(turn) = state.turns.get_mut(turn_id) {
         turn.messages = thread_messages;
+        push_turn_message_snapshot(turn);
     }
 }
 
@@ -4334,6 +4557,7 @@ fn sync_thread_from_completed_item(
                     remote_thread_id: thread_id.to_string(),
                     cwd: None,
                     messages: Vec::new(),
+                    latest_token_usage: None,
                 });
             let message_id = format!("{turn_id}:{id}");
             if let Some(message) = thread
@@ -4358,6 +4582,7 @@ fn sync_thread_from_completed_item(
         };
         if let Some(turn) = state.turns.get_mut(turn_id) {
             turn.messages = thread_messages;
+            push_turn_message_snapshot(turn);
         }
     }
 }
@@ -4369,9 +4594,11 @@ fn append_turn_diff(turn: &mut NativeTurnState, diff: &str) {
     }
     if turn.diff.trim().is_empty() {
         turn.diff = chunk.to_string();
+        push_turn_diff_snapshot(turn);
         return;
     }
     turn.diff = merge_unified_diff(&turn.diff, chunk);
+    push_turn_diff_snapshot(turn);
 }
 
 fn extract_diff_section_path(section: &str) -> Option<String> {
@@ -4531,6 +4758,113 @@ fn diff_from_thread_item(item: &codex_app_server_protocol::ThreadItem) -> Option
     }
 }
 
+fn build_token_usage_payload(token_usage: Option<&NativeTokenUsage>) -> serde_json::Value {
+    token_usage
+        .map(|tu| {
+            let total_blended = ((tu.total.input_tokens - tu.total.cached_input_tokens.max(0)).max(0)
+                + tu.total.output_tokens.max(0))
+                .max(0);
+            let last_blended = ((tu.last.input_tokens - tu.last.cached_input_tokens.max(0)).max(0)
+                + tu.last.output_tokens.max(0))
+                .max(0);
+            let ctx_remaining_pct = tu.model_context_window.and_then(|w| {
+                if w <= 12000 {
+                    return None;
+                }
+                let eff = w - 12000;
+                let used = (tu.total.total_tokens - 12000).max(0);
+                let rem = (eff - used).max(0);
+                Some(((rem as f64 / eff as f64) * 100.0).round().clamp(0.0, 100.0) as i64)
+            });
+            serde_json::json!({
+                "total": {
+                    "inputTokens": tu.total.input_tokens,
+                    "outputTokens": tu.total.output_tokens,
+                    "cachedInputTokens": tu.total.cached_input_tokens,
+                    "reasoningOutputTokens": tu.total.reasoning_output_tokens,
+                    "totalTokens": tu.total.total_tokens,
+                    "blendedTotal": total_blended,
+                },
+                "last": {
+                    "inputTokens": tu.last.input_tokens,
+                    "outputTokens": tu.last.output_tokens,
+                    "cachedInputTokens": tu.last.cached_input_tokens,
+                    "reasoningOutputTokens": tu.last.reasoning_output_tokens,
+                    "totalTokens": tu.last.total_tokens,
+                    "blendedTotal": last_blended,
+                },
+                "modelContextWindow": tu.model_context_window,
+                "contextRemainingPercent": ctx_remaining_pct,
+            })
+        })
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn is_terminal_turn_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "interrupted" | "cancelled")
+}
+
+fn prune_terminal_turn_states_for_thread(state: &mut NativeConversationState, thread_id: &str) {
+    state
+        .turns
+        .retain(|_, turn| turn.thread_id != thread_id || !is_terminal_turn_status(&turn.status));
+}
+
+fn latest_known_turn_for_thread(
+    state: &NativeConversationState,
+    thread_id: &str,
+) -> Option<(String, String)> {
+    state
+        .turns
+        .iter()
+        .find_map(|(turn_id, turn)| {
+            (turn.thread_id == thread_id && !turn_id.trim().is_empty() && !is_terminal_turn_status(&turn.status))
+                .then(|| {
+                    let status = if turn.status.trim().is_empty() {
+                        "inProgress".to_string()
+                    } else {
+                        turn.status.clone()
+                    };
+                    (turn_id.clone(), status)
+                })
+        })
+        .or_else(|| {
+            state.turns.iter().find_map(|(turn_id, turn)| {
+                (turn.thread_id == thread_id && !turn_id.trim().is_empty()).then(|| {
+                    let status = if turn.status.trim().is_empty() {
+                        "completed".to_string()
+                    } else {
+                        turn.status.clone()
+                    };
+                    (turn_id.clone(), status)
+                })
+            })
+        })
+}
+
+fn resolve_thread_token_usage(
+    state: &NativeConversationState,
+    thread_id: &str,
+) -> Option<NativeTokenUsage> {
+    if let Some(thread_usage) = state
+        .threads
+        .get(thread_id)
+        .and_then(|thread| thread.latest_token_usage.clone())
+    {
+        return Some(thread_usage);
+    }
+
+    if let Some(turn_usage) = state
+        .turns
+        .values()
+        .find_map(|turn| (turn.thread_id == thread_id).then(|| turn.token_usage.clone()).flatten())
+    {
+        return Some(turn_usage);
+    }
+
+    load_persisted_thread_token_usage(&resolve_codex_home(None), thread_id)
+}
+
 fn build_turn_poll_payload(
     state: &NativeConversationState,
     thread_id: &str,
@@ -4557,6 +4891,9 @@ fn build_turn_poll_payload(
     } else {
         turn.summary_title.clone()
     };
+    let resolved_token_usage = resolve_thread_token_usage(state, &effective_thread_id)
+        .or_else(|| turn.token_usage.clone());
+
     serde_json::json!({
         "threadId": effective_thread_id,
         "turnId": turn_id,
@@ -4565,39 +4902,7 @@ fn build_turn_poll_payload(
         "summaryTitle": summary_title,
         "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
         "diff": turn.diff,
-        "tokenUsage": turn.token_usage.as_ref().map(|tu| {
-            let total_blended = ((tu.total.input_tokens - tu.total.cached_input_tokens.max(0)).max(0)
-                + tu.total.output_tokens.max(0)).max(0);
-            let last_blended = ((tu.last.input_tokens - tu.last.cached_input_tokens.max(0)).max(0)
-                + tu.last.output_tokens.max(0)).max(0);
-            let ctx_remaining_pct = tu.model_context_window.and_then(|w| {
-                if w <= 12000 { return None; }
-                let eff = w - 12000;
-                let used = (tu.total.total_tokens - 12000).max(0);
-                let rem = (eff - used).max(0);
-                Some(((rem as f64 / eff as f64) * 100.0).round().clamp(0.0, 100.0) as i64)
-            });
-            serde_json::json!({
-                "total": {
-                    "inputTokens": tu.total.input_tokens,
-                    "outputTokens": tu.total.output_tokens,
-                    "cachedInputTokens": tu.total.cached_input_tokens,
-                    "reasoningOutputTokens": tu.total.reasoning_output_tokens,
-                    "totalTokens": tu.total.total_tokens,
-                    "blendedTotal": total_blended,
-                },
-                "last": {
-                    "inputTokens": tu.last.input_tokens,
-                    "outputTokens": tu.last.output_tokens,
-                    "cachedInputTokens": tu.last.cached_input_tokens,
-                    "reasoningOutputTokens": tu.last.reasoning_output_tokens,
-                    "totalTokens": tu.last.total_tokens,
-                    "blendedTotal": last_blended,
-                },
-                "modelContextWindow": tu.model_context_window,
-                "contextRemainingPercent": ctx_remaining_pct,
-            })
-        }).unwrap_or(serde_json::Value::Null),
+        "tokenUsage": build_token_usage_payload(resolved_token_usage.as_ref()),
     })
 }
 
@@ -4606,6 +4911,9 @@ fn upsert_thread_state_from_protocol(
     thread: &Thread,
     refresh_messages: bool,
 ) {
+    let latest_token_usage = latest_thread_token_usage_from_turns(thread)
+        .or_else(|| load_persisted_thread_token_usage(&resolve_codex_home(None), &thread.id));
+    prune_terminal_turn_states_for_thread(state, &thread.id);
     let entry = state
         .threads
         .entry(thread.id.clone())
@@ -4613,9 +4921,13 @@ fn upsert_thread_state_from_protocol(
             remote_thread_id: thread.id.clone(),
             cwd: Some(thread.cwd.clone()),
             messages: Vec::new(),
+            latest_token_usage: None,
         });
     entry.remote_thread_id = thread.id.clone();
     entry.cwd = Some(thread.cwd.clone());
+    if let Some(token_usage) = latest_token_usage {
+        entry.latest_token_usage = Some(token_usage);
+    }
     if refresh_messages {
         entry.messages = collect_thread_messages(&thread.turns, &[]);
     }
@@ -4650,9 +4962,15 @@ fn build_thread_list_payload(response: &ThreadListResponse) -> serde_json::Value
     })
 }
 
-fn build_thread_read_payload(thread: &Thread) -> serde_json::Value {
-    let (summary_title, summary_points, last_turn_id, last_turn_status) =
+fn latest_thread_token_usage_from_turns(_thread: &Thread) -> Option<NativeTokenUsage> {
+    None
+}
+
+fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -> serde_json::Value {
+    let (summary_title, summary_points, protocol_last_turn_id, protocol_last_turn_status) =
         collect_thread_summary_from_turns(&thread.turns);
+    let (last_turn_id, last_turn_status) = latest_known_turn_for_thread(state, &thread.id)
+        .unwrap_or((protocol_last_turn_id, protocol_last_turn_status));
     let diff = collect_thread_diff_from_turns(&thread.turns);
     let changed_files = collect_thread_changed_files(&thread.turns);
     let message_timestamps = thread
@@ -4666,6 +4984,9 @@ fn build_thread_read_payload(thread: &Thread) -> serde_json::Value {
         changed_files.join("、")
     };
 
+    let thread_token_usage = resolve_thread_token_usage(state, &thread.id)
+        .or_else(|| latest_thread_token_usage_from_turns(thread));
+
     serde_json::json!({
         "thread": build_thread_meta_payload(thread),
         "messages": collect_thread_messages(&thread.turns, &message_timestamps),
@@ -4677,6 +4998,7 @@ fn build_thread_read_payload(thread: &Thread) -> serde_json::Value {
         "diffStat": diff_stat_from_unified_diff(&diff),
         "lastTurnId": last_turn_id,
         "lastTurnStatus": last_turn_status,
+        "tokenUsage": build_token_usage_payload(thread_token_usage.as_ref()),
     })
 }
 
@@ -5464,6 +5786,7 @@ fn upsert_item_started_message(
                 remote_thread_id: thread_id.to_string(),
                 cwd: None,
                 messages: Vec::new(),
+                latest_token_usage: None,
             });
 
         if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
@@ -5505,6 +5828,7 @@ fn upsert_item_completed_message(
                 remote_thread_id: thread_id.to_string(),
                 cwd: None,
                 messages: Vec::new(),
+                latest_token_usage: None,
             });
 
         let is_reasoning = matches!(
@@ -5789,6 +6113,7 @@ mod tests {
             api_key: "secret".to_string(),
             model: "test-model".to_string(),
             context_window: None,
+            model_auto_compact_token_limit: None,
         });
 
         assert!(config.contains("approval_policy = \"on-request\""));

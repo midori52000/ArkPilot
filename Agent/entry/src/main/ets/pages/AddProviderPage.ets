@@ -39,6 +39,7 @@ struct AddProviderPage {
   @State private advancedExpanded: boolean = false;
   @State private editId: string = '';
   @State private contextWindowStr: string = '';
+  private modelAutoCompactTokenLimit: number = 0;
 
   private get isPhone(): boolean {
     return this.currentBreakpoint === 'xs' || this.currentBreakpoint === 'sm';
@@ -85,6 +86,7 @@ struct AddProviderPage {
     this.wireApi = provider.wireApi;
     this.defaultModel = provider.model;
     this.contextWindowStr = provider.contextWindow > 0 ? String(provider.contextWindow) : '';
+    this.modelAutoCompactTokenLimit = provider.modelAutoCompactTokenLimit;
     this.selectedPresetId = 'custom';
     this.triggerFeedback('已加载 Provider 数据。', 'success');
   }
@@ -228,6 +230,7 @@ struct AddProviderPage {
       this.baseUrl = '';
       this.defaultModel = '';
       this.wireApi = 'anthropic';
+      this.modelAutoCompactTokenLimit = 0;
       if (withToast) {
         this.triggerFeedback('已切换到自定义配置。', 'info');
       }
@@ -245,6 +248,7 @@ struct AddProviderPage {
     this.baseUrl = preset.baseUrl;
     this.defaultModel = preset.defaultModel;
     this.wireApi = preset.wireApi;
+    this.modelAutoCompactTokenLimit = 0;
     if (withToast) {
       this.triggerFeedback(`已载入 ${preset.name} 预设。`, 'success');
     }
@@ -312,7 +316,8 @@ struct AddProviderPage {
         0,
         null,
         Date.now(),
-        contextWindow
+        contextWindow,
+        this.modelAutoCompactTokenLimit
       );
       const result = configManagerFacade.saveProvider(provider);
       if (!result.ok || result.data === null) {

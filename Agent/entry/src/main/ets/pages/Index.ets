@@ -790,14 +790,10 @@ struct Index {
     this.syncSelectedCollaborationMode();
     this.backendActiveThreadId = snapshot.activeThreadId.trim();
     this.tokenUsage = snapshot.tokenUsage;
-    // 自动压缩兜底：当剩余上下文 < 20% 且未在压缩中时，自动触发
-    if (snapshot.tokenUsage !== null &&
-        snapshot.tokenUsage.contextRemainingPercent >= 0 &&
-        snapshot.tokenUsage.contextRemainingPercent < 20 &&
-        !this.compacting) {
-      this.retryCurrentCompaction();
-    }
     this.applyCompactionSnapshot(snapshot);
+    if (codexBackend.shouldStartFallbackCompaction(this.backendActiveThreadId)) {
+      this.retryCurrentCompaction(this.backendActiveThreadId);
+    }
   }
 
   private applyCompactionSnapshot(snapshot: CodexBackendSnapshot): void {
@@ -3081,23 +3077,18 @@ struct Index {
     this.expandedCompactionIds = [...this.expandedCompactionIds, noticeId];
   }
 
-  private retryCurrentCompaction(): void {
-    const threadId: string = this.activeWorkspaceBindingId.trim();
-    if (threadId.length === 0 || this.compacting) {
+  private retryCurrentCompaction(threadId: string = ''): void {
+    const preferredThreadId: string = threadId.trim();
+    const targetThreadId: string = preferredThreadId.length > 0
+      ? preferredThreadId
+      : (this.backendActiveThreadId.trim().length > 0 ? this.backendActiveThreadId.trim() : this.activeWorkspaceBindingId.trim());
+    if (targetThreadId.length === 0 || this.compacting) {
       return;
     }
     this.resumeMessageAutoFollow();
     this.compactError = '';
-    codexBackend.clearCompactionNotice(threadId);
-    this.upsertCompactionNotice(
-      threadId,
-      'starting',
-      '',
-      0,
-      this.tokenUsage !== null ? this.tokenUsage.total.totalTokens : 0,
-      0
-    );
-    void codexBackend.compactThread(threadId).catch((err: Error) => {
+    codexBackend.clearCompactionNotice(targetThreadId);
+    void codexBackend.compactThread(targetThreadId).catch((err: Error) => {
       this.compactError = err.message.trim().length > 0 ? err.message : codexBackend.getLastCompactError();
     });
   }
@@ -5697,7 +5688,7 @@ struct Index {
               .borderRadius(6)
               .margin({ top: 8 })
               .onClick(() => {
-                this.retryCurrentCompaction();
+                this.retryCurrentCompaction(notice.threadId);
               })
           }
         }
@@ -10130,7 +10121,7 @@ struct Index {
                       .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
                       .margin({ left: 6 })
                       .onClick(() => {
-                        this.retryCurrentCompaction();
+                        this.retryCurrentCompaction(this.backendActiveThreadId);
                       })
                   }
                 }
