@@ -349,40 +349,6 @@ export function computeDirHash(dirPath: string): string {
   }
 }
 
-export function getSkillsBackups(codexHome: string): string {
-  if (nativeModuleUnavailable()) {
-    return '[]';
-  }
-  try {
-    const result = nativeBridge!.getSkillsBackups(codexHome);
-    return result !== undefined && result !== null && result.length > 0 ? result : '[]';
-  } catch (_err) {
-    return '[]';
-  }
-}
-
-export function createSkillBackup(codexHome: string, skillDir: string, skillJson: string): string {
-  if (nativeModuleUnavailable()) {
-    return 'error:native module unavailable';
-  }
-  try {
-    return nativeBridge!.createSkillBackup(codexHome, skillDir, skillJson) ?? 'error:empty result';
-  } catch (_err) {
-    return 'error:exception';
-  }
-}
-
-export function deleteSkillBackup(codexHome: string, backupId: string): boolean {
-  if (nativeModuleUnavailable()) {
-    return false;
-  }
-  try {
-    return nativeBridge!.deleteSkillBackup(codexHome, backupId) === 0;
-  } catch (_err) {
-    return false;
-  }
-}
-
 export function installSkillFromDir(codexHome: string, sourceDir: string, skillJson: string): string {
   if (nativeModuleUnavailable()) {
     return '{}';

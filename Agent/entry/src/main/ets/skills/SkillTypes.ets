@@ -39,13 +39,6 @@ export interface SkillsRepoListJson {
   repos: SkillRepoEntryJson[];
 }
 
-export interface SkillBackupJson {
-  backupId: string;
-  backupPath: string;
-  createdAt: number;
-  skill: SkillEntryJson;
-}
-
 // ── Domain classes ──
 
 /**
@@ -201,35 +194,6 @@ export class SkillUpdateInfo {
     this.name = name;
     this.currentHash = currentHash;
     this.remoteHash = remoteHash;
-  }
-}
-
-/**
- * Skill 备份条目
- */
-export class SkillBackupEntry {
-  backupId: string;
-  backupPath: string;
-  createdAt: number;
-  skill: InstalledSkill;
-
-  static fromBackupJson(json: SkillBackupJson): SkillBackupEntry {
-    return new SkillBackupEntry(
-      json.backupId ?? '',
-      json.backupPath ?? '',
-      json.createdAt ?? 0,
-      InstalledSkill.fromJSON(json.skill)
-    );
-  }
-
-  constructor(
-    backupId: string, backupPath: string,
-    createdAt: number, skill: InstalledSkill
-  ) {
-    this.backupId = backupId;
-    this.backupPath = backupPath;
-    this.createdAt = createdAt;
-    this.skill = skill;
   }
 }
 

@@ -19,7 +19,7 @@ libcodexhost-builder/
 |------|------|
 | 服务管理 | `start`, `is_running`, `last_message`, `server_url` |
 | Provider 配置 | `provider_config_json`, `save_provider_config`, `provider_catalog_json`, `save_provider_catalog` |
-| Skills 管理 | `skills_registry_json`, `save_skills_registry`, `skills_repos_json`, `save_skills_repos`, `skills_backups_json`, `create_skill_backup`, `delete_skill_backup` |
+| Skills 管理 | `skills_registry_json`, `save_skills_registry`, `skills_repos_json`, `save_skills_repos`, `install_skill_from_dir`, `uninstall_skill`, `set_skill_enabled`, `reconcile_skills` |
 | Prompts 管理 | `prompts_registry_json`, `save_prompts_registry`, `read_agents_md`, `write_agents_md` |
 | 对话引擎 | `initialize`, `thread_start`, `turn_start`, `turn_events`, `turn_poll` |
 | 审批流程 | `approval_poll`, `approval_approve`, `approval_decline` |
