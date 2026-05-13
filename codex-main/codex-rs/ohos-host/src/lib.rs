@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::net::SocketAddr;
@@ -1922,7 +1923,7 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
                 NativeThreadState {
                     remote_thread_id: response.thread.id.clone(),
                     cwd: Some(response.cwd.clone()),
-                    messages: collect_thread_messages(&response.thread.turns),
+                    messages: collect_thread_messages(&response.thread.turns, &[]),
                 },
             );
         });
@@ -4609,7 +4610,7 @@ fn upsert_thread_state_from_protocol(
     entry.remote_thread_id = thread.id.clone();
     entry.cwd = Some(thread.cwd.clone());
     if refresh_messages {
-        entry.messages = collect_thread_messages(&thread.turns);
+        entry.messages = collect_thread_messages(&thread.turns, &[]);
     }
 }
 
@@ -4647,6 +4648,11 @@ fn build_thread_read_payload(thread: &Thread) -> serde_json::Value {
         collect_thread_summary_from_turns(&thread.turns);
     let diff = collect_thread_diff_from_turns(&thread.turns);
     let changed_files = collect_thread_changed_files(&thread.turns);
+    let message_timestamps = thread
+        .path
+        .as_deref()
+        .and_then(read_visible_message_timestamps_from_rollout)
+        .unwrap_or_default();
     let changed_files_text = if changed_files.is_empty() {
         "尚未产生文件改动".to_string()
     } else {
@@ -4655,7 +4661,7 @@ fn build_thread_read_payload(thread: &Thread) -> serde_json::Value {
 
     serde_json::json!({
         "thread": build_thread_meta_payload(thread),
-        "messages": collect_thread_messages(&thread.turns),
+        "messages": collect_thread_messages(&thread.turns, &message_timestamps),
         "summaryTitle": summary_title,
         "summary": summary_points,
         "changedFiles": changed_files,
@@ -4780,12 +4786,218 @@ fn thread_title(thread: &Thread) -> String {
     "未命名会话".to_string()
 }
 
-fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<NativeMessage> {
+fn read_visible_message_timestamps_from_rollout(path: &Path) -> Option<Vec<String>> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut timestamps: Vec<String> = Vec::new();
+    let mut seen_item_ids: HashSet<String> = HashSet::new();
+    let mut last_visible_kind = "";
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let rollout_line: codex_protocol::protocol::RolloutLine =
+            match serde_json::from_str(trimmed) {
+                Ok(line) => line,
+                Err(_) => continue,
+            };
+        let timestamp = rollout_line.timestamp.trim();
+        if timestamp.is_empty() {
+            continue;
+        }
+        if rollout_item_creates_visible_message(
+            &rollout_line.item,
+            &mut seen_item_ids,
+            &mut last_visible_kind,
+        ) {
+            timestamps.push(timestamp.to_string());
+        }
+    }
+
+    Some(timestamps)
+}
+
+fn rollout_item_creates_visible_message(
+    item: &codex_protocol::protocol::RolloutItem,
+    seen_item_ids: &mut HashSet<String>,
+    last_visible_kind: &mut &'static str,
+) -> bool {
+    let is_reasoning_event = matches!(
+        item,
+        codex_protocol::protocol::RolloutItem::EventMsg(
+            codex_protocol::protocol::EventMsg::AgentReasoning(_)
+                | codex_protocol::protocol::EventMsg::AgentReasoningRawContent(_)
+        )
+    );
+    let creates = match item {
+        codex_protocol::protocol::RolloutItem::EventMsg(event) => {
+            rollout_event_creates_visible_message(event, seen_item_ids, last_visible_kind)
+        }
+        _ => false,
+    };
+    if creates && !is_reasoning_event {
+        *last_visible_kind = "other";
+    }
+    creates
+}
+
+fn rollout_event_creates_visible_message(
+    event: &codex_protocol::protocol::EventMsg,
+    seen_item_ids: &mut HashSet<String>,
+    last_visible_kind: &mut &'static str,
+) -> bool {
+    match event {
+        codex_protocol::protocol::EventMsg::UserMessage(payload) => {
+            *last_visible_kind = "other";
+            !payload.message.trim().is_empty()
+                || payload.images.as_ref().map_or(false, |images| !images.is_empty())
+                || !payload.local_images.is_empty()
+                || !payload.text_elements.is_empty()
+        }
+        codex_protocol::protocol::EventMsg::AgentMessage(payload) => {
+            *last_visible_kind = "other";
+            !payload.message.is_empty()
+        }
+        codex_protocol::protocol::EventMsg::AgentReasoning(payload) => {
+            rollout_reasoning_creates_visible_message(!payload.text.is_empty(), last_visible_kind)
+        }
+        codex_protocol::protocol::EventMsg::AgentReasoningRawContent(payload) => {
+            rollout_reasoning_creates_visible_message(!payload.text.is_empty(), last_visible_kind)
+        }
+        codex_protocol::protocol::EventMsg::WebSearchBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::WebSearchEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ImageGenerationBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ImageGenerationEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ExecCommandBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ExecCommandEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ViewImageToolCall(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::DynamicToolCallRequest(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::DynamicToolCallResponse(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::McpToolCallBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::McpToolCallEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ApplyPatchApprovalRequest(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::PatchApplyBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::PatchApplyEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabAgentSpawnBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabAgentSpawnEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabAgentInteractionBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabAgentInteractionEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabWaitingBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabWaitingEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabCloseBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabCloseEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabResumeBegin(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::CollabResumeEnd(payload) => {
+            first_seen_rollout_item(&payload.call_id, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ContextCompacted(_) => true,
+        codex_protocol::protocol::EventMsg::EnteredReviewMode(_) => true,
+        codex_protocol::protocol::EventMsg::ExitedReviewMode(_) => true,
+        codex_protocol::protocol::EventMsg::ItemStarted(payload) => {
+            rollout_turn_item_creates_visible_message(&payload.item, seen_item_ids)
+        }
+        codex_protocol::protocol::EventMsg::ItemCompleted(payload) => {
+            rollout_turn_item_creates_visible_message(&payload.item, seen_item_ids)
+        }
+        _ => false,
+    }
+}
+
+fn rollout_reasoning_creates_visible_message(
+    has_text: bool,
+    last_visible_kind: &mut &'static str,
+) -> bool {
+    if !has_text || *last_visible_kind == "reasoning" {
+        return false;
+    }
+    *last_visible_kind = "reasoning";
+    true
+}
+
+fn rollout_turn_item_creates_visible_message(
+    item: &codex_protocol::items::TurnItem,
+    seen_item_ids: &mut HashSet<String>,
+) -> bool {
+    match item {
+        codex_protocol::items::TurnItem::Plan(plan) => {
+            !plan.text.is_empty() && first_seen_rollout_item(&plan.id, seen_item_ids)
+        }
+        _ => false,
+    }
+}
+
+fn first_seen_rollout_item(id: &str, seen_item_ids: &mut HashSet<String>) -> bool {
+    if id.trim().is_empty() {
+        return false;
+    }
+    seen_item_ids.insert(id.to_string())
+}
+
+fn timestamp_for_message_index(timestamps: &[String], index: usize) -> String {
+    timestamps
+        .get(index)
+        .filter(|timestamp| !timestamp.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(current_timestamp_string)
+}
+
+fn collect_thread_messages(
+    turns: &[codex_app_server_protocol::Turn],
+    timestamps: &[String],
+) -> Vec<NativeMessage> {
     let mut messages: Vec<NativeMessage> = Vec::new();
     for turn in turns {
         for item in &turn.items {
             match item {
                 codex_app_server_protocol::ThreadItem::UserMessage { id, content } => {
+                    let timestamp = timestamp_for_message_index(timestamps, messages.len());
                     let text = content
                         .iter()
                         .filter_map(|input| match input {
@@ -4799,26 +5011,28 @@ fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<Nat
                         author: "你".to_string(),
                         role: "user".to_string(),
                         content: text,
-                        timestamp: current_timestamp_string(),
+                        timestamp,
                         item_type: None,
                         status: None,
                         metadata: None,
                     });
                 }
                 codex_app_server_protocol::ThreadItem::AgentMessage { id, text, .. } => {
+                    let timestamp = timestamp_for_message_index(timestamps, messages.len());
                     messages.push(NativeMessage {
                         message_id: id.clone(),
                         author: "ArkPilot".to_string(),
                         role: "assistant".to_string(),
                         content: text.clone(),
-                        timestamp: current_timestamp_string(),
+                        timestamp,
                         item_type: Some("agent".to_string()),
                         status: Some("completed".to_string()),
                         metadata: None,
                     });
                 }
                 item => {
-                    if let Some(msg) = thread_item_to_message(item) {
+                    let timestamp = timestamp_for_message_index(timestamps, messages.len());
+                    if let Some(msg) = thread_item_to_message_with_timestamp(item, timestamp) {
                         messages.push(msg);
                     }
                 }
@@ -4829,6 +5043,13 @@ fn collect_thread_messages(turns: &[codex_app_server_protocol::Turn]) -> Vec<Nat
 }
 
 fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Option<NativeMessage> {
+    thread_item_to_message_with_timestamp(item, current_timestamp_string())
+}
+
+fn thread_item_to_message_with_timestamp(
+    item: &codex_app_server_protocol::ThreadItem,
+    timestamp: String,
+) -> Option<NativeMessage> {
     match item {
         codex_app_server_protocol::ThreadItem::Plan { id, text } => {
             Some(NativeMessage {
@@ -4836,7 +5057,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "计划".to_string(),
                 role: "plan".to_string(),
                 content: text.clone(),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("plan".to_string()),
                 status: Some("completed".to_string()),
                 metadata: None,
@@ -4853,7 +5074,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "思考过程".to_string(),
                 role: "reasoning".to_string(),
                 content: text,
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("reasoning".to_string()),
                 status: Some("completed".to_string()),
                 metadata: None,
@@ -4887,7 +5108,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "命令执行".to_string(),
                 role: "command".to_string(),
                 content: content_parts.join("\n"),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("command".to_string()),
                 status: Some(status_str.to_string()),
                 metadata: Some(serde_json::json!({
@@ -4911,7 +5132,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "文件变更".to_string(),
                 role: "file".to_string(),
                 content: format!("修改了 {} 个文件:\n{}", changes.len(), paths.join("\n")),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("file".to_string()),
                 status: Some(status_str.to_string()),
                 metadata: Some(serde_json::json!({
@@ -4956,7 +5177,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "MCP 工具".to_string(),
                 role: "tool".to_string(),
                 content: content_parts.join("\n"),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("tool".to_string()),
                 status: Some(status_str.to_string()),
                 metadata: Some(serde_json::json!({
@@ -4973,7 +5194,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "网络搜索".to_string(),
                 role: "search".to_string(),
                 content: format!("搜索: {}", query),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("search".to_string()),
                 status: Some("completed".to_string()),
                 metadata: Some(serde_json::json!({
@@ -5012,7 +5233,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "动态工具".to_string(),
                 role: "tool".to_string(),
                 content: content_parts.join("\n"),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("tool".to_string()),
                 status: Some(status_str.to_string()),
                 metadata: Some(serde_json::json!({
@@ -5040,7 +5261,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "图像生成".to_string(),
                 role: "image".to_string(),
                 content: content_parts.join("\n"),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("image".to_string()),
                 status: Some(status.clone()),
                 metadata: Some(serde_json::json!({
@@ -5105,7 +5326,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "协作工具".to_string(),
                 role: "tool".to_string(),
                 content: content_parts.join("\n"),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("tool".to_string()),
                 status: Some(status_str.to_string()),
                 metadata: Some(serde_json::json!({
@@ -5124,7 +5345,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "Hook提示".to_string(),
                 role: "hook".to_string(),
                 content: if text.is_empty() { "Hook提示已触发".to_string() } else { text },
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("hook".to_string()),
                 status: Some("completed".to_string()),
                 metadata: Some(serde_json::json!({
@@ -5139,7 +5360,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "图像查看".to_string(),
                 role: "image".to_string(),
                 content: format!("查看图片: {}", path),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("image".to_string()),
                 status: Some("completed".to_string()),
                 metadata: Some(serde_json::json!({
@@ -5153,7 +5374,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "审查模式".to_string(),
                 role: "review".to_string(),
                 content: format!("进入审查模式\n{}", review),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("review".to_string()),
                 status: Some("inProgress".to_string()),
                 metadata: Some(serde_json::json!({
@@ -5167,7 +5388,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "审查模式".to_string(),
                 role: "review".to_string(),
                 content: format!("退出审查模式\n{}", review),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("review".to_string()),
                 status: Some("completed".to_string()),
                 metadata: Some(serde_json::json!({
@@ -5181,7 +5402,7 @@ fn thread_item_to_message(item: &codex_app_server_protocol::ThreadItem) -> Optio
                 author: "上下文压缩".to_string(),
                 role: "system".to_string(),
                 content: "上下文已压缩以释放空间".to_string(),
-                timestamp: current_timestamp_string(),
+                timestamp,
                 item_type: Some("system".to_string()),
                 status: Some("completed".to_string()),
                 metadata: None,
