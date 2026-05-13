@@ -2481,7 +2481,7 @@ export class CodexBackend {
         this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
         role,
         typeof message['content'] === 'string' ? (message['content'] as string) : '',
-        this.messageTimestampFromPayload(message['timestamp']),
+        this.messageTimestampFromPayload(this.messageTimestampSource(message)),
         itemType,
         itemStatus,
         metadata
@@ -2517,6 +2517,20 @@ export class CodexBackend {
       }
     }
     return currentThreadTimestamp();
+  }
+
+  private messageTimestampSource(message: Record<string, Object>): Object {
+    if (message['timestamp'] !== undefined && message['timestamp'] !== null) {
+      return message['timestamp'];
+    }
+    const payload: Object | undefined = message['payload'];
+    if (typeof payload === 'object' && payload !== null) {
+      const payloadRecord: Record<string, Object> = payload as Record<string, Object>;
+      if (payloadRecord['timestamp'] !== undefined && payloadRecord['timestamp'] !== null) {
+        return payloadRecord['timestamp'];
+      }
+    }
+    return '';
   }
 
   private messageTimestampFromPayload(rawValue: Object): string {
@@ -2695,7 +2709,7 @@ export class CodexBackend {
           this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
           role,
           typeof message['content'] === 'string' ? (message['content'] as string) : '',
-          this.messageTimestampFromPayload(message['timestamp']),
+          this.messageTimestampFromPayload(this.messageTimestampSource(message)),
           itemType,
           itemStatus,
           metadata

@@ -35,6 +35,7 @@ import { promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileUri, picker } from '@kit.CoreFileKit';
+import fileIo from '@ohos.file.fs';
 import uri from '@ohos.uri';
 
 const INDEX_DOMAIN = 0x0000;
@@ -174,6 +175,16 @@ class InlineWebTargetMatch {
     this.start = start;
     this.end = end;
     this.target = target;
+  }
+}
+
+class LocalPathResolution {
+  path: string;
+  matchedExistingFile: boolean;
+
+  constructor(path: string, matchedExistingFile?: boolean) {
+    this.path = path;
+    this.matchedExistingFile = matchedExistingFile ?? false;
   }
 }
 
@@ -659,8 +670,12 @@ struct Index {
   @State private thinkingNormalPhrase: string = '';
   @State private thinkingFunPhrase: string = '';
   @State private showIdleThinkingIndicator: boolean = false;
+  @State private liveThinkingActive: boolean = false;
+  @State private liveThinkingContent: string = '';
   @State private pendingUserPrompt: string = '';
   private thinkingMessageBoundary: number = -1;
+  private liveThinkingReasoningSignature: string = '';
+  private liveThinkingAssistantSignature: string = '';
   private thinkingNormalPhraseBucket: number = -1;
   private thinkingFunPhraseBucket: number = -1;
   @State private messageAutoFollowToBottom: boolean = true;
@@ -1121,6 +1136,7 @@ struct Index {
     this.diffStat = '+0 -0';
     this.currentTurnId = '';
     this.expandedCompactionIds = [];
+    this.clearLiveThinking();
     this.resumeMessageAutoFollow();
     this.scheduleMessageScrollToBottom(true);
   }
@@ -1278,6 +1294,7 @@ struct Index {
 
   private async loadSelectedWorkspaceHistory(): Promise<void> {
     this.resumeMessageAutoFollow();
+    this.clearLiveThinking();
     if (this.workspaces.length === 0) {
       codexBackend.setActiveThread('');
       this.resetConversationSurface('当前目录下暂无会话', ['请先创建一个新会话。']);
@@ -1831,8 +1848,10 @@ struct Index {
   }
 
   private visibleMessages(): ChatMessage[] {
-    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage) => {
-      return this.shouldRenderMessage(item);
+    const hasPendingTailMessage: boolean = (this.isRunning && this.pendingUserPrompt.trim().length > 0) ||
+      this.pendingRequestUserInput !== null;
+    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage, index: number) => {
+      return this.shouldRenderMessageAt(index, hasPendingTailMessage);
     });
     if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
       visible = [...visible, this.pendingUserMessage()];
@@ -1852,11 +1871,34 @@ struct Index {
     return visible;
   }
 
+  private shouldRenderMessageAt(index: number, hasPendingTailMessage: boolean): boolean {
+    const item: ChatMessage = this.messages[index];
+    if (!this.shouldRenderMessage(item)) {
+      return false;
+    }
+    if (this.isReasoningMessage(item)) {
+      return !this.hasRenderableMessageAfter(index, hasPendingTailMessage);
+    }
+    return true;
+  }
+
   private shouldRenderMessage(item: ChatMessage): boolean {
     if (this.isCompactionSystemMessage(item)) {
       return false;
     }
     return !this.isEmptyReasoningMessage(item);
+  }
+
+  private hasRenderableMessageAfter(index: number, hasPendingTailMessage: boolean): boolean {
+    if (hasPendingTailMessage) {
+      return true;
+    }
+    for (let nextIndex = index + 1; nextIndex < this.messages.length; nextIndex += 1) {
+      if (this.shouldRenderMessage(this.messages[nextIndex])) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private isEmptyReasoningMessage(item: ChatMessage): boolean {
@@ -1881,24 +1923,51 @@ struct Index {
     if (this.pendingApproval !== null || this.pendingRequestUserInput !== null) {
       return false;
     }
-    return this.showIdleThinkingIndicator;
+    return this.liveThinkingActive || this.currentTurnHasIntermediateOutput();
   }
 
   private toggleTurnActivityExpanded(): void {
     this.isTurnActivityCollapsed = !this.isTurnActivityCollapsed;
   }
 
-  private currentTurnHasAssistantOutput(): boolean {
-    if (this.pendingUserPrompt.trim().length > 0) {
-      return false;
-    }
-    const startIndex: number = this.thinkingMessageBoundary >= 0 ? this.thinkingMessageBoundary : this.messages.length;
-    for (let index: number = startIndex; index < this.messages.length; index += 1) {
-      if (this.isAssistantOutputMessage(this.messages[index])) {
-        return true;
+  private latestCurrentTurnThoughtStage(messages: ChatMessage[]): string {
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    let latestStage: string = '';
+    for (let index: number = startIndex; index < messages.length; index += 1) {
+      const item: ChatMessage = messages[index];
+      if (this.isReasoningMessage(item)) {
+        latestStage = 'reasoning';
+      } else if (this.isAssistantOutputMessage(item)) {
+        latestStage = 'assistant';
+      } else if (this.isActivityMessage(item)) {
+        latestStage = 'activity';
       }
     }
-    return false;
+    return latestStage;
+  }
+
+  private currentTurnAssistantOutputSignature(messages: ChatMessage[]): string {
+    const parts: string[] = [];
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    for (let index: number = startIndex; index < messages.length; index += 1) {
+      const item: ChatMessage = messages[index];
+      if (this.isAssistantOutputMessage(item)) {
+        parts.push(`${item.id}:${item.content.length}`);
+      }
+    }
+    return parts.join('|');
+  }
+
+  private currentTurnReasoningSignature(messages: ChatMessage[]): string {
+    const parts: string[] = [];
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    for (let index: number = startIndex; index < messages.length; index += 1) {
+      const item: ChatMessage = messages[index];
+      if (this.isReasoningMessage(item)) {
+        parts.push(`${item.id}:${item.content.length}`);
+      }
+    }
+    return parts.join('|');
   }
 
   private currentTurnTextOutputSignature(): string {
@@ -1935,12 +2004,22 @@ struct Index {
     return item.role === 'assistant' || item.role === 'agent';
   }
 
+  private isActivityMessage(item: ChatMessage): boolean {
+    const type: string = item.itemType ?? item.role;
+    if (this.isIntermediateMessageType(type)) {
+      return true;
+    }
+    return item.role !== 'user' &&
+      item.role !== 'system' &&
+      item.role !== 'assistant' &&
+      item.role !== 'agent';
+  }
+
   private currentTurnHasIntermediateOutput(): boolean {
     const startIndex: number = this.currentTurnMessageStartIndex();
     for (let index: number = startIndex; index < this.messages.length; index += 1) {
       const item: ChatMessage = this.messages[index];
-      const type: string = item.itemType ?? item.role;
-      if (this.isIntermediateMessageType(type) && !this.isEmptyReasoningMessage(item)) {
+      if (this.isActivityMessage(item) && !this.isEmptyReasoningMessage(item)) {
         return true;
       }
     }
@@ -2068,6 +2147,65 @@ struct Index {
     }
   }
 
+  private clearLiveThinking(): void {
+    this.liveThinkingActive = false;
+    this.liveThinkingContent = '';
+    this.liveThinkingReasoningSignature = '';
+    this.liveThinkingAssistantSignature = '';
+    this.isTurnActivityCollapsed = true;
+  }
+
+  private isReasoningPlaceholderText(content: string): boolean {
+    return content.trim() === '正在思考...';
+  }
+
+  private updateLiveThinking(result: CodexTurnResult, rawMessages: ChatMessage[]): void {
+    if (result.status !== 'inProgress') {
+      this.clearLiveThinking();
+      return;
+    }
+    const latestStage: string = this.latestCurrentTurnThoughtStage(rawMessages);
+    const assistantSignature: string = this.currentTurnAssistantOutputSignature(rawMessages);
+    const reasoningSignature: string = this.currentTurnReasoningSignature(rawMessages);
+    if (assistantSignature !== this.liveThinkingAssistantSignature) {
+      this.liveThinkingAssistantSignature = assistantSignature;
+      this.liveThinkingActive = false;
+      this.liveThinkingContent = '';
+    }
+    if (latestStage === 'assistant' && reasoningSignature === this.liveThinkingReasoningSignature) {
+      this.clearLiveThinking();
+      this.liveThinkingReasoningSignature = reasoningSignature;
+      this.liveThinkingAssistantSignature = assistantSignature;
+      return;
+    }
+    if (latestStage === '' || latestStage === 'activity') {
+      this.liveThinkingActive = true;
+      this.liveThinkingContent = '';
+      this.liveThinkingReasoningSignature = reasoningSignature;
+      this.liveThinkingAssistantSignature = assistantSignature;
+      return;
+    }
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    let latestReasoning: ChatMessage | null = null;
+    for (let index: number = startIndex; index < rawMessages.length; index += 1) {
+      const item: ChatMessage = rawMessages[index];
+      if (this.isReasoningMessage(item)) {
+        latestReasoning = item;
+      }
+    }
+    if (latestReasoning === null || this.isReasoningPlaceholderText(latestReasoning.content)) {
+      this.liveThinkingActive = true;
+      this.liveThinkingContent = '';
+      this.liveThinkingReasoningSignature = reasoningSignature;
+      this.liveThinkingAssistantSignature = assistantSignature;
+      return;
+    }
+    this.liveThinkingActive = true;
+    this.liveThinkingContent = latestReasoning.content;
+    this.liveThinkingReasoningSignature = reasoningSignature;
+    this.liveThinkingAssistantSignature = assistantSignature;
+  }
+
   private syncThinkingAnimation(): void {
     if (this.isRunning) {
       this.startThinkingAnimation();
@@ -2085,17 +2223,16 @@ struct Index {
   }
 
   private turnActivityDetailLines(): string[] {
-    const lines: string[] = [];
-    const title: string = this.displayBrandText(this.summaryTitle).trim();
-    if (title.length > 0 && title !== '执行中') {
-      lines.push(title);
+    const reasoningText: string = this.liveThinkingContent.trim();
+    if (reasoningText.length === 0) {
+      return ['正在等待可展示的思考内容。'];
     }
-    for (let index: number = 0; index < this.summaryPoints.length; index += 1) {
-      const line: string = this.displayBrandText(this.summaryPoints[index]).trim();
-      if (line.length > 0 && lines.indexOf(line) < 0) {
-        lines.push(line);
-      }
-    }
+    const lines: string[] = reasoningText
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .map((line: string) => this.displayBrandText(line).trim())
+      .filter((line: string) => line.length > 0);
     if (lines.length === 0) {
       lines.push('正在等待可展示的思考内容。');
     }
@@ -2241,6 +2378,10 @@ struct Index {
     this.thinkingNormalPhraseBucket = -1;
     this.thinkingFunPhrase = '';
     this.thinkingFunPhraseBucket = -1;
+    this.liveThinkingActive = true;
+    this.liveThinkingContent = '';
+    this.liveThinkingReasoningSignature = '';
+    this.liveThinkingAssistantSignature = '';
     this.showIdleThinkingIndicator = false;
     this.lastTextOutputAt = Date.now();
     this.lastTextOutputSignature = '';
@@ -2264,6 +2405,7 @@ struct Index {
       this.thinkingMessageBoundary = -1;
       this.showIdleThinkingIndicator = false;
       this.lastTextOutputSignature = '';
+      this.clearLiveThinking();
       this.clearIdleThinkingTimer();
       this.syncThinkingAnimation();
       return;
@@ -2307,6 +2449,7 @@ struct Index {
       this.thinkingMessageBoundary = -1;
       this.showIdleThinkingIndicator = false;
       this.lastTextOutputSignature = '';
+      this.clearLiveThinking();
       this.clearIdleThinkingTimer();
       this.syncThinkingAnimation();
     }
@@ -2320,8 +2463,12 @@ struct Index {
     if (this.backendResultContainsPendingPrompt(result)) {
       this.pendingUserPrompt = '';
     }
-    this.messages = result.messages.map((item) => {
+    const rawMessages: ChatMessage[] = result.messages.map((item) => {
       return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
+    });
+    this.updateLiveThinking(result, rawMessages);
+    this.messages = rawMessages.filter((item: ChatMessage) => {
+      return !this.isReasoningMessage(item);
     });
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
@@ -3309,7 +3456,7 @@ struct Index {
     return JSON.stringify(err);
   }
 
-  private openWebTarget(rawTarget: string, label: string): void {
+  private openWebTarget(rawTarget: string, label: string, sourceMessageId?: string): void {
     const target: string = this.cleanMarkdownLinkTarget(rawTarget);
     if (target.length === 0) {
       promptAction.showToast({ message: '链接地址为空', duration: 1600 });
@@ -3320,14 +3467,14 @@ struct Index {
       return;
     }
     if (this.isHtmlFileTarget(target)) {
-      const htmlUri: string = this.htmlTargetToUri(target);
+      const htmlUri: string = this.htmlTargetToUri(target, sourceMessageId);
       if (htmlUri.length > 0) {
         this.showHtmlPreviewInRightPanel(htmlUri, label.length > 0 ? label : this.fileNameFromTarget(target));
       }
       return;
     }
     if (this.isMarkdownFileTarget(target)) {
-      const markdownUri: string = this.markdownTargetToUri(target);
+      const markdownUri: string = this.markdownTargetToUri(target, sourceMessageId);
       if (markdownUri.length > 0) {
         this.openViewDataTarget(markdownUri, 'text/markdown', label.length > 0 ? label : this.fileNameFromTarget(target), true);
       }
@@ -3462,7 +3609,7 @@ struct Index {
     return cleanTarget.substring(pathPart.length);
   }
 
-  private htmlTargetToUri(target: string): string {
+  private htmlTargetToUri(target: string, sourceMessageId?: string): string {
     const cleanTarget: string = target.trim();
     if (!this.isHtmlFileTarget(cleanTarget)) {
       return '';
@@ -3473,16 +3620,16 @@ struct Index {
     if (this.isFileUri(cleanTarget)) {
       return cleanTarget;
     }
-    if (!this.isAbsoluteLocalPath(cleanTarget) && this.workspaceRoot.trim().length === 0) {
-      promptAction.showToast({ message: '打开相对 HTML 文件前请先设置工作目录', duration: 2400 });
+    const resolved: LocalPathResolution = this.resolveLocalFileTarget(this.localFileTargetPath(cleanTarget), sourceMessageId);
+    if (resolved.path.length === 0) {
+      promptAction.showToast({ message: '无法定位相对 HTML 文件，请先设置工作目录或让回复包含绝对路径', duration: 2600 });
       return '';
     }
-    const resolvedPath: string = this.resolveLocalPath(this.localFileTargetPath(cleanTarget));
-    const resolvedUri: string = this.pathToFileUri(resolvedPath);
+    const resolvedUri: string = this.pathToFileUri(resolved.path);
     return resolvedUri.length > 0 ? `${resolvedUri}${this.localFileTargetSuffix(cleanTarget)}` : '';
   }
 
-  private markdownTargetToUri(target: string): string {
+  private markdownTargetToUri(target: string, sourceMessageId?: string): string {
     const cleanTarget: string = target.trim();
     if (!this.isMarkdownFileTarget(cleanTarget)) {
       return '';
@@ -3493,25 +3640,184 @@ struct Index {
     if (this.isFileUri(cleanTarget)) {
       return cleanTarget;
     }
-    if (!this.isAbsoluteLocalPath(cleanTarget) && this.workspaceRoot.trim().length === 0) {
-      promptAction.showToast({ message: '打开相对 Markdown 文件前请先设置工作目录', duration: 2400 });
+    const resolved: LocalPathResolution = this.resolveLocalFileTarget(this.localFileTargetPath(cleanTarget), sourceMessageId);
+    if (resolved.path.length === 0) {
+      promptAction.showToast({ message: '无法定位相对 Markdown 文件，请先设置工作目录或让回复包含绝对路径', duration: 2600 });
       return '';
     }
-    const resolvedPath: string = this.resolveLocalPath(this.localFileTargetPath(cleanTarget));
-    const resolvedUri: string = this.pathToFileUri(resolvedPath);
+    const resolvedUri: string = this.pathToFileUri(resolved.path);
     return resolvedUri.length > 0 ? `${resolvedUri}${this.localFileTargetSuffix(cleanTarget)}` : '';
   }
 
-  private resolveLocalPath(target: string): string {
-    const normalizedTarget: string = target.replace(/\\/g, '/');
+  private resolveLocalFileTarget(target: string, sourceMessageId?: string): LocalPathResolution {
+    const normalizedTarget: string = this.collapseLocalPathSegments(target.replace(/\\/g, '/'));
     if (this.isAbsoluteLocalPath(normalizedTarget)) {
-      return normalizedTarget;
+      return new LocalPathResolution(normalizedTarget, this.localFileExists(normalizedTarget));
     }
-    const base: string = this.workspaceRoot.trim().replace(/\\/g, '/');
-    if (base.length === 0) {
-      return normalizedTarget;
+
+    const roots: string[] = this.localFileResolutionRoots(sourceMessageId);
+    if (roots.length === 0) {
+      return new LocalPathResolution('');
     }
-    return `${base.replace(/\/+$/g, '')}/${normalizedTarget.replace(/^\/+/g, '')}`;
+
+    const candidates: string[] = [];
+    for (let index: number = 0; index < roots.length; index += 1) {
+      const candidate: string = this.joinLocalPath(roots[index], normalizedTarget);
+      candidates.push(candidate);
+      if (this.localFileExists(candidate)) {
+        return new LocalPathResolution(candidate, true);
+      }
+    }
+
+    return new LocalPathResolution(candidates[0] ?? '');
+  }
+
+  private localFileResolutionRoots(sourceMessageId?: string): string[] {
+    const roots: string[] = [];
+    const sourceIndex: number = this.messageIndexById(sourceMessageId ?? '');
+    if (sourceIndex >= 0) {
+      this.addMessageLocalPathRoots(roots, this.messages[sourceIndex]);
+      for (let index: number = sourceIndex - 1; index >= 0; index -= 1) {
+        this.addMessageLocalPathRoots(roots, this.messages[index]);
+      }
+    } else {
+      for (let index: number = this.messages.length - 1; index >= 0; index -= 1) {
+        this.addMessageLocalPathRoots(roots, this.messages[index]);
+      }
+    }
+
+    this.addLocalPathRoot(roots, this.workspaceRoot);
+    this.workspaceRoots.forEach((root: string) => {
+      this.addLocalPathRoot(roots, root);
+    });
+    for (let index: number = 0; index < this.projects.length; index += 1) {
+      this.addLocalPathRoot(roots, this.projects[index].path);
+    }
+    return roots;
+  }
+
+  private messageIndexById(messageId: string): number {
+    if (messageId.trim().length === 0) {
+      return -1;
+    }
+    for (let index: number = 0; index < this.messages.length; index += 1) {
+      if (this.messages[index].id === messageId) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private addMessageLocalPathRoots(roots: string[], message: ChatMessage): void {
+    const metadata: Record<string, Object> | undefined = message.metadata;
+    if (metadata === undefined || metadata === null) {
+      return;
+    }
+
+    const cwdValue: Object | undefined = metadata['cwd'];
+    if (typeof cwdValue === 'string') {
+      this.addLocalPathRoot(roots, cwdValue as string);
+    }
+
+    this.addMetadataPathParentRoot(roots, metadata['path']);
+    this.addMetadataPathParentRoot(roots, metadata['savedPath']);
+
+    const filesValue: Object | undefined = metadata['files'];
+    if (Array.isArray(filesValue)) {
+      const files: Object[] = filesValue as Object[];
+      for (let index: number = 0; index < files.length; index += 1) {
+        this.addMetadataPathParentRoot(roots, files[index]);
+      }
+    }
+  }
+
+  private addMetadataPathParentRoot(roots: string[], rawValue: Object | undefined): void {
+    if (typeof rawValue !== 'string') {
+      return;
+    }
+    const normalizedPath: string = this.collapseLocalPathSegments((rawValue as string).trim().replace(/\\/g, '/'));
+    if (!this.isAbsoluteLocalPath(normalizedPath)) {
+      return;
+    }
+    this.addLocalPathRoot(roots, this.parentLocalPath(normalizedPath));
+  }
+
+  private addLocalPathRoot(roots: string[], rawRoot: string): void {
+    let normalizedRoot: string = this.collapseLocalPathSegments(rawRoot.trim().replace(/\\/g, '/'));
+    if (normalizedRoot.length > 1) {
+      normalizedRoot = normalizedRoot.replace(/\/+$/g, '');
+    }
+    if (normalizedRoot.length === 0) {
+      return;
+    }
+    for (let index: number = 0; index < roots.length; index += 1) {
+      if (roots[index].toLowerCase() === normalizedRoot.toLowerCase()) {
+        return;
+      }
+    }
+    roots.push(normalizedRoot);
+  }
+
+  private joinLocalPath(base: string, target: string): string {
+    return this.collapseLocalPathSegments(`${base.replace(/\/+$/g, '')}/${target.replace(/^\/+/g, '')}`);
+  }
+
+  private parentLocalPath(path: string): string {
+    const normalizedPath: string = path.replace(/\\/g, '/');
+    const slashIndex: number = normalizedPath.lastIndexOf('/');
+    if (slashIndex <= 0) {
+      return '';
+    }
+    return normalizedPath.substring(0, slashIndex);
+  }
+
+  private localFileExists(path: string): boolean {
+    try {
+      const stat = fileIo.statSync(path);
+      return stat !== undefined && stat.isFile();
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private collapseLocalPathSegments(path: string): string {
+    const normalizedPath: string = path.trim().replace(/\\/g, '/');
+    if (normalizedPath.length === 0) {
+      return '';
+    }
+
+    let prefix: string = '';
+    let rest: string = normalizedPath;
+    if (/^[A-Za-z]:\//.test(normalizedPath)) {
+      prefix = normalizedPath.substring(0, 3);
+      rest = normalizedPath.substring(3);
+    } else if (normalizedPath.startsWith('/')) {
+      prefix = '/';
+      rest = normalizedPath.replace(/^\/+/g, '');
+    }
+
+    const parts: string[] = [];
+    const rawParts: string[] = rest.split('/');
+    for (let index: number = 0; index < rawParts.length; index += 1) {
+      const part: string = rawParts[index];
+      if (part.length === 0 || part === '.') {
+        continue;
+      }
+      if (part === '..') {
+        if (parts.length > 0 && parts[parts.length - 1] !== '..') {
+          parts.pop();
+        } else if (prefix.length === 0) {
+          parts.push(part);
+        }
+        continue;
+      }
+      parts.push(part);
+    }
+
+    if (prefix.length > 0) {
+      return `${prefix}${parts.join('/')}`;
+    }
+    return parts.join('/');
   }
 
   private isAbsoluteLocalPath(path: string): boolean {
@@ -4413,7 +4719,7 @@ struct Index {
 
   @Builder
   private inlineMessageMarkdownBody(item: ChatMessage) {
-    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType ?? item.role), this.conversationFontSize(12), this.conversationLineHeight(19), undefined, 6)
+    this.inlineMarkdownLine(`${item.id}:inline`, item.content.trim(), this.messageContentColor(item.itemType ?? item.role), this.conversationFontSize(12), this.conversationLineHeight(19), undefined, 6, item.id)
   }
 
   @Builder
@@ -4436,7 +4742,7 @@ struct Index {
         .margin({ top: 6 })
         .hitTestBehavior(HitTestMode.Block)
         .onClick(() => {
-          this.openFirstHtmlFileLinkContent(item.content);
+          this.openFirstHtmlFileLinkContent(item.content, item.id);
         })
     }
     .width('100%')
@@ -4634,7 +4940,8 @@ struct Index {
             fontSize ?? this.conversationFontSize(12),
             lineHeight ?? this.conversationLineHeight(19),
             weight,
-            lineIndex === 0 ? 0 : 2
+            lineIndex === 0 ? 0 : 2,
+            messageId
           )
         }
       })
@@ -4669,7 +4976,7 @@ struct Index {
   }
 
   @Builder
-  private inlineMarkdownLine(baseId: string, text: string, color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number) {
+  private inlineMarkdownLine(baseId: string, text: string, color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number, sourceMessageId?: string) {
     if (this.hasInlineMathText(text)) {
       Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
         ForEach(this.inlineMarkdownSegments(text, baseId), (segment: MathSegment) => {
@@ -4683,12 +4990,12 @@ struct Index {
       .width('100%')
       .margin({ top: topMargin })
     } else {
-      this.inlineMarkdownTextLine(this.inlineMarkdownSegments(text, baseId), color, fontSize, lineHeight, weight, topMargin)
+      this.inlineMarkdownTextLine(this.inlineMarkdownSegments(text, baseId), color, fontSize, lineHeight, weight, topMargin, sourceMessageId)
     }
   }
 
   @Builder
-  private inlineMarkdownTextLine(segments: MathSegment[], color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number) {
+  private inlineMarkdownTextLine(segments: MathSegment[], color: string, fontSize: number, lineHeight: number, weight: FontWeight | undefined, topMargin: number, sourceMessageId?: string) {
     if (this.hasInlineLinkSegment(segments)) {
       Text() {
         ForEach(segments, (segment: MathSegment) => {
@@ -4712,7 +5019,7 @@ struct Index {
       .wordBreak(WordBreak.BREAK_WORD)
       .margin({ top: topMargin })
       .onClick(() => {
-        this.openFirstInlineLinkSegment(segments);
+        this.openFirstInlineLinkSegment(segments, sourceMessageId);
       })
     } else {
       Text() {
@@ -4793,10 +5100,10 @@ struct Index {
     return result;
   }
 
-  private openFirstHtmlFileLinkContent(content: string): void {
+  private openFirstHtmlFileLinkContent(content: string, sourceMessageId?: string): void {
     const segments: MathSegment[] = this.htmlFileLinkSegments(content, 'html-open');
     if (segments.length > 0) {
-      this.openWebTarget(segments[0].target, segments[0].text);
+      this.openWebTarget(segments[0].target, segments[0].text, sourceMessageId);
     }
   }
 
@@ -4809,10 +5116,10 @@ struct Index {
     return null;
   }
 
-  private openFirstInlineLinkSegment(segments: MathSegment[]): void {
+  private openFirstInlineLinkSegment(segments: MathSegment[], sourceMessageId?: string): void {
     const linkSegment: MathSegment | null = this.firstInlineLinkSegment(segments);
     if (linkSegment !== null) {
-      this.openWebTarget(linkSegment.target, linkSegment.text);
+      this.openWebTarget(linkSegment.target, linkSegment.text, sourceMessageId);
     }
   }
 
@@ -4835,7 +5142,7 @@ struct Index {
   @Builder
   private formulaInlineContent(source: string, fontSize: number) {
     Row() {
-      this.formulaNode(this.parseFormula(source), Math.max(fontSize + this.conversationFontSize(1), this.conversationFontSize(13)), '#0F172A')
+      this.formulaNode(this.parseFormula(source), Math.max(fontSize + this.conversationFontSize(1), this.conversationFontSize(13)), '#0F172A', false)
     }
     .alignItems(VerticalAlign.Center)
   }
@@ -4845,7 +5152,7 @@ struct Index {
     Column() {
       ForEach(this.mathBlockLines(source), (line: string, lineIndex?: number) => {
         Row() {
-          this.formulaNode(this.parseFormula(line), this.conversationFontSize(19), '#0F172A')
+          this.formulaNode(this.parseFormula(line), this.conversationFontSize(19), '#0F172A', true)
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -4857,11 +5164,11 @@ struct Index {
   }
 
   @Builder
-  private formulaNode(node: FormulaNode, fontSize: number, color: string) {
+  private formulaNode(node: FormulaNode, fontSize: number, color: string, displayStyle: boolean = false) {
     if (node.kind === 'sequence') {
       Row() {
         ForEach(node.children, (child: FormulaNode, childIndex?: number) => {
-          this.formulaNode(child, fontSize, color)
+          this.formulaNode(child, fontSize, color, displayStyle)
         }, (child: FormulaNode, childIndex?: number) => `${child.kind}:${childIndex ?? 0}:${child.text}`)
       }
       .alignItems(VerticalAlign.Center)
@@ -4869,17 +5176,17 @@ struct Index {
       Row() {
         Text(node.text.length > 0 ? node.text.charAt(0) : '(')
           .copyOption(CopyOptions.None)
-          .fontSize(fontSize)
-          .lineHeight(fontSize + 6)
+          .fontSize(this.formulaGroupDelimiterFontSize(node, fontSize))
+          .lineHeight(this.formulaGroupDelimiterFontSize(node, fontSize) + 6)
           .fontColor(color)
           .fontWeight(FontWeight.Medium)
 
-        this.formulaNode(node.children[0], fontSize, color)
+        this.formulaNode(node.children[0], fontSize, color, displayStyle)
 
         Text(node.text.length > 1 ? node.text.charAt(1) : ')')
           .copyOption(CopyOptions.None)
-          .fontSize(fontSize)
-          .lineHeight(fontSize + 6)
+          .fontSize(this.formulaGroupDelimiterFontSize(node, fontSize))
+          .lineHeight(this.formulaGroupDelimiterFontSize(node, fontSize) + 6)
           .fontColor(color)
           .fontWeight(FontWeight.Medium)
       }
@@ -4887,7 +5194,7 @@ struct Index {
     } else if (node.kind === 'fraction' && node.numerator !== null && node.denominator !== null) {
       Column() {
         Row() {
-          this.formulaNode(node.numerator, Math.max(fontSize - 2, 11), color)
+          this.formulaNode(node.numerator, Math.max(fontSize - 2, 11), color, displayStyle)
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -4899,7 +5206,7 @@ struct Index {
           .backgroundColor(color)
 
         Row() {
-          this.formulaNode(node.denominator, Math.max(fontSize - 2, 11), color)
+          this.formulaNode(node.denominator, Math.max(fontSize - 2, 11), color, displayStyle)
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -4924,27 +5231,54 @@ struct Index {
             .backgroundColor(color)
             .margin({ bottom: 1 })
 
-          this.formulaNode(node.radicand, Math.max(fontSize - 1, 11), color)
+          this.formulaNode(node.radicand, Math.max(fontSize - 1, 11), color, displayStyle)
         }
         .width(this.formulaRadicandWidth(node, fontSize))
         .padding({ left: 3, right: 3, top: 2 })
       }
       .alignItems(VerticalAlign.Bottom)
     } else if (node.kind === 'script' && node.base !== null) {
-      Row() {
-        this.formulaNode(node.base, fontSize, color)
-
+      if (displayStyle && this.isFormulaLimitOperatorNode(node.base)) {
         Column() {
           if (node.superscript !== null) {
-            this.formulaNode(node.superscript, Math.max(fontSize - 5, 9), color)
+            Row() {
+              this.formulaNode(node.superscript, this.formulaLimitFontSize(fontSize), color, false)
+            }
+            .justifyContent(FlexAlign.Center)
+            .margin({ bottom: 1 })
           }
+
+          Row() {
+            this.formulaNode(node.base, this.formulaLimitOperatorFontSize(fontSize), color, false)
+          }
+          .justifyContent(FlexAlign.Center)
+
           if (node.subscript !== null) {
-            this.formulaNode(node.subscript, Math.max(fontSize - 5, 9), color)
+            Row() {
+              this.formulaNode(node.subscript, this.formulaLimitFontSize(fontSize), color, false)
+            }
+            .justifyContent(FlexAlign.Center)
+            .margin({ top: 1 })
           }
         }
-        .alignItems(HorizontalAlign.Start)
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 2, right: 2 })
+      } else {
+        Row() {
+          this.formulaNode(node.base, fontSize, color, displayStyle)
+
+          Column() {
+            if (node.superscript !== null) {
+              this.formulaNode(node.superscript, Math.max(fontSize - 5, 9), color, false)
+            }
+            if (node.subscript !== null) {
+              this.formulaNode(node.subscript, Math.max(fontSize - 5, 9), color, false)
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+        }
+        .alignItems(VerticalAlign.Top)
       }
-      .alignItems(VerticalAlign.Top)
     } else if (node.kind === 'space') {
       Blank()
         .width(this.formulaSpacingWidth(node.text, fontSize))
@@ -4955,6 +5289,7 @@ struct Index {
         .fontSize(fontSize)
         .lineHeight(fontSize + 6)
         .fontColor(color)
+        .fontStyle(this.formulaFontStyle(node))
         .fontWeight(FontWeight.Regular)
     }
   }
@@ -4989,6 +5324,21 @@ struct Index {
     return Math.min(Math.max(this.formulaNodeApproxWidth(node.radicand, Math.max(fontSize - 1, 11)) + 8, fontSize * 1.8), 340);
   }
 
+  private formulaGroupDelimiterFontSize(node: FormulaNode, fontSize: number): number {
+    if (node.children.length === 0) {
+      return fontSize;
+    }
+    return this.formulaNeedsTallDelimiter(node.children[0]) ? fontSize + 4 : fontSize;
+  }
+
+  private formulaLimitFontSize(fontSize: number): number {
+    return Math.max(fontSize - 6, 10);
+  }
+
+  private formulaLimitOperatorFontSize(fontSize: number): number {
+    return fontSize + 3;
+  }
+
   private formulaNodeApproxWidth(node: FormulaNode, fontSize: number): number {
     if (node.kind === 'sequence') {
       let width: number = 0;
@@ -5007,6 +5357,12 @@ struct Index {
       return this.formulaRadicandWidth(node, fontSize) + fontSize;
     }
     if (node.kind === 'script' && node.base !== null) {
+      if (this.isFormulaLimitOperatorNode(node.base)) {
+        const operatorWidth: number = this.formulaNodeApproxWidth(node.base, fontSize + 3);
+        const supWidth: number = node.superscript === null ? 0 : this.formulaNodeApproxWidth(node.superscript, Math.max(fontSize - 6, 10));
+        const subWidth: number = node.subscript === null ? 0 : this.formulaNodeApproxWidth(node.subscript, Math.max(fontSize - 6, 10));
+        return Math.max(operatorWidth, Math.max(supWidth, subWidth)) + 4;
+      }
       const baseWidth: number = this.formulaNodeApproxWidth(node.base, fontSize);
       const supWidth: number = node.superscript === null ? 0 : this.formulaNodeApproxWidth(node.superscript, Math.max(fontSize - 5, 9));
       const subWidth: number = node.subscript === null ? 0 : this.formulaNodeApproxWidth(node.subscript, Math.max(fontSize - 5, 9));
@@ -5016,6 +5372,41 @@ struct Index {
       return this.formulaSpacingWidth(node.text, fontSize);
     }
     return this.formulaTextApproxWidth(node.text, fontSize);
+  }
+
+  private formulaNeedsTallDelimiter(node: FormulaNode): boolean {
+    if (node.kind === 'fraction' || node.kind === 'sqrt') {
+      return true;
+    }
+    if (node.kind === 'script' && node.base !== null && this.isFormulaLimitOperatorNode(node.base)) {
+      return true;
+    }
+    if (node.kind === 'group' && node.children.length > 0) {
+      return this.formulaNeedsTallDelimiter(node.children[0]);
+    }
+    if (node.kind === 'sequence') {
+      for (let i = 0; i < node.children.length; i++) {
+        if (this.formulaNeedsTallDelimiter(node.children[i])) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private isFormulaLimitOperatorNode(node: FormulaNode): boolean {
+    return node.kind === 'operator' &&
+      (node.text === '∑' ||
+        node.text === '∏' ||
+        node.text === '∫' ||
+        node.text === '∮' ||
+        node.text === 'lim' ||
+        node.text === 'limsup' ||
+        node.text === 'liminf' ||
+        node.text === 'sup' ||
+        node.text === 'inf' ||
+        node.text === 'argmax' ||
+        node.text === 'argmin');
   }
 
   private formulaSpacingWidth(command: string, fontSize: number): number {
@@ -5035,6 +5426,10 @@ struct Index {
       width += text[i] === ' ' ? fontSize * 0.35 : fontSize * 0.58;
     }
     return Math.max(width, fontSize * 0.6);
+  }
+
+  private formulaFontStyle(node: FormulaNode): FontStyle {
+    return node.variant === 'italic' ? FontStyle.Italic : FontStyle.Normal;
   }
 
   @Builder
@@ -6934,6 +7329,10 @@ struct Index {
         return new FormulaParseResult(sqrtNode, radicand.nextIndex);
       }
 
+      if (command === 'operatorname' && cursor < source.length && source[cursor] === '*') {
+        cursor += 1;
+      }
+
       if (command === 'text' || command === 'mathrm' || command === 'operatorname' || command === 'mathbf' ||
         command === 'mathit' || command === 'mathbb' || command === 'mathcal' || command === 'mathsf' || command === 'mathtt') {
         return this.parseFormulaTextGroup(source, cursor, command === 'mathit' ? 'italic' : 'roman');
@@ -7085,6 +7484,7 @@ struct Index {
     return command === 'sum' ||
       command === 'prod' ||
       command === 'int' ||
+      command === 'oint' ||
       command === 'times' ||
       command === 'cdot' ||
       command === 'pm' ||
@@ -7109,6 +7509,13 @@ struct Index {
       command === 'tan' ||
       command === 'log' ||
       command === 'ln' ||
+      command === 'lim' ||
+      command === 'limsup' ||
+      command === 'liminf' ||
+      command === 'sup' ||
+      command === 'inf' ||
+      command === 'argmax' ||
+      command === 'argmin' ||
       command === 'max' ||
       command === 'min' ||
       command === 'exp';
@@ -7142,6 +7549,7 @@ struct Index {
       case 'sum': return '∑';
       case 'prod': return '∏';
       case 'int': return '∫';
+      case 'oint': return '∮';
       case 'infty': return '∞';
       case 'times': return '×';
       case 'cdot': return '·';
@@ -7169,6 +7577,13 @@ struct Index {
       case 'tan':
       case 'log':
       case 'ln':
+      case 'lim':
+      case 'limsup':
+      case 'liminf':
+      case 'sup':
+      case 'inf':
+      case 'argmax':
+      case 'argmin':
       case 'max':
       case 'min':
       case 'exp': return command;

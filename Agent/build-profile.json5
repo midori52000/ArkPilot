@@ -23,6 +23,21 @@
         "name": "release"
       }
     ],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\wang2\\.ohos\\config\\default_Agent_ubML_gvHLF5uuhqJFAbv6j3jxA_Wb-tk8eea0YNCVfs=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BD1891ADB11C464715115A28923D2E03DAFD15A291DE64944E44497680B3D34DDF2665A18C4A3C0",
+          "profile": "C:\\Users\\wang2\\.ohos\\config\\default_Agent_ubML_gvHLF5uuhqJFAbv6j3jxA_Wb-tk8eea0YNCVfs=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\wang2\\.ohos\\config\\default_Agent_ubML_gvHLF5uuhqJFAbv6j3jxA_Wb-tk8eea0YNCVfs=.p12",
+          "storePassword": "0000001B3ABF355C7FF71EF2E503AB7BEE8A63F050787405792A2730D34D07EE5FAE285F83275D599E74A7"
+        }
+      }
+    ]
     // Local signing is intentionally not committed.
     // Fresh clones should be able to build an unsigned debug HAP without
     // requiring machine-specific .cer/.p12/.p7b paths.
