@@ -36,6 +36,7 @@ import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileUri, picker } from '@kit.CoreFileKit';
 import uri from '@ohos.uri';
+import fileIo from '@ohos.file.fs';
 
 const INDEX_DOMAIN = 0x0000;
 const INDEX_TAG = 'IndexProviderDebug';
@@ -43,6 +44,35 @@ const WAITING_FOR_DIFF_TEXT: string = '\u7b49\u5f85 turn/diff/updated \u901a\u77
 const NO_DIFF_TEXT: string = '\u672c\u8f6e\u5c1a\u672a\u4ea7\u751f diff\u3002';
 const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
 const UNKNOWN_DIFF_FILE_TEXT: string = '\u672a\u8bc6\u522b\u6587\u4ef6';
+const MESSAGE_TIMESTAMPS_FILE_NAME: string = 'arkpilot-message-timestamps.json';
+
+function messageTimestampStorePath(): string {
+  const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+  if (codexHome.trim().length > 0) {
+    return `${codexHome}/${MESSAGE_TIMESTAMPS_FILE_NAME}`;
+  }
+  return MESSAGE_TIMESTAMPS_FILE_NAME;
+}
+
+function ensureMessageTimestampParentDirectory(path: string): void {
+  const slashIndex: number = path.lastIndexOf('/');
+  if (slashIndex <= 0) {
+    return;
+  }
+  try {
+    fileIo.mkdirSync(path.substring(0, slashIndex), true);
+  } catch (err) {
+    hilog.error(INDEX_DOMAIN, INDEX_TAG, 'ensure message timestamp directory failed: %{public}s', `${err}`);
+  }
+}
+
+function safeParseObject(rawText: string): Object | null {
+  try {
+    return JSON.parse(rawText) as Object;
+  } catch (_err) {
+    return null;
+  }
+}
 
 class ChatMessage {
   id: string;
@@ -571,7 +601,9 @@ struct Index {
   private readonly workspaceUris: Map<number, string> = new Map();
   private readonly collaborationModeByWorkspaceId: Map<string, string> = new Map();
   private readonly requestUserInputDrafts: Map<string, string> = new Map();
+  private readonly messageTimestampCache: Map<string, string> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
+  private messageTimestampCacheLoaded: boolean = false;
 
   @State private workspaces: WorkspaceItem[] = [];
   @State private activeWorkspaceId: number = 1;
@@ -951,6 +983,101 @@ struct Index {
     const hours: string = date.getHours().toString().padStart(2, '0');
     const minutes: string = date.getMinutes().toString().padStart(2, '0');
     return `${hours}:${minutes}`;
+  }
+
+  private messageTimestampKey(threadId: string, messageId: string): string {
+    return `${threadId.trim()}:${messageId.trim()}`;
+  }
+
+  private loadMessageTimestampCache(): void {
+    if (this.messageTimestampCacheLoaded) {
+      return;
+    }
+    this.messageTimestampCacheLoaded = true;
+    const path: string = messageTimestampStorePath();
+    try {
+      fileIo.statSync(path);
+    } catch (_err) {
+      return;
+    }
+    try {
+      const parsed: Object | null = safeParseObject(fileIo.readTextSync(path));
+      if (parsed === null) {
+        return;
+      }
+      const record: Record<string, Object> = parsed as Record<string, Object>;
+      const source: Record<string, Object> = record['timestamps'] !== undefined && record['timestamps'] !== null
+        ? record['timestamps'] as Record<string, Object>
+        : record;
+      Object.keys(source).forEach((key: string) => {
+        const value: Object | undefined = source[key];
+        if (typeof value === 'string' && key.trim().length > 0 && (value as string).trim().length > 0) {
+          this.messageTimestampCache.set(key, value as string);
+        }
+      });
+    } catch (err) {
+      hilog.error(INDEX_DOMAIN, INDEX_TAG, 'load message timestamp cache failed: %{public}s', `${err}`);
+    }
+  }
+
+  private saveMessageTimestampCache(): void {
+    const path: string = messageTimestampStorePath();
+    ensureMessageTimestampParentDirectory(path);
+    const timestamps: Record<string, string> = {};
+    this.messageTimestampCache.forEach((value: string, key: string) => {
+      timestamps[key] = value;
+    });
+    const payload: string = JSON.stringify({ version: 1, timestamps }, null, 2);
+    try {
+      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, payload);
+      fileIo.closeSync(file);
+    } catch (err) {
+      hilog.error(INDEX_DOMAIN, INDEX_TAG, 'save message timestamp cache failed: %{public}s', `${err}`);
+    }
+  }
+
+  private cachedMessageTimestamp(threadId: string, messageId: string): string | null {
+    const trimmedThreadId: string = threadId.trim();
+    const trimmedMessageId: string = messageId.trim();
+    if (trimmedThreadId.length === 0 || trimmedMessageId.length === 0) {
+      return null;
+    }
+    this.loadMessageTimestampCache();
+    return this.messageTimestampCache.get(this.messageTimestampKey(trimmedThreadId, trimmedMessageId)) ?? null;
+  }
+
+  private timestampForChatMessage(threadId: string, messageId: string, fallbackTimestamp: string): string {
+    const cached: string | null = this.cachedMessageTimestamp(threadId, messageId);
+    if (cached !== null) {
+      return cached;
+    }
+    return fallbackTimestamp.trim().length > 0 ? fallbackTimestamp : this.currentClockLabel();
+  }
+
+  private rememberMessageTimestamps(threadId: string, messages: ChatMessage[]): void {
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0 || messages.length === 0) {
+      return;
+    }
+    this.loadMessageTimestampCache();
+    let changed: boolean = false;
+    for (let index: number = 0; index < messages.length; index += 1) {
+      const message: ChatMessage = messages[index];
+      const messageId: string = message.id.trim();
+      const timestamp: string = message.timestamp.trim();
+      if (messageId.length === 0 || timestamp.length === 0) {
+        continue;
+      }
+      const key: string = this.messageTimestampKey(trimmedThreadId, messageId);
+      if (!this.messageTimestampCache.has(key)) {
+        this.messageTimestampCache.set(key, timestamp);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.saveMessageTimestampCache();
+    }
   }
 
   private async applyEmbeddedHostStatus(): Promise<void> {
@@ -1828,8 +1955,10 @@ struct Index {
   }
 
   private visibleMessages(): ChatMessage[] {
-    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage) => {
-      return this.shouldRenderMessage(item);
+    const hasPendingTailMessage: boolean = (this.isRunning && this.pendingUserPrompt.trim().length > 0) ||
+      this.pendingRequestUserInput !== null;
+    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage, index: number) => {
+      return this.shouldRenderMessageAt(index, hasPendingTailMessage);
     });
     if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
       visible = [...visible, this.pendingUserMessage()];
@@ -1849,11 +1978,34 @@ struct Index {
     return visible;
   }
 
+  private shouldRenderMessageAt(index: number, hasPendingTailMessage: boolean): boolean {
+    const item: ChatMessage = this.messages[index];
+    if (!this.shouldRenderMessage(item)) {
+      return false;
+    }
+    if (this.isReasoningMessage(item)) {
+      return !this.hasRenderableMessageAfter(index, hasPendingTailMessage);
+    }
+    return true;
+  }
+
   private shouldRenderMessage(item: ChatMessage): boolean {
     if (this.isCompactionSystemMessage(item)) {
       return false;
     }
     return !this.isEmptyReasoningMessage(item);
+  }
+
+  private hasRenderableMessageAfter(index: number, hasPendingTailMessage: boolean): boolean {
+    if (hasPendingTailMessage) {
+      return true;
+    }
+    for (let nextIndex = index + 1; nextIndex < this.messages.length; nextIndex += 1) {
+      if (this.shouldRenderMessage(this.messages[nextIndex])) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private isEmptyReasoningMessage(item: ChatMessage): boolean {
@@ -2318,8 +2470,10 @@ struct Index {
       this.pendingUserPrompt = '';
     }
     this.messages = result.messages.map((item) => {
-      return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
+      const timestamp: string = this.timestampForChatMessage(result.threadId, item.messageId, item.timestamp);
+      return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), timestamp, item.itemType, item.status, item.metadata);
     });
+    this.rememberMessageTimestamps(result.threadId, this.messages);
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
           return new CodeDiffLine(line.lineId, line.lineNumber, line.sign, line.content, line.kind, line.filePath);
