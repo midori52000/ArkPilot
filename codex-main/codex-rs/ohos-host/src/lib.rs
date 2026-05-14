@@ -4964,7 +4964,12 @@ fn upsert_thread_state_from_protocol(
         entry.latest_token_usage = Some(token_usage);
     }
     if refresh_messages {
-        entry.messages = collect_thread_messages(&thread.turns, &[]);
+        let message_timestamps = thread
+            .path
+            .as_deref()
+            .and_then(read_visible_message_timestamps_from_rollout)
+            .unwrap_or_default();
+        entry.messages = collect_thread_messages(&thread.turns, &message_timestamps);
     }
 }
 

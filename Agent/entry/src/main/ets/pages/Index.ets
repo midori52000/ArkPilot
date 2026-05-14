@@ -2535,7 +2535,7 @@ struct Index {
     const rawMessages: ChatMessage[] = result.messages.map((item) => {
       return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
     });
-    const displayMessages: ChatMessage[] = this.mergeStreamingDisplayMessages(rawMessages, result);
+    const displayMessages: ChatMessage[] = this.preserveStableMessageTimestamps(this.mergeStreamingDisplayMessages(rawMessages, result));
     this.updateLiveThinking(result, displayMessages);
     this.messages = displayMessages.filter((item: ChatMessage) => {
       return !this.isReasoningMessage(item);
@@ -2561,6 +2561,42 @@ struct Index {
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
     this.syncTextOutputIdleState();
     this.scheduleMessageScrollToBottom();
+  }
+
+  private preserveStableMessageTimestamps(messages: ChatMessage[]): ChatMessage[] {
+    if (this.messages.length === 0 || messages.length === 0) {
+      return messages;
+    }
+    return messages.map((incoming: ChatMessage) => {
+      const existing: ChatMessage | undefined = this.findStableTimestampMessage(incoming);
+      if (existing === undefined || existing.timestamp.trim().length === 0 || existing.timestamp === incoming.timestamp) {
+        return incoming;
+      }
+      return new ChatMessage(
+        incoming.id,
+        incoming.author,
+        incoming.role,
+        incoming.content,
+        existing.timestamp,
+        incoming.itemType,
+        incoming.status,
+        incoming.metadata
+      );
+    });
+  }
+
+  private findStableTimestampMessage(incoming: ChatMessage): ChatMessage | undefined {
+    const exact: ChatMessage | undefined = this.messages.find((message: ChatMessage) => message.id === incoming.id);
+    if (exact !== undefined) {
+      return exact;
+    }
+    for (let index: number = 0; index < this.messages.length; index += 1) {
+      const existing: ChatMessage = this.messages[index];
+      if (this.isSameStreamingAssistantMessage(existing, incoming)) {
+        return existing;
+      }
+    }
+    return undefined;
   }
 
   private mergeStreamingDisplayMessages(rawMessages: ChatMessage[], result: CodexTurnResult): ChatMessage[] {
