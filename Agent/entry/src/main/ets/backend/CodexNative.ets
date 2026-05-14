@@ -855,12 +855,24 @@ export async function turnStartAsyncNative(paramsJson: string): Promise<string> 
 function turnPollTask(threadId: string, turnId: string): string {
   const mod = entry ?? null;
   if (mod === null) {
-    return '{}';
+    const message: string = 'libentry.so 未加载，无法继续轮询当前会话。';
+    return JSON.stringify({
+      status: 'failed',
+      nativePollFailure: true,
+      summaryTitle: '轮询失败',
+      summary: [message]
+    });
   }
   try {
     return mod.turnPoll(threadId, turnId);
-  } catch (_err) {
-    return '{}';
+  } catch (err) {
+    const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+    return JSON.stringify({
+      status: 'failed',
+      nativePollFailure: true,
+      summaryTitle: '轮询失败',
+      summary: [`Native turn/poll 调用失败：${errorText}`]
+    });
   }
 }
 
@@ -868,8 +880,14 @@ export async function turnPollAsyncNative(threadId: string, turnId: string): Pro
   try {
     const task = new taskpool.Task(turnPollTask, threadId, turnId);
     return await taskpool.execute(task) as string;
-  } catch (_err) {
-    return '{}';
+  } catch (err) {
+    const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+    return JSON.stringify({
+      status: 'failed',
+      nativePollFailure: true,
+      summaryTitle: '轮询失败',
+      summary: [`TaskPool 执行 turn/poll 失败：${errorText}`]
+    });
   }
 }
 

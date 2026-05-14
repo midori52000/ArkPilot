@@ -44,7 +44,9 @@
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:docs.openharmony.cn)",
       "WebFetch(domain:gitee.com)",
-      "Bash(cargo check *)"
+      "Bash(cargo check *)",
+      "Bash(git *)",
+      "PowerShell(Get-Command *)"
     ]
   }
 }

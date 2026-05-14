@@ -85,6 +85,8 @@ const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
 const TURN_POLL_INTERVAL_MS: number = 200; // 减少轮询间隔以提高响应速度
 const TURN_POLL_TIMEOUT_MS: number = 300000; // 5 分钟轮询超时
+const TURN_STATUS_RECONCILE_INTERVAL_MS: number = 5000;
+const TURN_STATUS_RECONCILE_START_MS: number = 10000;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
@@ -2572,7 +2574,9 @@ export class CodexBackend {
   }
 
   private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
-    const deadline: number = Date.now() + TURN_POLL_TIMEOUT_MS;
+    const startedAt: number = Date.now();
+    const deadline: number = startedAt + TURN_POLL_TIMEOUT_MS;
+    let nextReconcileAt: number = startedAt + TURN_STATUS_RECONCILE_START_MS;
     while (true) {
       if (pendingTurn.cancelled) {
         thread.lastTurnStatus = 'interrupted';
@@ -2596,6 +2600,25 @@ export class CodexBackend {
       }
       const pollObject: Record<string, Object> = parseJsonText(await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
       this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
+      if (this.shouldRecoverFromPollPayload(pollObject)) {
+        const recoveredSnapshot: CodexTurnResult | null = await this.recoverTurnFromThreadHistory(thread, pendingTurn, pollObject);
+        if (recoveredSnapshot !== null) {
+          this.emitTurnUpdate(thread, pendingTurn, recoveredSnapshot);
+          thread.activeTurn = null;
+          pendingTurn.resolveCompletion(recoveredSnapshot);
+          return recoveredSnapshot;
+        }
+        const failedSnapshot: CodexTurnResult = this.buildTurnFailureSnapshot(
+          thread,
+          pendingTurn.turnId,
+          this.turnPollFailureTitle(pollObject),
+          this.turnPollFailureMessage(pollObject)
+        );
+        this.emitTurnUpdate(thread, pendingTurn, failedSnapshot);
+        thread.activeTurn = null;
+        pendingTurn.resolveCompletion(failedSnapshot);
+        return failedSnapshot;
+      }
       const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
       this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
       if (nextSnapshot.status !== 'inProgress') {
@@ -2610,7 +2633,126 @@ export class CodexBackend {
         pendingTurn.resolveCompletion(finalSnapshot);
         return finalSnapshot;
       }
+      if (Date.now() >= nextReconcileAt) {
+        const reconciledSnapshot: CodexTurnResult | null = await this.reconcileInProgressTurnFromThreadHistory(thread, pendingTurn);
+        nextReconcileAt = Date.now() + TURN_STATUS_RECONCILE_INTERVAL_MS;
+        if (reconciledSnapshot !== null) {
+          this.emitTurnUpdate(thread, pendingTurn, reconciledSnapshot);
+          thread.activeTurn = null;
+          pendingTurn.resolveCompletion(reconciledSnapshot);
+          return reconciledSnapshot;
+        }
+      }
       await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
+    }
+  }
+
+  private shouldRecoverFromPollPayload(payload: Record<string, Object>): boolean {
+    return this.isNativePollFailurePayload(payload) || !this.hasTurnPollStatus(payload);
+  }
+
+  private isNativePollFailurePayload(payload: Record<string, Object>): boolean {
+    return payload['nativePollFailure'] === true;
+  }
+
+  private hasTurnPollStatus(payload: Record<string, Object>): boolean {
+    return typeof payload['status'] === 'string' && (payload['status'] as string).trim().length > 0;
+  }
+
+  private turnPollFailureTitle(payload: Record<string, Object>): string {
+    const title: string = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string).trim() : '';
+    return title.length > 0 ? title : '轮询失败';
+  }
+
+  private turnPollFailureMessage(payload: Record<string, Object>): string {
+    const summaryRaw: Object[] = Array.isArray(payload['summary']) ? (payload['summary'] as Object[]) : [];
+    if (summaryRaw.length > 0) {
+      const first: Object = summaryRaw[0];
+      const firstText: string = typeof first === 'string' ? (first as string).trim() : JSON.stringify(first);
+      if (firstText.length > 0) {
+        return firstText;
+      }
+    }
+    if (!this.hasTurnPollStatus(payload)) {
+      return 'turn/poll 未返回有效状态，已结束当前轮次。';
+    }
+    return 'turn/poll 失败，已结束当前轮次。';
+  }
+
+  private buildTurnFailureSnapshot(thread: CodexThreadRecord, turnId: string, title: string, message: string): CodexTurnResult {
+    thread.lastTurnStatus = 'failed';
+    thread.updatedAt = currentThreadTimestamp();
+    thread.summaryTitle = title;
+    thread.summaryPoints = [message];
+    return this.snapshotForThread(thread, 'failed', turnId);
+  }
+
+  private buildRecoveredTurnResult(snapshot: ThreadReadSnapshotPayload, turnId: string, status: CodexTurnStatus): CodexTurnResult {
+    return new CodexTurnResult(
+      snapshot.thread.remoteThreadId,
+      turnId,
+      status,
+      snapshot.thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)),
+      snapshot.thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)),
+      snapshot.thread.summaryTitle,
+      [...snapshot.thread.summaryPoints],
+      snapshot.thread.changedFiles,
+      snapshot.thread.diffStat,
+      snapshot.thread.tokenUsage
+    );
+  }
+
+  private async reconcileInProgressTurnFromThreadHistory(
+    thread: CodexThreadRecord,
+    pendingTurn: PendingTurnState
+  ): Promise<CodexTurnResult | null> {
+    if (thread.remoteThreadId.trim().length === 0) {
+      return null;
+    }
+    try {
+      const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
+      const recoveredStatus: CodexTurnStatus = this.mapTurnStatus(snapshot.lastTurnStatus);
+      if (recoveredStatus === 'inProgress') {
+        this.logInfo(`threadRead reconcile still in progress thread=${thread.remoteThreadId} turn=${pendingTurn.turnId}`);
+        return null;
+      }
+      this.logInfo(
+        `threadRead reconcile completed thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} recoveredStatus=${recoveredStatus}`
+      );
+      return this.buildRecoveredTurnResult(snapshot, pendingTurn.turnId, recoveredStatus);
+    } catch (err) {
+      const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+      this.logInfo(`threadRead reconcile failed thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} error=${errorText}`);
+      return null;
+    }
+  }
+
+  private async recoverTurnFromThreadHistory(
+    thread: CodexThreadRecord,
+    pendingTurn: PendingTurnState,
+    payload: Record<string, Object>
+  ): Promise<CodexTurnResult | null> {
+    if (thread.remoteThreadId.trim().length === 0) {
+      return null;
+    }
+    try {
+      const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
+      const recoveredStatus: CodexTurnStatus = this.mapTurnStatus(snapshot.lastTurnStatus);
+      if (recoveredStatus === 'inProgress') {
+        this.logInfo(
+          `threadRead turn recovery skipped thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} reason=stillInProgress payload=${JSON.stringify(payload)}`
+        );
+        return null;
+      }
+      thread.activeTurn = pendingTurn;
+      this.logInfo(
+        `threadRead turn recovery thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} recoveredStatus=${recoveredStatus}`
+      );
+      return this.buildRecoveredTurnResult(snapshot, pendingTurn.turnId, recoveredStatus);
+    } catch (err) {
+      const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+      this.logInfo(`threadRead turn recovery failed thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} error=${errorText}`);
+      return null;
     }
   }
 
@@ -2631,6 +2773,10 @@ export class CodexBackend {
         new TurnPollResponsePayload() as Object
       ) as Record<string, Object>;
       this.logInfo(`turnPoll drain thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
+      if (this.shouldRecoverFromPollPayload(pollObject)) {
+        this.logInfo(`turnPoll drain skipped invalid payload thread=${thread.remoteThreadId} turn=${pendingTurn.turnId}`);
+        break;
+      }
       currentSnapshot = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
       this.emitTurnUpdate(thread, pendingTurn, currentSnapshot);
       if (!this.shouldDrainLateTurnUpdates(thread)) {
@@ -2683,11 +2829,11 @@ export class CodexBackend {
   }
 
   private applyTurnPollResult(thread: CodexThreadRecord, turnId: string, payload: Record<string, Object>): CodexTurnResult {
-    const hasStatus: boolean = typeof payload['status'] === 'string' && (payload['status'] as string).length > 0;
+    const hasStatus: boolean = this.hasTurnPollStatus(payload);
     if (!hasStatus) {
       this.logInfo(`turnPoll empty status payload thread=${thread.remoteThreadId} turn=${turnId} payload=${JSON.stringify(payload)}`);
     }
-    const statusRaw: string = hasStatus ? (payload['status'] as string) : 'inProgress';
+    const statusRaw: string = hasStatus ? (payload['status'] as string) : 'failed';
     const status: CodexTurnStatus = this.mapTurnStatus(statusRaw);
     const previousDiffStat: string = thread.diffStat;
     const previousChangedFiles: string = thread.changedFiles;
@@ -2737,8 +2883,12 @@ export class CodexBackend {
     thread.changedFiles = this.normalizeChangedFilesText(thread.changedFiles, diffText.trim().length > 0);
     const summaryRaw: Object[] = Array.isArray(payload['summary']) ? (payload['summary'] as Object[]) : [];
     const summaryPoints: string[] = summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item));
-    thread.summaryTitle = typeof payload['summaryTitle'] === 'string' ? (payload['summaryTitle'] as string) : (status === 'completed' ? '本轮已完成' : '执行中');
-    thread.summaryPoints = summaryPoints.length > 0 ? summaryPoints : [status === 'completed' ? '本轮执行已结束。' : '等待更多轮询结果。'];
+    thread.summaryTitle = typeof payload['summaryTitle'] === 'string'
+      ? (payload['summaryTitle'] as string)
+      : (status === 'completed' ? '本轮已完成' : (status === 'failed' ? '本轮失败' : '执行中'));
+    thread.summaryPoints = summaryPoints.length > 0
+      ? summaryPoints
+      : [status === 'completed' ? '本轮执行已结束。' : (status === 'failed' ? '未收到有效轮询结果。' : '等待更多轮询结果。')];
     this.applyTokenUsagePayload(thread, payload['tokenUsage']);
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();
