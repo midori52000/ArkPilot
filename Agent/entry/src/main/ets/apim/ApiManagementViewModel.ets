@@ -329,7 +329,8 @@ export class ApiManagementViewModel {
       src.icon, src.iconColor,
       src.endpoints,
       src.healthStatus, src.healthLatencyMs, src.lastValidatedAt,
-      src.usageScript, src.createdAt, src.contextWindow
+      src.usageScript, src.createdAt, src.contextWindow,
+      src.modelAutoCompactTokenLimit
     );
   }
 

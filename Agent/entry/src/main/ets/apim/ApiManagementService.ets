@@ -155,7 +155,8 @@ function loadProvidersFromStore(): ProviderRecord[] {
       'apiKey', [], def.wireApi as ApiWireFormat,
       'custom', '', '', '', '',
       [], 'unknown', 0, 0, null, Date.now(),
-      def.contextWindow
+      def.contextWindow,
+      def.modelAutoCompactTokenLimit
     ));
   }
   return providers;
@@ -169,7 +170,8 @@ function saveProvidersToStore(providers: ProviderRecord[]): void {
     defs.push(new ProviderDefinition(
       rec.id, rec.name, rec.baseUrl, rec.model,
       rec.wireApi, rec.isActive, rec.appType, rec.mode,
-      rec.syncStatus, rec.updatedAt, rec.contextWindow
+      rec.syncStatus, rec.updatedAt, rec.contextWindow,
+      rec.modelAutoCompactTokenLimit
     ));
     creds.set(rec.id, rec.apiKey);
   }
@@ -292,11 +294,17 @@ export class ApiManagementService {
 
     try {
       const saved: CodexProviderConfig = saveEmbeddedCodexProviderConfig(
-        target.baseUrl, target.apiKey, target.model
+        target.baseUrl,
+        target.apiKey,
+        target.model,
+        target.contextWindow,
+        target.modelAutoCompactTokenLimit
       );
       target.baseUrl = saved.baseUrl;
       target.apiKey = saved.apiKey;
       target.model = saved.model;
+      target.contextWindow = saved.contextWindow;
+      target.modelAutoCompactTokenLimit = saved.modelAutoCompactTokenLimit;
       target.syncStatus = 'synced';
     } catch (e) {
       target.syncStatus = 'error';
@@ -797,7 +805,8 @@ export class ApiManagementService {
         rec.category, rec.description, rec.websiteUrl,
         rec.icon, rec.iconColor, rec.endpoints,
         rec.healthStatus, rec.healthLatencyMs, rec.lastValidatedAt,
-        rec.usageScript, rec.createdAt, rec.contextWindow
+        rec.usageScript, rec.createdAt, rec.contextWindow,
+        rec.modelAutoCompactTokenLimit
       ));
     }
     const exportDoc: ProviderExportDoc = new ProviderExportDoc();
@@ -819,6 +828,8 @@ export class ApiManagementService {
       const baseUrl = raw.baseUrl;
       const apiKey = raw.apiKey;
       const model = raw.model;
+      const contextWindow = raw.contextWindow ?? 0;
+      const modelAutoCompactTokenLimit = raw.modelAutoCompactTokenLimit ?? 0;
 
       let duplicateFound = false;
       for (let j = 0; j < existing.length; j++) {
@@ -837,7 +848,7 @@ export class ApiManagementService {
         'apiKey', [], 'responses',
         'custom', '', '', '', '',
         [], 'unknown', 0, 0,
-        null, Date.now()
+        null, Date.now(), contextWindow, modelAutoCompactTokenLimit
       );
 
       existing.push(provider);

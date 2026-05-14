@@ -56,7 +56,8 @@ function cloneProvider(provider: ProviderRecord): ProviderRecord {
     provider.category, provider.description, provider.websiteUrl,
     provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
     provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-    provider.usageScript, provider.createdAt, provider.contextWindow
+    provider.usageScript, provider.createdAt, provider.contextWindow,
+    provider.modelAutoCompactTokenLimit
   );
 }
 
@@ -82,7 +83,9 @@ function buildRecordFromConfig(id: string, name: string, config: CodexProviderCo
     config.baseUrl.trim(), config.apiKey, config.model.trim(),
     isActive, 'synced', currentTimestamp(),
     'apiKey', emptyHeaders(), 'responses', 'custom', '', '', '', '',
-    emptyEndpoints(), 'unknown', 0, 0, null, Date.now()
+    emptyEndpoints(), 'unknown', 0, 0, null, Date.now(),
+    config.contextWindow,
+    config.modelAutoCompactTokenLimit
   );
 }
 
@@ -101,7 +104,9 @@ function defsAndCredsToCatalog(
       def.isActive, def.syncStatus as ProviderSyncStatus, def.updatedAt,
       'apiKey', emptyHeaders(), def.wireApi as ApiWireFormat,
       'custom', '', '', '', '',
-      emptyEndpoints(), 'unknown', 0, 0, null, Date.now()
+      emptyEndpoints(), 'unknown', 0, 0, null, Date.now(),
+      def.contextWindow,
+      def.modelAutoCompactTokenLimit
     ));
   }
   return new ProviderCatalog(2, activeId, providers, currentTimestamp());
@@ -140,6 +145,8 @@ export class ProviderCatalogService {
         activeProvider.baseUrl = config.baseUrl.trim();
         activeProvider.apiKey = config.apiKey;
         activeProvider.model = config.model.trim();
+        activeProvider.contextWindow = config.contextWindow;
+        activeProvider.modelAutoCompactTokenLimit = config.modelAutoCompactTokenLimit;
         activeProvider.syncStatus = 'synced';
         activeProvider.updatedAt = currentTimestamp();
         console.info('[ProviderCatalogService] importCurrentProvider: calling persistCatalog (update path)');
@@ -192,7 +199,8 @@ export class ProviderCatalogService {
         provider.category, provider.description, provider.websiteUrl,
         provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
         provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-        provider.usageScript, provider.createdAt, provider.contextWindow
+        provider.usageScript, provider.createdAt, provider.contextWindow,
+        provider.modelAutoCompactTokenLimit
       ));
     }
     this.catalog.providers = newProviders;
@@ -222,7 +230,8 @@ export class ProviderCatalogService {
           provider.category, provider.description, provider.websiteUrl,
           provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
           provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-          provider.usageScript, provider.createdAt
+          provider.usageScript, provider.createdAt, provider.contextWindow,
+          provider.modelAutoCompactTokenLimit
         ));
       }
       this.catalog.providers = fixed;
@@ -236,6 +245,8 @@ export class ProviderCatalogService {
     let activatedBaseUrl: string = '';
     let activatedApiKey: string = '';
     let activatedModel: string = '';
+    let activatedContextWindow: number = 0;
+    let activatedModelAutoCompactTokenLimit: number = 0;
     const newProviders: ProviderRecord[] = [];
     for (let i = 0; i < this.catalog.providers.length; i++) {
       const provider = this.catalog.providers[i];
@@ -249,13 +260,16 @@ export class ProviderCatalogService {
         provider.category, provider.description, provider.websiteUrl,
         provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
         provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-        provider.usageScript, provider.createdAt, provider.contextWindow
+        provider.usageScript, provider.createdAt, provider.contextWindow,
+        provider.modelAutoCompactTokenLimit
       );
       if (isActive) {
         activatedId = next.id;
         activatedBaseUrl = next.baseUrl;
         activatedApiKey = next.apiKey;
         activatedModel = next.model;
+        activatedContextWindow = next.contextWindow;
+        activatedModelAutoCompactTokenLimit = next.modelAutoCompactTokenLimit;
       }
       newProviders.push(next);
     }
@@ -265,7 +279,9 @@ export class ProviderCatalogService {
       const saved: CodexProviderConfig = saveEmbeddedCodexProviderConfig(
         activatedBaseUrl,
         activatedApiKey,
-        activatedModel
+        activatedModel,
+        activatedContextWindow,
+        activatedModelAutoCompactTokenLimit
       );
       const afterActivate: ProviderRecord[] = [];
       for (let i = 0; i < this.catalog.providers.length; i++) {
@@ -310,7 +326,8 @@ export class ProviderCatalogService {
         provider.category, provider.description, provider.websiteUrl,
         provider.icon, provider.iconColor, cloneEndpoints(provider.endpoints),
         provider.healthStatus, provider.healthLatencyMs, provider.lastValidatedAt,
-        provider.usageScript, provider.createdAt, provider.contextWindow
+        provider.usageScript, provider.createdAt, provider.contextWindow,
+        provider.modelAutoCompactTokenLimit
       ));
     }
     return new ProviderCatalog(catalog.version, activeId, providers, catalog.updatedAt);
@@ -327,7 +344,8 @@ export class ProviderCatalogService {
       defs.push(new ProviderDefinition(
         rec.id, rec.name, rec.baseUrl, rec.model,
         rec.wireApi, rec.isActive, rec.appType, rec.mode,
-        rec.syncStatus, rec.updatedAt, rec.contextWindow
+        rec.syncStatus, rec.updatedAt, rec.contextWindow,
+        rec.modelAutoCompactTokenLimit
       ));
       creds.set(rec.id, rec.apiKey);
     }

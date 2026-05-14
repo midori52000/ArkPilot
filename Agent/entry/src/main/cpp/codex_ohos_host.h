@@ -12,7 +12,13 @@ int32_t codex_ohos_host_is_running(void);
 const char* codex_ohos_host_last_message(void);
 const char* codex_ohos_host_server_url(void);
 const char* codex_ohos_host_provider_config_json(const char* codex_home);
-int32_t codex_ohos_host_save_provider_config(const char* codex_home, const char* base_url, const char* api_key, const char* model);
+int32_t codex_ohos_host_save_provider_config(
+    const char* codex_home,
+    const char* base_url,
+    const char* api_key,
+    const char* model,
+    const char* context_window,
+    const char* model_auto_compact_token_limit);
 const char* codex_ohos_host_provider_catalog_json(const char* codex_home);
 int32_t codex_ohos_host_save_provider_catalog(const char* codex_home, const char* catalog_json);
 const char* codex_ohos_host_skills_registry_json(const char* codex_home);

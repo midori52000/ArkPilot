@@ -11,6 +11,7 @@ namespace {
 constexpr size_t MAX_HOME_ARG_LEN = 4096;
 constexpr size_t MAX_URL_ARG_LEN = 1024;
 constexpr size_t MAX_MODEL_ARG_LEN = 512;
+constexpr size_t MAX_NUMBER_ARG_LEN = 64;
 constexpr size_t MAX_API_KEY_ARG_LEN = 8192;
 constexpr size_t MAX_CATALOG_JSON_ARG_LEN = 65536;
 constexpr size_t MAX_REGISTRY_JSON_ARG_LEN = 65536;
@@ -30,7 +31,7 @@ struct BridgeApi {
     const char* (*last_message)(void) = nullptr;
     const char* (*server_url)(void) = nullptr;
     const char* (*provider_config_json)(const char*) = nullptr;
-    int32_t (*save_provider_config)(const char*, const char*, const char*, const char*) = nullptr;
+    int32_t (*save_provider_config)(const char*, const char*, const char*, const char*, const char*, const char*) = nullptr;
     const char* (*provider_catalog_json)(const char*) = nullptr;
     int32_t (*save_provider_catalog)(const char*, const char*) = nullptr;
     const char* (*skills_registry_json)(const char*) = nullptr;
@@ -371,15 +372,23 @@ napi_value GetProviderConfig(napi_env env, napi_callback_info info) {
 
 napi_value SaveProviderConfig(napi_env env, napi_callback_info info) {
     BridgeApi* api = nullptr; if (!AcquireBridgeApi(&api)) return ThrowLoadError(env);
-    size_t argc = 4; napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
+    size_t argc = 6; napi_value args[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    char codex_home[MAX_HOME_ARG_LEN], base_url[MAX_URL_ARG_LEN], api_key[MAX_API_KEY_ARG_LEN], model[MAX_MODEL_ARG_LEN];
-    codex_home[0] = '\0'; base_url[0] = '\0'; api_key[0] = '\0'; model[0] = '\0';
+    char codex_home[MAX_HOME_ARG_LEN], base_url[MAX_URL_ARG_LEN], api_key[MAX_API_KEY_ARG_LEN], model[MAX_MODEL_ARG_LEN], context_window[MAX_NUMBER_ARG_LEN], model_auto_compact_token_limit[MAX_NUMBER_ARG_LEN];
+    codex_home[0] = '\0'; base_url[0] = '\0'; api_key[0] = '\0'; model[0] = '\0'; context_window[0] = '\0'; model_auto_compact_token_limit[0] = '\0';
     if (argc >= 1 && !ReadOptionalUtf8(env, args[0], codex_home, sizeof(codex_home))) { return nullptr; }
     if (argc >= 2 && !ReadOptionalUtf8(env, args[1], base_url, sizeof(base_url))) { return nullptr; }
     if (argc >= 3 && !ReadOptionalUtf8(env, args[2], api_key, sizeof(api_key))) { return nullptr; }
     if (argc >= 4 && !ReadOptionalUtf8(env, args[3], model, sizeof(model))) { return nullptr; }
-    int32_t code = api->save_provider_config(codex_home[0] == '\0' ? nullptr : codex_home, base_url[0] == '\0' ? nullptr : base_url, api_key[0] == '\0' ? nullptr : api_key, model[0] == '\0' ? nullptr : model);
+    if (argc >= 5 && !ReadOptionalUtf8(env, args[4], context_window, sizeof(context_window))) { return nullptr; }
+    if (argc >= 6 && !ReadOptionalUtf8(env, args[5], model_auto_compact_token_limit, sizeof(model_auto_compact_token_limit))) { return nullptr; }
+    int32_t code = api->save_provider_config(
+        codex_home[0] == '\0' ? nullptr : codex_home,
+        base_url[0] == '\0' ? nullptr : base_url,
+        api_key[0] == '\0' ? nullptr : api_key,
+        model[0] == '\0' ? nullptr : model,
+        context_window[0] == '\0' ? nullptr : context_window,
+        model_auto_compact_token_limit[0] == '\0' ? nullptr : model_auto_compact_token_limit);
     if (code != 0) { napi_throw_error(env, nullptr, "Failed to save provider config."); return nullptr; }
     napi_value result = CreateUtf8String(env, api->provider_config_json(codex_home[0] == '\0' ? nullptr : codex_home));
     return result;

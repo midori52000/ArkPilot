@@ -31,6 +31,7 @@ import {
   turnInterruptNative,
   turnPollNative,
   turnPollAsyncNative,
+  turnEventsNative,
   turnStartNative,
   turnStartAsyncNative,
   fetchNativeTokenUsageAggregate
@@ -58,6 +59,8 @@ import {
   EndpointSpeedResult,
   UsageQueryResult
 } from '../apim/ApiTypes';
+import { CompactionDecisionInput, shouldStartCompaction } from './CompactionPolicy';
+import { providerCatalogService } from './ProviderCatalogService';
 import { apiManagementService } from '../apim/ApiManagementService';
 import {
   DiscoverableSkill,
@@ -83,15 +86,18 @@ type BackendListener = (snapshot: CodexBackendSnapshot) => void;
 const DEFAULT_SERVER_URL: string = 'native://entry';
 const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
-const TURN_POLL_INTERVAL_MS: number = 200; // 减少轮询间隔以提高响应速度
+const TURN_POLL_INTERVAL_MS: number = 200; // 事件轮询间隔
+const TURN_POLL_HEARTBEAT_INTERVAL_MS: number = 500;
 const TURN_POLL_TIMEOUT_MS: number = 300000; // 5 分钟轮询超时
 const TURN_STATUS_RECONCILE_INTERVAL_MS: number = 5000;
 const TURN_STATUS_RECONCILE_START_MS: number = 10000;
+const AUTO_COMPACTION_COOLDOWN_MS: number = 60000;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
 const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
 const UNRECOGNIZED_CHANGED_FILES_TEXT: string = '\u5c1a\u672a\u8bc6\u522b\u53d8\u66f4\u6587\u4ef6';
+const GENERIC_RUNNING_SUMMARY_TEXTS: string[] = ['ArkPilot \u6b63\u5728\u5904\u7406\u8bf7\u6c42', '\u7b49\u5f85\u66f4\u591a\u8f6e\u8be2\u7ed3\u679c', '\u672c\u8f6e\u6267\u884c\u5df2\u7ed3\u675f'];
 
 export type ConfigKind = 'provider' | 'skill';
 export type ConfigAction = 'list' | 'get' | 'add' | 'update' | 'remove' | 'enable' | 'disable' | 'setActive';
@@ -582,7 +588,8 @@ export class ConfigManagerFacade {
       provider.lastValidatedAt,
       usageScript,
       provider.createdAt,
-      provider.contextWindow
+      provider.contextWindow,
+      provider.modelAutoCompactTokenLimit
     );
   }
 
@@ -1105,10 +1112,12 @@ class PendingTurnState {
   listener?: CodexTurnUpdateHandler;
   completion: Promise<CodexTurnResult>;
   resolveCompletion: (result: CodexTurnResult) => void;
+  startingTotalTokens: number;
 
-  constructor(threadKey: string, listener?: CodexTurnUpdateHandler) {
+  constructor(threadKey: string, listener?: CodexTurnUpdateHandler, startingTotalTokens: number = -1) {
     this.threadKey = threadKey;
     this.listener = listener;
+    this.startingTotalTokens = startingTotalTokens;
     this.resolveCompletion = (_result: CodexTurnResult): void => {};
     this.completion = new Promise<CodexTurnResult>((resolve) => {
       this.resolveCompletion = resolve;
@@ -1149,7 +1158,11 @@ class CodexThreadRecord {
   turnCount: number = 0;
   diffUpdateCount: number = 0;
   lastTurnStatus: CodexTurnStatus = 'inProgress';
+  lastTurnId: string = '';
   tokenUsage: TurnTokenUsage | null = null;
+  lastCompactionAtMs: number = 0;
+  lastCompactionTurnId: string = '';
+  backendAutoCompactEnabled: boolean = false;
   updatedAt: string = '';
 
   constructor(localKey: string, title: string) {
@@ -1238,6 +1251,7 @@ export class CodexBackend {
 
   snapshot(): CodexBackendSnapshot {
     const activeThread: CodexThreadRecord | null = this.activeThreadRecord();
+    this.syncThreadBackendAutoCompactFlag(activeThread);
     const activeTokenUsage: TurnTokenUsage | null = activeThread?.tokenUsage ?? null;
     return new CodexBackendSnapshot(
       this.serverUrl,
@@ -1468,7 +1482,9 @@ export class CodexBackend {
 
   async loadThreadHistory(threadId: string): Promise<CodexTurnResult> {
     const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(threadId);
-    await this.hydrateThreadTokenUsage(snapshot.thread, snapshot.lastTurnId);
+    if (snapshot.thread.tokenUsage === null) {
+      await this.hydrateThreadTokenUsage(snapshot.thread, snapshot.lastTurnId);
+    }
     this.activeThreadId = snapshot.thread.remoteThreadId;
     this.notifyListeners();
     return this.snapshotForThread(snapshot.thread, snapshot.thread.lastTurnStatus, snapshot.lastTurnId);
@@ -1613,7 +1629,8 @@ export class CodexBackend {
     }
     const thread: CodexThreadRecord = await this.ensureRemoteThread(request);
     this.activeThreadId = thread.remoteThreadId;
-    const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate);
+    const startingTotalTokens: number = thread.tokenUsage?.total.totalTokens ?? -1;
+    const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate, startingTotalTokens);
     thread.activeTurn = pendingTurn;
     const workspace: WorkspaceDescriptor = this.bindWorkspaceToThread(thread, request);
 
@@ -1681,7 +1698,7 @@ export class CodexBackend {
 
   private lastCompactError: string = '';
 
-  async compactThread(threadId: string, timeoutMs: number = 30000): Promise<void> {
+  async compactThread(threadId: string, timeoutMs: number = TURN_POLL_TIMEOUT_MS): Promise<void> {
     this.lastCompactError = '';
     const normalizedThreadId: string = this.normalizeThreadId(threadId);
     if (normalizedThreadId.length === 0) {
@@ -1695,20 +1712,19 @@ export class CodexBackend {
       this.failCompaction(message, normalizedThreadId);
       throw new Error(message);
     }
+    if (thread.activeTurn !== null) {
+      const message: string = '当前 turn 尚未结束，暂不允许压缩。';
+      this.failCompaction(message, thread.remoteThreadId);
+      throw new Error(message);
+    }
     try {
+      await this.resumeThread(thread);
       this.activeThreadId = thread.remoteThreadId;
       const baseline: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
-      await this.hydrateThreadTokenUsage(thread, baseline.lastTurnId);
-      this.compactionState.threadId = thread.remoteThreadId;
-      this.compactionState.baselineTurnId = baseline.lastTurnId;
-      this.compactionState.turnId = '';
-      this.compactionState.oldTotalTokens = thread.tokenUsage?.total.totalTokens ?? 0;
-      this.compactionState.newTotalTokens = 0;
-      this.compactionState.status = 'starting';
-      this.compactionState.errorMessage = '';
-      this.compactionState.savedTokens = 0;
-      this.compactionState.observedReduction = false;
-      this.notifyListeners();
+      if (thread.tokenUsage === null) {
+        await this.hydrateThreadTokenUsage(thread, baseline.lastTurnId);
+      }
+      const oldTotalTokens: number = thread.tokenUsage?.total.totalTokens ?? 0;
       const resp = parseJsonText(
         compactStartNative(JSON.stringify({ threadId: thread.remoteThreadId })),
         new Object() as Object
@@ -1721,6 +1737,17 @@ export class CodexBackend {
         this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
         throw new Error(msg);
       }
+      thread.lastCompactionAtMs = Date.now();
+      this.compactionState.threadId = thread.remoteThreadId;
+      this.compactionState.baselineTurnId = baseline.lastTurnId;
+      this.compactionState.turnId = '';
+      this.compactionState.oldTotalTokens = oldTotalTokens;
+      this.compactionState.newTotalTokens = 0;
+      this.compactionState.status = 'starting';
+      this.compactionState.errorMessage = '';
+      this.compactionState.savedTokens = 0;
+      this.compactionState.observedReduction = false;
+      this.notifyListeners();
       this.logInfo(`compact triggered: threadId=${thread.remoteThreadId}`);
       await this.pollCompactionUntilCompleted(thread, baseline.lastTurnId, timeoutMs);
     } catch (err) {
@@ -1753,6 +1780,58 @@ export class CodexBackend {
       return null;
     }
     return this.threads.get(this.activeThreadId) ?? null;
+  }
+
+  private resolveBackendAutoCompactEnabled(): boolean {
+    const activeProvider: ProviderRecord | null = providerCatalogService.activeProvider();
+    if (activeProvider !== null) {
+      return activeProvider.modelAutoCompactTokenLimit > 0;
+    }
+    try {
+      const providers: ProviderRecord[] = apiManagementService.getProviders();
+      for (let i = 0; i < providers.length; i++) {
+        if (providers[i].isActive) {
+          return providers[i].modelAutoCompactTokenLimit > 0;
+        }
+      }
+    } catch (_err) {
+    }
+    return false;
+  }
+
+  private syncThreadBackendAutoCompactFlag(thread: CodexThreadRecord | null): boolean {
+    const enabled: boolean = this.resolveBackendAutoCompactEnabled();
+    if (thread !== null) {
+      thread.backendAutoCompactEnabled = enabled;
+    }
+    return enabled;
+  }
+
+  shouldStartFallbackCompaction(threadId: string = ''): boolean {
+    const normalizedThreadId: string = this.normalizeThreadId(threadId);
+    const thread: CodexThreadRecord | null = normalizedThreadId.length > 0
+      ? (this.threads.get(normalizedThreadId) ?? null)
+      : this.activeThreadRecord();
+    if (thread === null || thread.remoteThreadId.trim().length === 0) {
+      return false;
+    }
+    if (this.compactionState.threadId === thread.remoteThreadId &&
+        (this.compactionState.status === 'starting' || this.compactionState.status === 'running')) {
+      return false;
+    }
+    const backendAutoCompactEnabled: boolean = this.syncThreadBackendAutoCompactFlag(thread);
+    const input: CompactionDecisionInput = {
+      contextRemainingPercent: thread.tokenUsage?.contextRemainingPercent ?? -1,
+      hasTokenUsage: thread.tokenUsage !== null,
+      activeTurnId: thread.activeTurn?.turnId ?? '',
+      currentTurnId: thread.lastTurnId,
+      lastCompactionTurnId: thread.lastCompactionTurnId,
+      cooldownMs: AUTO_COMPACTION_COOLDOWN_MS,
+      lastCompactionAtMs: thread.lastCompactionAtMs,
+      nowMs: Date.now(),
+      backendAutoCompactEnabled,
+    };
+    return shouldStartCompaction(input);
   }
 
   private normalizeThreadId(threadId: string): string {
@@ -1831,6 +1910,21 @@ export class CodexBackend {
     this.compactionState.savedTokens = saved > 0 ? saved : 0;
     this.lastCompactError = '';
     this.notifyListeners();
+  }
+
+  private resolveCompactionFailureMessage(result: CodexTurnResult): string {
+    for (let index: number = 0; index < result.summaryPoints.length; index += 1) {
+      const candidate: string = result.summaryPoints[index].trim();
+      if (candidate.length === 0) {
+        continue;
+      }
+      const normalized: string = candidate.replace(/[。.!！]+$/u, '');
+      if (GENERIC_RUNNING_SUMMARY_TEXTS.indexOf(normalized) >= 0) {
+        continue;
+      }
+      return candidate;
+    }
+    return '压缩失败';
   }
 
   private async readThreadSnapshot(threadId: string): Promise<ThreadReadSnapshotPayload> {
@@ -1925,6 +2019,7 @@ export class CodexBackend {
         if (snapshot.lastTurnId.trim().length > 0 && snapshot.lastTurnId !== baselineTurnId) {
           const snapshotStatus: CodexTurnStatus = this.mapTurnStatus(snapshot.lastTurnStatus);
           this.compactionState.turnId = snapshot.lastTurnId;
+          thread.lastCompactionTurnId = snapshot.lastTurnId;
           if (snapshotStatus === 'completed') {
             await this.drainCompactionTokenUsage(thread);
             this.completeCompaction(thread);
@@ -1948,8 +2043,8 @@ export class CodexBackend {
           await turnPollAsyncNative(thread.remoteThreadId, this.compactionState.turnId),
           new TurnPollResponsePayload() as Object
         ) as Record<string, Object>;
-        this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} ${this.turnPollLogSummary(pollObject)}`);
         const result: CodexTurnResult = this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
+        this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} resultStatus=${result.status} ${this.turnPollLogSummary(pollObject)}`);
         if (this.compactionState.observedReduction) {
           this.completeCompaction(thread);
           return;
@@ -1960,7 +2055,7 @@ export class CodexBackend {
             this.completeCompaction(thread);
             return;
           }
-          this.failCompaction(result.summaryPoints[0] ?? '压缩失败', thread.remoteThreadId);
+          this.failCompaction(this.resolveCompactionFailureMessage(result), thread.remoteThreadId);
           return;
         }
         if (this.compactionState.status !== 'running') {
@@ -1974,6 +2069,9 @@ export class CodexBackend {
         }
       }
       await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
+    }
+    if (this.compactionState.turnId.trim().length > 0) {
+      turnInterruptNative(thread.remoteThreadId, this.compactionState.turnId);
     }
     this.failCompaction('压缩超时', thread.remoteThreadId, 'timeout');
     throw new Error('压缩超时');
@@ -2221,7 +2319,7 @@ export class CodexBackend {
       existing.title = request.title;
       this.bindWorkspaceToThread(existing, request);
       try {
-        await this.resumeThread(existing, request);
+        await this.resumeThread(existing, request.model);
         return existing;
       } catch (resumeErr) {
         this.logInfo(`thread stale on server, recreating: ${existing.remoteThreadId} err=${resumeErr}`);
@@ -2351,12 +2449,12 @@ export class CodexBackend {
     );
   }
 
-  private async resumeThread(thread: CodexThreadRecord, request: CodexTurnRequest): Promise<void> {
+  private async resumeThread(thread: CodexThreadRecord, model: string = 'default'): Promise<void> {
     const workspace: WorkspaceDescriptor = this.workspaceDescriptorForThread(thread);
     const resumeRequest: ThreadResumeRequestPayload = new ThreadResumeRequestPayload();
     resumeRequest.threadId = thread.remoteThreadId;
     resumeRequest.cwd = workspace.rootPath.trim().length > 0 ? workspace.rootPath.trim() : undefined;
-    resumeRequest.model = request.model !== 'default' ? request.model : undefined;
+    resumeRequest.model = model !== 'default' ? model : undefined;
     const payload: Record<string, Object> = parseJsonText(
       await threadResumeAsyncNative(JSON.stringify(resumeRequest)),
       new Object() as Object
@@ -2401,6 +2499,7 @@ export class CodexBackend {
       const preview: string = typeof payload['preview'] === 'string' ? (payload['preview'] as string) : '';
       thread.summaryPoints = [preview.trim().length > 0 ? preview : '会话元信息已从 app-server 恢复。'];
     }
+    this.syncThreadBackendAutoCompactFlag(thread);
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
   }
@@ -2456,12 +2555,15 @@ export class CodexBackend {
     thread.summaryPoints = summaryRaw.length > 0
       ? summaryRaw.map((item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item))
       : ['历史会话已从 app-server 恢复。'];
+    thread.lastTurnId = typeof payload['lastTurnId'] === 'string' ? (payload['lastTurnId'] as string) : '';
     thread.lastTurnStatus = this.mapTurnStatus(
       typeof payload['lastTurnStatus'] === 'string' ? (payload['lastTurnStatus'] as string) : 'completed'
     );
+    this.applyTokenUsagePayload(thread, payload['tokenUsage']);
     if (thread.tokenUsage === null && previousTokenUsage !== null) {
       thread.tokenUsage = previousTokenUsage;
     }
+    this.syncThreadBackendAutoCompactFlag(thread);
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
     return thread;
@@ -2577,6 +2679,7 @@ export class CodexBackend {
     const startedAt: number = Date.now();
     const deadline: number = startedAt + TURN_POLL_TIMEOUT_MS;
     let nextReconcileAt: number = startedAt + TURN_STATUS_RECONCILE_START_MS;
+    let lastHeartbeatPollAt: number = 0;
     while (true) {
       if (pendingTurn.cancelled) {
         thread.lastTurnStatus = 'interrupted';
@@ -2598,49 +2701,55 @@ export class CodexBackend {
         pendingTurn.resolveCompletion(timeoutSnapshot);
         return timeoutSnapshot;
       }
-      const pollObject: Record<string, Object> = parseJsonText(await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
-      this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} ${this.turnPollLogSummary(pollObject)}`);
-      if (this.shouldRecoverFromPollPayload(pollObject)) {
-        const recoveredSnapshot: CodexTurnResult | null = await this.recoverTurnFromThreadHistory(thread, pendingTurn, pollObject);
-        if (recoveredSnapshot !== null) {
-          this.emitTurnUpdate(thread, pendingTurn, recoveredSnapshot);
-          thread.activeTurn = null;
-          pendingTurn.resolveCompletion(recoveredSnapshot);
-          return recoveredSnapshot;
+      const eventPayload: Object[] = parseJsonText(
+        turnEventsNative(thread.remoteThreadId, pendingTurn.turnId),
+        [] as Object
+      ) as Object[];
+      if (eventPayload.length > 0) {
+        this.logInfo(`turnEvents thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} count=${eventPayload.length}`);
+        const nextSnapshot: CodexTurnResult = this.applyTurnEventBatch(thread, pendingTurn.turnId, eventPayload);
+        this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
+        if (nextSnapshot.status !== 'inProgress') {
+          return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, nextSnapshot);
         }
-        const failedSnapshot: CodexTurnResult = this.buildTurnFailureSnapshot(
-          thread,
-          pendingTurn.turnId,
-          this.turnPollFailureTitle(pollObject),
-          this.turnPollFailureMessage(pollObject)
-        );
-        this.emitTurnUpdate(thread, pendingTurn, failedSnapshot);
-        thread.activeTurn = null;
-        pendingTurn.resolveCompletion(failedSnapshot);
-        return failedSnapshot;
       }
-      const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
-      this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
-      if (nextSnapshot.status !== 'inProgress') {
-        let finalSnapshot: CodexTurnResult = nextSnapshot;
-        if (this.shouldDrainLateTurnUpdates(thread)) {
-          finalSnapshot = await this.drainLateTurnUpdates(thread, pendingTurn, finalSnapshot);
+      const now: number = Date.now();
+      if ((now - lastHeartbeatPollAt) >= TURN_POLL_HEARTBEAT_INTERVAL_MS) {
+        lastHeartbeatPollAt = now;
+        const pollObject: Record<string, Object> = parseJsonText(
+          await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId),
+          new TurnPollResponsePayload() as Object
+        ) as Record<string, Object>;
+        this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} ${this.turnPollLogSummary(pollObject)}`);
+        if (this.shouldRecoverFromPollPayload(pollObject)) {
+          const recoveredSnapshot: CodexTurnResult | null = await this.recoverTurnFromThreadHistory(thread, pendingTurn, pollObject);
+          if (recoveredSnapshot !== null) {
+            this.emitTurnUpdate(thread, pendingTurn, recoveredSnapshot);
+            return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, recoveredSnapshot);
+          }
+          const failedSnapshot: CodexTurnResult = this.buildTurnFailureSnapshot(
+            thread,
+            pendingTurn.turnId,
+            this.turnPollFailureTitle(pollObject),
+            this.turnPollFailureMessage(pollObject)
+          );
+          this.emitTurnUpdate(thread, pendingTurn, failedSnapshot);
+          thread.activeTurn = null;
+          pendingTurn.resolveCompletion(failedSnapshot);
+          return failedSnapshot;
         }
-        if (this.shouldDrainLateTurnUpdates(thread)) {
-          finalSnapshot = await this.recoverDiffFromThreadHistory(thread, pendingTurn, finalSnapshot);
+        const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
+        this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
+        if (nextSnapshot.status !== 'inProgress') {
+          return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, nextSnapshot);
         }
-        thread.activeTurn = null;
-        pendingTurn.resolveCompletion(finalSnapshot);
-        return finalSnapshot;
       }
       if (Date.now() >= nextReconcileAt) {
         const reconciledSnapshot: CodexTurnResult | null = await this.reconcileInProgressTurnFromThreadHistory(thread, pendingTurn);
         nextReconcileAt = Date.now() + TURN_STATUS_RECONCILE_INTERVAL_MS;
         if (reconciledSnapshot !== null) {
           this.emitTurnUpdate(thread, pendingTurn, reconciledSnapshot);
-          thread.activeTurn = null;
-          pendingTurn.resolveCompletion(reconciledSnapshot);
-          return reconciledSnapshot;
+          return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, reconciledSnapshot);
         }
       }
       await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
@@ -2756,7 +2865,7 @@ export class CodexBackend {
       const recoveredStatus: CodexTurnStatus = this.mapTurnStatus(snapshot.lastTurnStatus);
       if (recoveredStatus === 'inProgress') {
         this.logInfo(
-          `threadRead turn recovery skipped thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} reason=stillInProgress payload=${JSON.stringify(payload)}`
+          `threadRead turn recovery skipped thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} reason=stillInProgress ${this.turnPollLogSummary(payload)}`
         );
         return null;
       }
@@ -2772,8 +2881,38 @@ export class CodexBackend {
     }
   }
 
+  private async finalizeTerminalTurnSnapshot(
+    thread: CodexThreadRecord,
+    pendingTurn: PendingTurnState,
+    snapshot: CodexTurnResult
+  ): Promise<CodexTurnResult> {
+    let finalSnapshot: CodexTurnResult = snapshot;
+    if (this.shouldDrainLateTurnUpdates(thread)) {
+      finalSnapshot = await this.drainLateTurnUpdates(thread, pendingTurn, finalSnapshot);
+    }
+    if (this.shouldDrainLateTokenUsage(thread, pendingTurn)) {
+      finalSnapshot = await this.drainLateTokenUsage(thread, pendingTurn, finalSnapshot);
+    }
+    if (this.shouldDrainLateTurnUpdates(thread)) {
+      finalSnapshot = await this.recoverDiffFromThreadHistory(thread, pendingTurn, finalSnapshot);
+    }
+    thread.activeTurn = null;
+    pendingTurn.resolveCompletion(finalSnapshot);
+    return finalSnapshot;
+  }
+
   private shouldDrainLateTurnUpdates(thread: CodexThreadRecord): boolean {
     return thread.diffLines.length === 0 || thread.diffStat === '+0 -0';
+  }
+
+  private shouldDrainLateTokenUsage(thread: CodexThreadRecord, pendingTurn: PendingTurnState): boolean {
+    if (thread.tokenUsage === null) {
+      return true;
+    }
+    if (pendingTurn.startingTotalTokens < 0) {
+      return false;
+    }
+    return thread.tokenUsage.total.totalTokens <= pendingTurn.startingTotalTokens;
   }
 
   private async drainLateTurnUpdates(
@@ -2794,8 +2933,36 @@ export class CodexBackend {
         break;
       }
       currentSnapshot = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
+      this.logInfo(`turnPoll drain applied thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} status=${currentSnapshot.status} messageCount=${thread.messages.length}`);
       this.emitTurnUpdate(thread, pendingTurn, currentSnapshot);
       if (!this.shouldDrainLateTurnUpdates(thread)) {
+        break;
+      }
+    }
+    return currentSnapshot;
+  }
+
+  private async drainLateTokenUsage(
+    thread: CodexThreadRecord,
+    pendingTurn: PendingTurnState,
+    snapshot: CodexTurnResult
+  ): Promise<CodexTurnResult> {
+    let currentSnapshot: CodexTurnResult = snapshot;
+    for (let attempt: number = 0; attempt < TERMINAL_TURN_DRAIN_ATTEMPTS; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, TERMINAL_TURN_DRAIN_INTERVAL_MS));
+      const pollObject: Record<string, Object> = parseJsonText(
+        await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId),
+        new TurnPollResponsePayload() as Object
+      ) as Record<string, Object>;
+      this.logInfo(`turnPoll tokenUsage drain thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} ${this.turnPollLogSummary(pollObject)}`);
+      if (this.shouldRecoverFromPollPayload(pollObject)) {
+        this.logInfo(`turnPoll tokenUsage drain skipped invalid payload thread=${thread.remoteThreadId} turn=${pendingTurn.turnId}`);
+        break;
+      }
+      currentSnapshot = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
+      this.logInfo(`turnPoll tokenUsage drain applied thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} status=${currentSnapshot.status} totalTokens=${thread.tokenUsage?.total.totalTokens ?? -1}`);
+      this.emitTurnUpdate(thread, pendingTurn, currentSnapshot);
+      if (!this.shouldDrainLateTokenUsage(thread, pendingTurn)) {
         break;
       }
     }
@@ -2844,10 +3011,65 @@ export class CodexBackend {
     return currentSnapshot;
   }
 
+  private applyTurnEventBatch(thread: CodexThreadRecord, turnId: string, events: Object[]): CodexTurnResult {
+    for (let index: number = 0; index < events.length; index += 1) {
+      const event: Record<string, Object> = events[index] as Record<string, Object>;
+      const kind: string = typeof event['kind'] === 'string' ? (event['kind'] as string) : '';
+      if (kind === 'status') {
+        const statusRaw: string = typeof event['status'] === 'string' ? (event['status'] as string) : `${thread.lastTurnStatus}`;
+        const summaryTitleRaw: string = typeof event['summaryTitle'] === 'string'
+          ? (event['summaryTitle'] as string)
+          : (typeof event['summary_title'] === 'string' ? (event['summary_title'] as string) : '');
+        thread.lastTurnStatus = this.mapTurnStatus(statusRaw);
+        if (summaryTitleRaw.trim().length > 0) {
+          thread.summaryTitle = summaryTitleRaw;
+        }
+        continue;
+      }
+      if (kind === 'summaryLine') {
+        const line: string = typeof event['line'] === 'string' ? (event['line'] as string).trim() : '';
+        if (line.length > 0) {
+          const previousLine: string = thread.summaryPoints.length > 0 ? thread.summaryPoints[thread.summaryPoints.length - 1] : '';
+          if (previousLine !== line) {
+            thread.summaryPoints = [...thread.summaryPoints, line];
+            if (thread.summaryPoints.length > 12) {
+              thread.summaryPoints = thread.summaryPoints.slice(thread.summaryPoints.length - 12);
+            }
+          }
+        }
+        continue;
+      }
+      if (kind === 'messageSnapshot') {
+        const messagesRaw: Object[] = Array.isArray(event['messages']) ? (event['messages'] as Object[]) : [];
+        thread.messages = this.mergeThreadMessages(thread.messages, this.messagesFromPayload(messagesRaw));
+        continue;
+      }
+      if (kind === 'diffSnapshot') {
+        const diffText: string = typeof event['diff'] === 'string' ? (event['diff'] as string) : '';
+        if (diffText.trim().length > 0) {
+          const parsedDiff: ParsedDiff = this.parseUnifiedDiff(diffText);
+          thread.diffLines = parsedDiff.lines;
+          thread.diffStat = parsedDiff.diffStat;
+          thread.changedFiles = this.normalizeChangedFilesText(parsedDiff.changedFiles, true);
+        }
+        continue;
+      }
+      if (kind === 'tokenUsage') {
+        const tokenUsagePayload: Object | undefined = event['tokenUsage'] !== undefined
+          ? (event['tokenUsage'] as Object)
+          : (event['token_usage'] as Object | undefined);
+        this.applyTokenUsagePayload(thread, tokenUsagePayload);
+      }
+    }
+    thread.lastTurnId = turnId;
+    thread.updatedAt = currentThreadTimestamp();
+    return this.snapshotForThread(thread, thread.lastTurnStatus, turnId);
+  }
+
   private applyTurnPollResult(thread: CodexThreadRecord, turnId: string, payload: Record<string, Object>): CodexTurnResult {
     const hasStatus: boolean = this.hasTurnPollStatus(payload);
     if (!hasStatus) {
-      this.logInfo(`turnPoll empty status payload thread=${thread.remoteThreadId} turn=${turnId} payload=${JSON.stringify(payload)}`);
+      this.logInfo(`turnPoll empty status payload thread=${thread.remoteThreadId} turn=${turnId} ${this.turnPollLogSummary(payload)}`);
     }
     const statusRaw: string = hasStatus ? (payload['status'] as string) : 'failed';
     const status: CodexTurnStatus = this.mapTurnStatus(statusRaw);
@@ -2905,6 +3127,7 @@ export class CodexBackend {
     thread.summaryPoints = summaryPoints.length > 0
       ? summaryPoints
       : [status === 'completed' ? '本轮执行已结束。' : (status === 'failed' ? '未收到有效轮询结果。' : '等待更多轮询结果。')];
+    thread.lastTurnId = turnId;
     this.applyTokenUsagePayload(thread, payload['tokenUsage']);
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();

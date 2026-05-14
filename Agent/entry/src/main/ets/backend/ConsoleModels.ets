@@ -119,6 +119,7 @@ export class ProviderRecord {
   usageScript: UsageScriptEntry | null;
   createdAt: number;
   contextWindow: number;
+  modelAutoCompactTokenLimit: number;
 
   constructor(
     id: string,
@@ -145,7 +146,8 @@ export class ProviderRecord {
     lastValidatedAt?: number,
     usageScript?: UsageScriptEntry | null,
     createdAt?: number,
-    contextWindow?: number
+    contextWindow?: number,
+    modelAutoCompactTokenLimit?: number
   ) {
     this.id = id;
     this.name = name;
@@ -172,6 +174,7 @@ export class ProviderRecord {
     this.usageScript = usageScript ?? null;
     this.createdAt = createdAt ?? Date.now();
     this.contextWindow = contextWindow ?? 0;
+    this.modelAutoCompactTokenLimit = modelAutoCompactTokenLimit ?? 0;
   }
 
   getHeaderValue(key: string): string {
@@ -229,11 +232,13 @@ export class ProviderDefinition {
   syncStatus: string;
   updatedAt: string;
   contextWindow: number;
+  modelAutoCompactTokenLimit: number;
 
   constructor(
     id: string, name: string, baseUrl: string, model: string,
     wireApi: string, isActive: boolean, appType: string, mode: string,
-    syncStatus: string, updatedAt: string, contextWindow: number = 0
+    syncStatus: string, updatedAt: string, contextWindow: number = 0,
+    modelAutoCompactTokenLimit: number = 0
   ) {
     this.id = id;
     this.name = name;
@@ -246,6 +251,7 @@ export class ProviderDefinition {
     this.syncStatus = syncStatus;
     this.updatedAt = updatedAt;
     this.contextWindow = contextWindow;
+    this.modelAutoCompactTokenLimit = modelAutoCompactTokenLimit;
   }
 }
 
