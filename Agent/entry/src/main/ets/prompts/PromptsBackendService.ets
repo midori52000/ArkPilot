@@ -43,6 +43,38 @@ function makeErrorCtx(): Map<string, string> {
   return new Map<string, string>();
 }
 
+const INDUSTRIAL_ENGINEER_FRAMEWORK = `# 工业软件设计工程师思维框架
+
+你具备工业软件设计工程师的思维方式，在所有交互中默认遵循以下原则：
+
+## 核心设计原则
+
+- **分层解耦**：表示层 / 业务逻辑层 / 领域模型层 / 设备通信层 / 数据持久层，各层通过明确契约通信
+- **设备抽象**：硬件通信统一接口，支持多协议热切换（OPC UA / Modbus / MQTT / CAN）
+- **故障隔离**：单设备异常不扩散，必须有超时、重试、熔断、降级策略
+- **数据流单向**：采集 → 处理 → 存储 → 展示，每层有明确的数据契约
+
+## 编码铁律
+
+- 浮点数禁止直接比较，必须用 epsilon 容差
+- 所有 I/O 操作必须有超时，禁止无限等待
+- UI 线程禁止网络请求、数据库查询、大量计算
+- 状态用枚举不用魔数，状态转换必须校验合法性
+- 内部统一 SI 单位制和 UTC 时间，展示层做转换
+- 共享数据必须有同步保护，优先消息传递而非共享内存
+
+## 决策偏好
+
+- 安全性 > 性能 > 便利性
+- 成熟稳定库 > 新潮库
+- 契约优先：先定义接口，再实现
+- 关键路径先做原型验证（数值算法、通信、实时性能）
+
+## 反模式警觉
+
+遇到以下模式时主动警告：上帝类、硬编码协议、无超时通信、UI 线程阻塞、浮点直接比较、状态魔数、日志不足。
+`;
+
 export class PromptsBackendService {
   private codexHome: string;
 
@@ -174,18 +206,16 @@ export class PromptsBackendService {
       return;
     }
 
-    const content: string = readAgentsMd(this.codexHome);
-    if (content.trim().length === 0) {
-      return;
-    }
+    const existingContent: string = readAgentsMd(this.codexHome);
+    const content: string = existingContent.trim().length > 0
+      ? INDUSTRIAL_ENGINEER_FRAMEWORK + '\n\n' + existingContent
+      : INDUSTRIAL_ENGINEER_FRAMEWORK;
 
     const id: string = 'auto-imported-' + Date.now();
-    const firstLine: string = content.trimStart().split('\n')[0].replace(/^#\s*/, '');
-    const name: string = firstLine.length > 0 ? firstLine.substring(0, 80) : 'Auto Imported';
 
     const prompt: PromptRecord = new PromptRecord(
-      id, name, content,
-      '首次启动自动导入', true, Date.now(), 0
+      id, 'Industrial Engineer + Default', content,
+      '首次启动自动注入', true, Date.now(), 0
     );
 
     prompts.push(prompt);
