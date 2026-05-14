@@ -3140,9 +3140,9 @@ export class CodexBackend {
     }
     const merged: CodexChatMessage[] = existing.map((message: CodexChatMessage) => this.cloneMessage(message));
     for (const message of incoming) {
-      const index: number = merged.findIndex((item: CodexChatMessage) => item.messageId === message.messageId);
+      const index: number = this.findMergeThreadMessageIndex(merged, message);
       if (index >= 0) {
-        merged[index] = this.cloneMessage(message);
+        merged[index] = this.mergeThreadMessage(merged[index], message);
       } else {
         merged.push(this.cloneMessage(message));
       }
@@ -3162,6 +3162,88 @@ export class CodexBackend {
       );
     }
     return merged;
+  }
+
+  private findMergeThreadMessageIndex(messages: CodexChatMessage[], incoming: CodexChatMessage): number {
+    for (let index: number = 0; index < messages.length; index += 1) {
+      if (messages[index].messageId === incoming.messageId) {
+        return index;
+      }
+    }
+    for (let index: number = 0; index < messages.length; index += 1) {
+      if (this.isSameThreadMessageAlias(messages[index], incoming)) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private isSameThreadMessageAlias(left: CodexChatMessage, right: CodexChatMessage): boolean {
+    if (left.role !== right.role) {
+      return false;
+    }
+    const leftHasTurnPrefix: boolean = left.messageId.indexOf(':') >= 0;
+    const rightHasTurnPrefix: boolean = right.messageId.indexOf(':') >= 0;
+    if (!leftHasTurnPrefix && !rightHasTurnPrefix) {
+      return false;
+    }
+    if (this.messageItemAlias(left.messageId) !== this.messageItemAlias(right.messageId)) {
+      return false;
+    }
+    return this.isMergeCompatibleMessageContent(left.content, right.content);
+  }
+
+  private messageItemAlias(messageId: string): string {
+    const separatorIndex: number = messageId.lastIndexOf(':');
+    return separatorIndex >= 0 ? messageId.substring(separatorIndex + 1) : messageId;
+  }
+
+  private isMergeCompatibleMessageContent(left: string, right: string): boolean {
+    if (left.trim().length === 0 || right.trim().length === 0) {
+      return true;
+    }
+    if (left.indexOf(right) >= 0 || right.indexOf(left) >= 0) {
+      return true;
+    }
+    return this.messageContentOverlapSize(left, right) > 0 || this.messageContentOverlapSize(right, left) > 0;
+  }
+
+  private mergeThreadMessage(existing: CodexChatMessage, incoming: CodexChatMessage): CodexChatMessage {
+    return new CodexChatMessage(
+      existing.messageId,
+      existing.sequence,
+      incoming.author.trim().length > 0 ? incoming.author : existing.author,
+      incoming.role,
+      this.mergeThreadMessageContent(existing.content, incoming.content),
+      existing.timestamp.trim().length > 0 ? existing.timestamp : incoming.timestamp,
+      incoming.itemType ?? existing.itemType,
+      incoming.status ?? existing.status,
+      incoming.metadata ?? existing.metadata
+    );
+  }
+
+  private mergeThreadMessageContent(existingContent: string, incomingContent: string): string {
+    if (existingContent.length === 0 || incomingContent.startsWith(existingContent)) {
+      return incomingContent;
+    }
+    if (incomingContent.length === 0 || existingContent.indexOf(incomingContent) >= 0) {
+      return existingContent;
+    }
+    const overlapSize: number = this.messageContentOverlapSize(existingContent, incomingContent);
+    if (overlapSize > 0) {
+      return `${existingContent}${incomingContent.substring(overlapSize)}`;
+    }
+    return incomingContent.length >= existingContent.length ? incomingContent : existingContent;
+  }
+
+  private messageContentOverlapSize(left: string, right: string): number {
+    const maxOverlap: number = Math.min(left.length, right.length);
+    for (let size: number = maxOverlap; size > 0; size -= 1) {
+      if (left.endsWith(right.substring(0, size))) {
+        return size;
+      }
+    }
+    return 0;
   }
 
   private buildCollaborationModePayload(mode: CollaborationModeOption | null, fallbackModel?: string, fallbackEffort?: string): CollaborationModePayload | undefined {

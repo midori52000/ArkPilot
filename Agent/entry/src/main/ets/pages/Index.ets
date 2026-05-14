@@ -2519,12 +2519,12 @@ struct Index {
       if (!this.isCurrentTurnAssistantOutput(item, index)) {
         return item;
       }
-      const existing: ChatMessage | undefined = this.messages.find((message: ChatMessage) => message.id === item.id);
+      const existing: ChatMessage | undefined = this.findStreamingDisplayMessage(item);
       if (existing === undefined) {
         return item;
       }
       const mergedContent: string = this.mergeStreamingMessageContent(existing.content, item.content);
-      if (mergedContent === item.content) {
+      if (mergedContent === item.content && existing.id === item.id) {
         return item;
       }
       return new ChatMessage(
@@ -2538,17 +2538,93 @@ struct Index {
         item.metadata
       );
     });
-    const mergedIds: string[] = merged.map((item: ChatMessage) => item.id);
     this.messages.forEach((existing: ChatMessage, index: number) => {
-      if (mergedIds.indexOf(existing.id) >= 0) {
+      if (!this.isCurrentTurnAssistantOutput(existing, index)) {
         return;
       }
-      if (this.isCurrentTurnAssistantOutput(existing, index)) {
-        const insertIndex: number = Math.min(index, merged.length);
-        merged.splice(insertIndex, 0, existing);
+      const mergeIndex: number = this.findStreamingDisplayMergeIndex(merged, existing);
+      if (mergeIndex >= 0) {
+        const incoming: ChatMessage = merged[mergeIndex];
+        const mergedContent: string = this.mergeStreamingMessageContent(existing.content, incoming.content);
+        if (mergedContent !== incoming.content) {
+          merged[mergeIndex] = new ChatMessage(
+            incoming.id,
+            incoming.author,
+            incoming.role,
+            mergedContent,
+            incoming.timestamp,
+            incoming.itemType,
+            incoming.status,
+            incoming.metadata
+          );
+        }
+        return;
       }
+      const insertIndex: number = Math.min(index, merged.length);
+      merged.splice(insertIndex, 0, existing);
     });
     return merged;
+  }
+
+  private findStreamingDisplayMessage(incoming: ChatMessage): ChatMessage | undefined {
+    const exact: ChatMessage | undefined = this.messages.find((message: ChatMessage) => message.id === incoming.id);
+    if (exact !== undefined) {
+      return exact;
+    }
+    const startIndex: number = this.currentTurnMessageStartIndex();
+    for (let index: number = startIndex; index < this.messages.length; index += 1) {
+      const existing: ChatMessage = this.messages[index];
+      if (this.isSameStreamingAssistantMessage(existing, incoming)) {
+        return existing;
+      }
+    }
+    return undefined;
+  }
+
+  private findStreamingDisplayMergeIndex(messages: ChatMessage[], existing: ChatMessage): number {
+    for (let index: number = 0; index < messages.length; index += 1) {
+      if (messages[index].id === existing.id) {
+        return index;
+      }
+    }
+    for (let index: number = 0; index < messages.length; index += 1) {
+      if (this.isSameStreamingAssistantMessage(existing, messages[index])) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private isSameStreamingAssistantMessage(left: ChatMessage, right: ChatMessage): boolean {
+    if (!this.isAssistantOutputMessage(left) || !this.isAssistantOutputMessage(right)) {
+      return false;
+    }
+    if (this.currentTurnId.trim().length > 0) {
+      const leftInTurn: boolean = left.id.startsWith(`${this.currentTurnId}:`);
+      const rightInTurn: boolean = right.id.startsWith(`${this.currentTurnId}:`);
+      if ((leftInTurn || rightInTurn) && this.isCompatibleStreamingMessageContent(left.content, right.content)) {
+        return true;
+      }
+    }
+    if (this.streamingMessageAlias(left.id) === this.streamingMessageAlias(right.id)) {
+      return this.isCompatibleStreamingMessageContent(left.content, right.content);
+    }
+    return false;
+  }
+
+  private streamingMessageAlias(messageId: string): string {
+    const separatorIndex: number = messageId.lastIndexOf(':');
+    return separatorIndex >= 0 ? messageId.substring(separatorIndex + 1) : messageId;
+  }
+
+  private isCompatibleStreamingMessageContent(left: string, right: string): boolean {
+    if (left.trim().length === 0 || right.trim().length === 0) {
+      return true;
+    }
+    if (left.indexOf(right) >= 0 || right.indexOf(left) >= 0) {
+      return true;
+    }
+    return this.streamingMessageContentOverlapSize(left, right) > 0 || this.streamingMessageContentOverlapSize(right, left) > 0;
   }
 
   private mergeStreamingMessageContent(existingContent: string, incomingContent: string): string {
@@ -2558,13 +2634,21 @@ struct Index {
     if (incomingContent.length === 0 || existingContent.indexOf(incomingContent) >= 0) {
       return existingContent;
     }
-    const maxOverlap: number = Math.min(existingContent.length, incomingContent.length);
+    const overlapSize: number = this.streamingMessageContentOverlapSize(existingContent, incomingContent);
+    if (overlapSize > 0) {
+      return `${existingContent}${incomingContent.substring(overlapSize)}`;
+    }
+    return incomingContent.length >= existingContent.length ? incomingContent : existingContent;
+  }
+
+  private streamingMessageContentOverlapSize(left: string, right: string): number {
+    const maxOverlap: number = Math.min(left.length, right.length);
     for (let size: number = maxOverlap; size > 0; size -= 1) {
-      if (existingContent.endsWith(incomingContent.substring(0, size))) {
-        return `${existingContent}${incomingContent.substring(size)}`;
+      if (left.endsWith(right.substring(0, size))) {
+        return size;
       }
     }
-    return `${existingContent}${incomingContent}`;
+    return 0;
   }
 
   private backendResultContainsPendingPrompt(result: CodexTurnResult): boolean {
@@ -2901,7 +2985,7 @@ struct Index {
     const type: string = item.itemType ?? item.role;
     const status: string = item.status ?? '';
     const metadataText: string = item.metadata !== undefined ? JSON.stringify(item.metadata) : '';
-    return `${item.id}:${type}:${status}:${item.content.length}:${metadataText.length}:${item.timestamp}`;
+    return `${item.id}:${type}:${status}:${metadataText.length}`;
   }
 
   private async connectOrDisconnect(): Promise<void> {
