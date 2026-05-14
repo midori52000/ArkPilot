@@ -44,6 +44,7 @@ const WAITING_FOR_DIFF_TEXT: string = '\u7b49\u5f85 turn/diff/updated \u901a\u77
 const NO_DIFF_TEXT: string = '\u672c\u8f6e\u5c1a\u672a\u4ea7\u751f diff\u3002';
 const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
 const UNKNOWN_DIFF_FILE_TEXT: string = '\u672a\u8bc6\u522b\u6587\u4ef6';
+const FOLDER_SELECTION_SYSCAP: string = 'SystemCapability.FileManagement.UserFileService.FolderSelection';
 
 class ChatMessage {
   id: string;
@@ -1698,10 +1699,56 @@ struct Index {
     this.workspaceSelectionText = '使用默认工作区';
   }
 
+  private canSelectExternalFolder(): boolean {
+    try {
+      return canIUse(FOLDER_SELECTION_SYSCAP);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private sanitizeProjectDirectoryName(projectName: string): string {
+    const sanitized: string = projectName.trim().replace(/[\/\\:*?"<>|]/g, '_');
+    if (sanitized.length === 0 || sanitized === '.' || sanitized === '..') {
+      return `proj_${Date.now().toString()}`;
+    }
+    return sanitized;
+  }
+
+  private isProjectPathUsed(projectPath: string): boolean {
+    const trimmedPath: string = projectPath.trim();
+    for (let index: number = 0; index < this.projects.length; index += 1) {
+      if (this.projects[index].path.trim() === trimmedPath) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private sandboxProjectPath(): string {
+    const context: common.UIAbilityContext | null = this.currentAbilityContext();
+    if (context === null) {
+      throw new Error('当前页面上下文不可用，无法创建应用内项目目录。');
+    }
+    const basePath: string = `${context.filesDir}/codex-home/projects`;
+    const directoryName: string = this.sanitizeProjectDirectoryName(this.newProjectName);
+    let candidatePath: string = `${basePath}/${directoryName}`;
+    let suffix: number = 2;
+    while (this.isProjectPathUsed(candidatePath)) {
+      candidatePath = `${basePath}/${directoryName}_${suffix.toString()}`;
+      suffix += 1;
+    }
+    fileIo.mkdirSync(candidatePath, true);
+    return candidatePath;
+  }
+
   private async pickDirectorySelection(): Promise<WorkspaceDirectorySelection | null> {
     const hostContext = this.getUIContext().getHostContext();
     if (hostContext === undefined) {
       throw new Error('当前页面上下文不可用，无法打开目录选择器。');
+    }
+    if (!this.canSelectExternalFolder()) {
+      throw new Error('当前设备不支持选择外部目录。');
     }
     const documentPicker = new picker.DocumentViewPicker(hostContext);
     const selectedUris: Array<string> = await documentPicker.select({
@@ -1734,6 +1781,11 @@ struct Index {
 
   private async pickWorkspaceDirectoryForProject(): Promise<void> {
     try {
+      if (!this.canSelectExternalFolder()) {
+        this.newProjectPath = this.sandboxProjectPath();
+        promptAction.showToast({ message: '当前设备不支持选择外部目录，已使用应用内项目目录', duration: 3000 });
+        return;
+      }
       const selection: WorkspaceDirectorySelection | null = await this.pickDirectorySelection();
       if (selection !== null) {
         this.newProjectPath = selection.rootPath;
