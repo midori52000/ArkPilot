@@ -3122,14 +3122,42 @@ fn build_sandbox_policy(raw: Option<&str>, cwd: Option<&Path>) -> Result<Option<
     }
 }
 
+const TURN_POLL_MAX_EVENTS: usize = 24;
+const TURN_POLL_MAX_DRAIN_MS: u64 = 60;
+const TURN_POLL_TRAILING_DIFF_MAX_EVENTS: usize = 64;
+const TURN_POLL_TRAILING_DIFF_MAX_DRAIN_MS: u64 = 350;
+
 async fn process_pending_events(target_turn_id: Option<&str>) -> Result<()> {
-    process_pending_events_with_idle_timeout(target_turn_id, Duration::from_millis(50)).await
+    process_pending_events_with_limits(
+        target_turn_id,
+        Duration::from_millis(10),
+        Some(TURN_POLL_MAX_EVENTS),
+        Some(Duration::from_millis(TURN_POLL_MAX_DRAIN_MS)),
+    )
+    .await
 }
 
 async fn process_pending_events_with_idle_timeout(
     target_turn_id: Option<&str>,
     idle_timeout: Duration,
 ) -> Result<()> {
+    process_pending_events_with_limits(
+        target_turn_id,
+        idle_timeout,
+        Some(TURN_POLL_TRAILING_DIFF_MAX_EVENTS),
+        Some(Duration::from_millis(TURN_POLL_TRAILING_DIFF_MAX_DRAIN_MS)),
+    )
+    .await
+}
+
+async fn process_pending_events_with_limits(
+    target_turn_id: Option<&str>,
+    idle_timeout: Duration,
+    max_events: Option<usize>,
+    max_elapsed: Option<Duration>,
+) -> Result<()> {
+    let started_at = Instant::now();
+    let mut processed_events = 0usize;
     loop {
         let mut client = with_native_state(|state| state.client.take())
             .context("remote app-server client is not initialized")?;
@@ -3140,11 +3168,18 @@ async fn process_pending_events_with_idle_timeout(
         let should_stop = event.is_none();
         if let Some(app_event) = event {
             handle_app_server_event(&mut client, app_event, target_turn_id).await?;
+            processed_events += 1;
         }
         with_native_state(|state| {
             state.client = Some(client);
         });
         if should_stop {
+            break;
+        }
+        if max_events.is_some_and(|limit| processed_events >= limit) {
+            break;
+        }
+        if max_elapsed.is_some_and(|limit| started_at.elapsed() >= limit) {
             break;
         }
     }

@@ -1948,7 +1948,7 @@ export class CodexBackend {
           await turnPollAsyncNative(thread.remoteThreadId, this.compactionState.turnId),
           new TurnPollResponsePayload() as Object
         ) as Record<string, Object>;
-        this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} payload=${JSON.stringify(pollObject)}`);
+        this.logInfo(`compact turnPoll thread=${thread.remoteThreadId} turn=${this.compactionState.turnId} ${this.turnPollLogSummary(pollObject)}`);
         const result: CodexTurnResult = this.applyTurnPollResult(thread, this.compactionState.turnId, pollObject);
         if (this.compactionState.observedReduction) {
           this.completeCompaction(thread);
@@ -2599,7 +2599,7 @@ export class CodexBackend {
         return timeoutSnapshot;
       }
       const pollObject: Record<string, Object> = parseJsonText(await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId), new TurnPollResponsePayload() as Object) as Record<string, Object>;
-      this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
+      this.logInfo(`turnPoll thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} ${this.turnPollLogSummary(pollObject)}`);
       if (this.shouldRecoverFromPollPayload(pollObject)) {
         const recoveredSnapshot: CodexTurnResult | null = await this.recoverTurnFromThreadHistory(thread, pendingTurn, pollObject);
         if (recoveredSnapshot !== null) {
@@ -2657,6 +2657,22 @@ export class CodexBackend {
 
   private hasTurnPollStatus(payload: Record<string, Object>): boolean {
     return typeof payload['status'] === 'string' && (payload['status'] as string).trim().length > 0;
+  }
+
+  private turnPollLogSummary(payload: Record<string, Object>): string {
+    const status: string = typeof payload['status'] === 'string' ? (payload['status'] as string) : 'missing';
+    const messages: Object[] = Array.isArray(payload['messages']) ? (payload['messages'] as Object[]) : [];
+    const diffLines: Object[] = Array.isArray(payload['diffLines']) ? (payload['diffLines'] as Object[]) : [];
+    let lastMessage: string = 'none';
+    if (messages.length > 0) {
+      const last: Record<string, Object> = messages[messages.length - 1] as Record<string, Object>;
+      const id: string = typeof last['messageId'] === 'string' ? (last['messageId'] as string) : '';
+      const role: string = typeof last['role'] === 'string' ? (last['role'] as string) : '';
+      const type: string = typeof last['itemType'] === 'string' ? (last['itemType'] as string) : '';
+      const content: string = typeof last['content'] === 'string' ? (last['content'] as string) : '';
+      lastMessage = `${id}:${role}:${type}:${content.length}`;
+    }
+    return `status=${status} messages=${messages.length} last=${lastMessage} diffLines=${diffLines.length}`;
   }
 
   private turnPollFailureTitle(payload: Record<string, Object>): string {
@@ -2772,7 +2788,7 @@ export class CodexBackend {
         await turnPollAsyncNative(thread.remoteThreadId, pendingTurn.turnId),
         new TurnPollResponsePayload() as Object
       ) as Record<string, Object>;
-      this.logInfo(`turnPoll drain thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} payload=${JSON.stringify(pollObject)}`);
+      this.logInfo(`turnPoll drain thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} ${this.turnPollLogSummary(pollObject)}`);
       if (this.shouldRecoverFromPollPayload(pollObject)) {
         this.logInfo(`turnPoll drain skipped invalid payload thread=${thread.remoteThreadId} turn=${pendingTurn.turnId}`);
         break;

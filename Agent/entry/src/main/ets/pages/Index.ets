@@ -681,6 +681,8 @@ struct Index {
   @State private messageAutoFollowToBottom: boolean = true;
   private messageProgrammaticScroll: boolean = false;
   private messageProgrammaticScrollTimerId: number = -1;
+  private messageScheduledScrollTimerId: number = -1;
+  private messageScheduledFollowUpScrollTimerId: number = -1;
   private messageUserScrollActive: boolean = false;
   private messageUserScrollTimerId: number = -1;
   private messageZoomWheelActiveUntil: number = 0;
@@ -769,6 +771,7 @@ struct Index {
     this.stopThinkingAnimation();
     this.clearIdleThinkingTimer();
     this.clearCompactionClearTimer();
+    this.clearMessageScheduledScrollTimers();
     this.clearMessageProgrammaticScrollTimer();
     this.clearMessageUserScrollTimer();
   }
@@ -2004,6 +2007,24 @@ struct Index {
     return item.role === 'assistant' || item.role === 'agent';
   }
 
+  private isCurrentTurnAssistantOutput(item: ChatMessage, index: number): boolean {
+    if (!this.isAssistantOutputMessage(item)) {
+      return false;
+    }
+    if (this.currentTurnId.trim().length > 0 && item.id.startsWith(`${this.currentTurnId}:`)) {
+      return true;
+    }
+    return index >= this.currentTurnMessageStartIndex();
+  }
+
+  private isStreamingAssistantMessage(item: ChatMessage): boolean {
+    if (this.currentTurnStatus !== 'inProgress') {
+      return false;
+    }
+    const index: number = this.messages.findIndex((message: ChatMessage) => message.id === item.id);
+    return this.isCurrentTurnAssistantOutput(item, index);
+  }
+
   private isActivityMessage(item: ChatMessage): boolean {
     const type: string = item.itemType ?? item.role;
     if (this.isIntermediateMessageType(type)) {
@@ -2466,8 +2487,9 @@ struct Index {
     const rawMessages: ChatMessage[] = result.messages.map((item) => {
       return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
     });
-    this.updateLiveThinking(result, rawMessages);
-    this.messages = rawMessages.filter((item: ChatMessage) => {
+    const displayMessages: ChatMessage[] = this.mergeStreamingDisplayMessages(rawMessages, result);
+    this.updateLiveThinking(result, displayMessages);
+    this.messages = displayMessages.filter((item: ChatMessage) => {
       return !this.isReasoningMessage(item);
     });
     this.codeLines = result.diffLines.length > 0
@@ -2491,6 +2513,62 @@ struct Index {
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
     this.syncTextOutputIdleState();
     this.scheduleMessageScrollToBottom();
+  }
+
+  private mergeStreamingDisplayMessages(rawMessages: ChatMessage[], result: CodexTurnResult): ChatMessage[] {
+    if (result.status !== 'inProgress') {
+      return rawMessages;
+    }
+    const merged: ChatMessage[] = rawMessages.map((item: ChatMessage, index: number) => {
+      if (!this.isCurrentTurnAssistantOutput(item, index)) {
+        return item;
+      }
+      const existing: ChatMessage | undefined = this.messages.find((message: ChatMessage) => message.id === item.id);
+      if (existing === undefined) {
+        return item;
+      }
+      const mergedContent: string = this.mergeStreamingMessageContent(existing.content, item.content);
+      if (mergedContent === item.content) {
+        return item;
+      }
+      return new ChatMessage(
+        item.id,
+        item.author,
+        item.role,
+        mergedContent,
+        item.timestamp,
+        item.itemType,
+        item.status,
+        item.metadata
+      );
+    });
+    const mergedIds: string[] = merged.map((item: ChatMessage) => item.id);
+    this.messages.forEach((existing: ChatMessage, index: number) => {
+      if (mergedIds.indexOf(existing.id) >= 0) {
+        return;
+      }
+      if (this.isCurrentTurnAssistantOutput(existing, index)) {
+        const insertIndex: number = Math.min(index, merged.length);
+        merged.splice(insertIndex, 0, existing);
+      }
+    });
+    return merged;
+  }
+
+  private mergeStreamingMessageContent(existingContent: string, incomingContent: string): string {
+    if (existingContent.length === 0 || incomingContent.startsWith(existingContent)) {
+      return incomingContent;
+    }
+    if (incomingContent.length === 0 || existingContent.indexOf(incomingContent) >= 0) {
+      return existingContent;
+    }
+    const maxOverlap: number = Math.min(existingContent.length, incomingContent.length);
+    for (let size: number = maxOverlap; size > 0; size -= 1) {
+      if (existingContent.endsWith(incomingContent.substring(0, size))) {
+        return `${existingContent}${incomingContent.substring(size)}`;
+      }
+    }
+    return `${existingContent}${incomingContent}`;
   }
 
   private backendResultContainsPendingPrompt(result: CodexTurnResult): boolean {
@@ -2674,12 +2752,21 @@ struct Index {
     if (!force && !this.messageAutoFollowToBottom) {
       return;
     }
-    setTimeout(() => {
-      this.scrollMessagesToBottom(force);
-    }, 0);
-    setTimeout(() => {
-      this.scrollMessagesToBottom(force);
-    }, 32);
+    if (force) {
+      this.clearMessageScheduledScrollTimers();
+    }
+    if (this.messageScheduledScrollTimerId < 0) {
+      this.messageScheduledScrollTimerId = setTimeout(() => {
+        this.messageScheduledScrollTimerId = -1;
+        this.scrollMessagesToBottom(force);
+      }, 0);
+    }
+    if (this.messageScheduledFollowUpScrollTimerId < 0) {
+      this.messageScheduledFollowUpScrollTimerId = setTimeout(() => {
+        this.messageScheduledFollowUpScrollTimerId = -1;
+        this.scrollMessagesToBottom(force);
+      }, 48);
+    }
   }
 
   private scrollMessagesToBottom(force: boolean = false): void {
@@ -2698,6 +2785,17 @@ struct Index {
     if (this.messageProgrammaticScrollTimerId >= 0) {
       clearTimeout(this.messageProgrammaticScrollTimerId);
       this.messageProgrammaticScrollTimerId = -1;
+    }
+  }
+
+  private clearMessageScheduledScrollTimers(): void {
+    if (this.messageScheduledScrollTimerId >= 0) {
+      clearTimeout(this.messageScheduledScrollTimerId);
+      this.messageScheduledScrollTimerId = -1;
+    }
+    if (this.messageScheduledFollowUpScrollTimerId >= 0) {
+      clearTimeout(this.messageScheduledFollowUpScrollTimerId);
+      this.messageScheduledFollowUpScrollTimerId = -1;
     }
   }
 
@@ -4679,6 +4777,14 @@ struct Index {
         .backgroundColor('#F8FAFC')
         .border({ width: 0.5, color: '#CBD5E1' })
         .borderRadius(8)
+    } else if (this.isStreamingAssistantMessage(item)) {
+      Text(item.content)
+        .copyOption(CopyOptions.LocalDevice)
+        .fontSize(this.conversationFontSize(12))
+        .lineHeight(this.conversationLineHeight(19))
+        .fontColor(this.messageContentColor(item.itemType ?? item.role))
+        .wordBreak(WordBreak.BREAK_WORD)
+        .margin({ top: 6 })
     } else if (this.hasHtmlFileLinkContent(item.content)) {
       this.htmlFileMessageBody(item)
     } else if (!this.shouldRenderMarkdown(item.content)) {

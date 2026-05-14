@@ -23,3 +23,5 @@
 # Native shared libraries (built artifacts)
 *.so
 Agent/build-profile.json5
+项目介绍文档/ArkPilot项目介绍.md
+项目介绍文档/ArkPilot项目介绍.pdf

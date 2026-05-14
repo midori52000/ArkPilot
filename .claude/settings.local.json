@@ -46,7 +46,9 @@
       "WebFetch(domain:gitee.com)",
       "Bash(cargo check *)",
       "Bash(git *)",
-      "PowerShell(Get-Command *)"
+      "PowerShell(Get-Command *)",
+      "PowerShell(cargo fmt *)",
+      "PowerShell(cargo check *)"
     ]
   }
 }
