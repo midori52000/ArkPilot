@@ -35,6 +35,8 @@ use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(target_env = "ohos")]
+use std::sync::{LazyLock, Mutex};
+#[cfg(target_env = "ohos")]
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -241,12 +243,35 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
 }
 
 #[cfg(target_env = "ohos")]
+static APPLY_PATCH_CWD_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[cfg(target_env = "ohos")]
 fn run_apply_patch_in_process(req: &ApplyPatchRequest) -> Result<ExecToolCallOutput, ToolError> {
+    let _guard = APPLY_PATCH_CWD_LOCK.lock().map_err(|err| {
+        ToolError::Rejected(format!("failed to lock apply_patch cwd guard: {err}"))
+    })?;
+    let previous_cwd = std::env::current_dir()
+        .map_err(|err| ToolError::Rejected(format!("failed to read current dir: {err}")))?;
+    std::env::set_current_dir(&req.action.cwd).map_err(|err| {
+        ToolError::Rejected(format!(
+            "failed to set apply_patch cwd to {}: {err}",
+            req.action.cwd.display()
+        ))
+    })?;
+
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
+    let apply_result = codex_apply_patch::apply_patch(&req.action.patch, &mut stdout, &mut stderr)
+        .map_err(|err| ToolError::Rejected(format!("apply_patch failed: {err}")));
+    let restore_result = std::env::set_current_dir(&previous_cwd).map_err(|err| {
+        ToolError::Rejected(format!(
+            "failed to restore apply_patch cwd to {}: {err}",
+            previous_cwd.display()
+        ))
+    });
 
-    codex_apply_patch::apply_patch(&req.action.patch, &mut stdout, &mut stderr)
-        .map_err(|err| ToolError::Rejected(format!("apply_patch failed: {err}")))?;
+    apply_result?;
+    restore_result?;
 
     let stdout_text = String::from_utf8_lossy(&stdout).into_owned();
     let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
