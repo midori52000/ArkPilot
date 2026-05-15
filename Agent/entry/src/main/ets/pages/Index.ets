@@ -529,6 +529,397 @@ struct MermaidWebDiagram {
   }
 }
 
+@CustomDialog
+struct ArkPilotProjectCreateDialog {
+  controller?: CustomDialogController;
+  @Link projectName: string;
+  @Link sourceUri: string;
+  canSelectExternalFolder: () => boolean = () => false;
+  chooseFolder: () => void = () => {};
+  cancel: () => void = () => {};
+  confirm: () => void = () => {};
+  @State private sourceInfoHovering: boolean = false;
+  @State private sourceInfoPinned: boolean = false;
+
+  private sourceFolderText(): string {
+    if (this.sourceUri.length > 0) {
+      return `同步文件夹：${this.sourceUri}`;
+    }
+    return this.canSelectExternalFolder() ? '未选择同步文件夹' : '未启用下载目录同步';
+  }
+
+  private sourceFolderColor(): ResourceColor {
+    return this.sourceUri.length > 0 ? '#182431' : '#7A869A';
+  }
+
+  private shouldShowSourceInfo(): boolean {
+    return this.sourceInfoHovering || this.sourceInfoPinned;
+  }
+
+  @Builder
+  private sourceInfoPopup() {
+    Column() {
+      Text('同步文件夹')
+        .copyOption(CopyOptions.None)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#18181B')
+        .width('100%')
+
+      Text('同步文件夹是项目和本地目录之间的交换入口。项目在应用内运行，需要时再手动与该文件夹导入或导出项目文件。')
+        .copyOption(CopyOptions.None)
+        .fontSize(12)
+        .fontColor('#4E5969')
+        .lineHeight(18)
+        .width('100%')
+        .margin({ top: 8 })
+
+      Column() {
+        Text('• 导出项目内容：创建项目后，可以在项目菜单中，把应用内该项目文件夹内容导出到同步文件夹。')
+          .copyOption(CopyOptions.None)
+          .fontSize(12)
+          .fontColor('#4E5969')
+          .lineHeight(18)
+          .width('100%')
+
+        Text('• 导入文件夹内容：可以在项目菜单中，把同步文件夹中的内容导入到项目文件夹内。')
+          .copyOption(CopyOptions.None)
+          .fontSize(12)
+          .fontColor('#4E5969')
+          .lineHeight(18)
+          .width('100%')
+          .margin({ top: 6 })
+
+        Text('• 未选择时：仅使用应用内项目目录，可以在项目菜单中重新关联同步文件夹。')
+          .copyOption(CopyOptions.None)
+          .fontSize(12)
+          .fontColor('#4E5969')
+          .lineHeight(18)
+          .width('100%')
+          .margin({ top: 6 })
+      }
+      .width('100%')
+      .margin({ top: 10 })
+    }
+    .width(292)
+    .padding({ left: 14, right: 14, top: 14, bottom: 14 })
+  }
+
+  build() {
+    Column() {
+      Text('新建项目')
+        .copyOption(CopyOptions.None)
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#182431')
+        .width('100%')
+
+      Text('运行目录将自动创建在应用内项目目录。')
+        .copyOption(CopyOptions.None)
+        .fontSize(14)
+        .fontColor('#7A869A')
+        .lineHeight(20)
+        .width('100%')
+        .margin({ top: 8 })
+
+      TextInput({ placeholder: '输入项目名称', text: this.projectName })
+        .width('100%')
+        .height(48)
+        .fontSize(15)
+        .fontColor('#182431')
+        .placeholderColor('#9EA7B3')
+        .backgroundColor('#F7F8FA')
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 })
+        .margin({ top: 22 })
+        .enterKeyType(EnterKeyType.Done)
+        .onChange((value: string) => {
+          this.projectName = value;
+        })
+
+      Column() {
+        Row() {
+          Text('同步文件夹')
+            .copyOption(CopyOptions.None)
+            .fontSize(12)
+            .fontColor('#7A869A')
+
+          Blank()
+            .layoutWeight(1)
+
+          Text('i')
+            .copyOption(CopyOptions.None)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.shouldShowSourceInfo() ? '#18181B' : '#4E5969')
+            .textAlign(TextAlign.Center)
+            .width(22)
+            .height(22)
+            .backgroundColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF')
+            .border({ width: 1, color: '#D1D5DB' })
+            .borderRadius(11)
+            .onHover((isHover: boolean) => {
+              this.sourceInfoHovering = isHover;
+            })
+            .onClick(() => {
+              if (this.sourceInfoPinned) {
+                this.sourceInfoPinned = false;
+                this.sourceInfoHovering = false;
+              } else {
+                this.sourceInfoPinned = true;
+              }
+            })
+            .bindPopup(this.shouldShowSourceInfo(), {
+              builder: this.sourceInfoPopup,
+              placement: Placement.Right,
+              targetSpace: 8,
+              width: 320,
+              radius: 16,
+              mask: false,
+              autoCancel: true,
+              enableArrow: true,
+              popupColor: '#FFFFFF',
+              shadow: { radius: 16, color: '#26000000', offsetX: 0, offsetY: 6 },
+              onStateChange: (event) => {
+                if (!event.isVisible) {
+                  this.sourceInfoHovering = false;
+                  this.sourceInfoPinned = false;
+                }
+              }
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Text(this.sourceFolderText())
+          .copyOption(CopyOptions.None)
+          .fontSize(13)
+          .fontColor(this.sourceFolderColor())
+          .lineHeight(18)
+          .width('100%')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 6 })
+
+      }
+      .width('100%')
+      .padding(14)
+      .margin({ top: 12 })
+      .backgroundColor('#F7F8FA')
+      .borderRadius(12)
+
+      Button(this.canSelectExternalFolder() ? '选择同步文件夹' : '启用下载目录同步')
+        .type(ButtonType.Normal)
+        .width('100%')
+        .height(40)
+        .fontSize(14)
+        .fontColor('#18181B')
+        .backgroundColor('#F2F3F5')
+        .borderRadius(12)
+        .margin({ top: 12 })
+        .onClick(() => {
+          this.chooseFolder();
+        })
+
+      Row() {
+        Button('取消')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
+          .borderRadius(20)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+
+        Button('创建')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#18181B')
+          .borderRadius(20)
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.confirm();
+          })
+      }
+      .width('100%')
+      .margin({ top: 24 })
+    }
+    .width('100%')
+    .padding({ left: 24, right: 24, top: 24, bottom: 20 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(24)
+  }
+}
+
+@CustomDialog
+struct ArkPilotNameDialog {
+  controller?: CustomDialogController;
+  @Link textValue: string;
+  title: string = '';
+  subtitle: string = '';
+  placeholder: string = '';
+  confirmText: string = '确认';
+  cancel: () => void = () => {};
+  confirm: () => void = () => {};
+
+  build() {
+    Column() {
+      Text(this.title)
+        .copyOption(CopyOptions.None)
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#182431')
+        .width('100%')
+
+      if (this.subtitle.length > 0) {
+        Text(this.subtitle)
+          .copyOption(CopyOptions.None)
+          .fontSize(14)
+          .fontColor('#7A869A')
+          .lineHeight(20)
+          .width('100%')
+          .margin({ top: 8 })
+      }
+
+      TextInput({ placeholder: this.placeholder, text: this.textValue })
+        .width('100%')
+        .height(48)
+        .fontSize(15)
+        .fontColor('#182431')
+        .placeholderColor('#9EA7B3')
+        .backgroundColor('#F7F8FA')
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 })
+        .margin({ top: 22 })
+        .enterKeyType(EnterKeyType.Done)
+        .onChange((value: string) => {
+          this.textValue = value;
+        })
+
+      Row() {
+        Button('取消')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
+          .borderRadius(20)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+
+        Button(this.confirmText)
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#18181B')
+          .borderRadius(20)
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.confirm();
+          })
+      }
+      .width('100%')
+      .margin({ top: 24 })
+    }
+    .width('100%')
+    .padding({ left: 24, right: 24, top: 24, bottom: 20 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(24)
+  }
+}
+
+@CustomDialog
+struct ArkPilotDeleteDialog {
+  controller?: CustomDialogController;
+  @Link targetName: string;
+  title: string = '';
+  targetType: string = '';
+  description: string = '';
+  cancel: () => void = () => {};
+  confirm: () => void = () => {};
+
+  build() {
+    Column() {
+      Text(this.title)
+        .copyOption(CopyOptions.None)
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#182431')
+        .width('100%')
+
+      Text(`确认删除${this.targetType}「${this.targetName}」？`)
+        .copyOption(CopyOptions.None)
+        .fontSize(15)
+        .fontColor('#182431')
+        .lineHeight(22)
+        .width('100%')
+        .margin({ top: 16 })
+
+      if (this.description.length > 0) {
+        Text(this.description)
+          .copyOption(CopyOptions.None)
+          .fontSize(13)
+          .fontColor('#7A869A')
+          .lineHeight(19)
+          .width('100%')
+          .margin({ top: 8 })
+      }
+
+      Row() {
+        Button('取消')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
+          .borderRadius(20)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+
+        Button('删除')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#E84026')
+          .borderRadius(20)
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.confirm();
+          })
+      }
+      .width('100%')
+      .margin({ top: 26 })
+    }
+    .width('100%')
+    .padding({ left: 24, right: 24, top: 24, bottom: 20 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(24)
+  }
+}
+
 @Entry
 @Component
 struct Index {
@@ -725,13 +1116,11 @@ struct Index {
   private activeCompactionNoticeId: string = '';
   private compactionClearTimerId: number = -1;
   @State private projects: ProjectRecord[] = [];
-  @State private showCreateProjectDialog: boolean = false;
   @State private newProjectName: string = '';
   @State private newProjectSourceUri: string = '';
   @State private renamingProjectId: string = '';
   @State private renameProjectText: string = '';
   @State private showAboutDialog: boolean = false;
-  @State private showNewSessionDialog: boolean = false;
   @State private newSessionProjectId: string = '';
   @State private newSessionName: string = '';
   @State private renamingSessionId: string = '';
@@ -750,20 +1139,168 @@ struct Index {
   @State private floatingMenuX: number = 0;
   @State private floatingMenuY: number = 0;
   @State private floatingMenuWidth: number = 120;
-  @State private showRenameSessionDialog: boolean = false;
   @State private renameSessionDialogText: string = '';
   @State private renameSessionDialogId: string = '';
-  @State private showDeleteSessionDialog: boolean = false;
   @State private deleteSessionDialogId: string = '';
   @State private deleteSessionDialogTitle: string = '';
-  @State private showRenameProjectDialog: boolean = false;
   @State private renameProjectDialogText: string = '';
   @State private renameProjectDialogId: string = '';
-  @State private showDeleteProjectDialog: boolean = false;
   @State private deleteProjectDialogId: string = '';
   @State private deleteProjectDialogName: string = '';
   @State private lastAppliedBreakpoint: ArkPilotBreakpoint = 'sm';
 
+  private createProjectDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotProjectCreateDialog({
+      projectName: this.newProjectName,
+      sourceUri: this.newProjectSourceUri,
+      canSelectExternalFolder: () => this.canSelectExternalFolder(),
+      chooseFolder: () => {
+        void this.pickWorkspaceDirectoryForProject();
+      },
+      cancel: () => {
+        this.cancelCreateProjectDialog();
+      },
+      confirm: () => {
+        void this.createProject();
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelCreateProjectDialog();
+    }
+  });
+
+  private newSessionDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotNameDialog({
+      textValue: this.newSessionName,
+      title: '新建会话',
+      subtitle: '会话会创建在当前项目下。',
+      placeholder: '输入会话名称',
+      confirmText: '创建',
+      cancel: () => {
+        this.cancelNewSessionDialog();
+      },
+      confirm: () => {
+        void this.confirmCreateSession();
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelNewSessionDialog();
+    }
+  });
+
+  private renameProjectDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotNameDialog({
+      textValue: this.renameProjectDialogText,
+      title: '重命名项目',
+      placeholder: '输入项目名称',
+      confirmText: '确认',
+      cancel: () => {
+        this.cancelRenameProjectDialog();
+      },
+      confirm: () => {
+        this.confirmRenameProjectDialog();
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelRenameProjectDialog();
+    }
+  });
+
+  private deleteProjectDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotDeleteDialog({
+      targetName: this.deleteProjectDialogName,
+      title: '删除项目',
+      targetType: '项目',
+      description: '项目下的会话会一并从侧边栏移除。',
+      cancel: () => {
+        this.cancelDeleteProjectDialog();
+      },
+      confirm: () => {
+        this.confirmDeleteProjectDialog();
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelDeleteProjectDialog();
+    }
+  });
+
+  private renameSessionDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotNameDialog({
+      textValue: this.renameSessionDialogText,
+      title: '重命名会话',
+      placeholder: '输入会话名称',
+      confirmText: '确认',
+      cancel: () => {
+        this.cancelRenameSessionDialog();
+      },
+      confirm: () => {
+        this.confirmRenameSessionDialog();
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelRenameSessionDialog();
+    }
+  });
+
+  private deleteSessionDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotDeleteDialog({
+      targetName: this.deleteSessionDialogTitle,
+      title: '删除会话',
+      targetType: '会话',
+      description: '删除后会话将从列表中移除。',
+      cancel: () => {
+        this.cancelDeleteSessionDialog();
+      },
+      confirm: () => {
+        this.confirmDeleteSessionDialog();
+      }
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelDeleteSessionDialog();
+    }
+  });
 
   aboutToAppear(): void {
     const mediaQuery = this.getUIContext().getMediaQuery();
@@ -1439,6 +1976,164 @@ struct Index {
     projectStore.save(this.projects);
   }
 
+  private openCreateProjectDialog(): void {
+    this.newProjectName = '';
+    this.newProjectSourceUri = '';
+    this.showProjectMenuId = '';
+    this.showSessionMenuId = '';
+    if (this.createProjectDialogController !== null) {
+      this.createProjectDialogController.open();
+    }
+  }
+
+  private cancelCreateProjectDialog(): void {
+    this.newProjectSourceUri = '';
+  }
+
+  private closeCreateProjectDialog(): void {
+    if (this.createProjectDialogController !== null) {
+      this.createProjectDialogController.close();
+    }
+  }
+
+  private cancelNewSessionDialog(): void {
+    this.newSessionProjectId = '';
+    this.newSessionName = '';
+  }
+
+  private closeNewSessionDialog(): void {
+    if (this.newSessionDialogController !== null) {
+      this.newSessionDialogController.close();
+    }
+  }
+
+  private openRenameProjectDialog(proj: ProjectRecord): void {
+    this.renameProjectDialogId = proj.id;
+    this.renameProjectDialogText = proj.name;
+    if (this.renameProjectDialogController !== null) {
+      this.renameProjectDialogController.open();
+    }
+  }
+
+  private cancelRenameProjectDialog(): void {
+    this.renameProjectDialogId = '';
+    this.renameProjectDialogText = '';
+  }
+
+  private confirmRenameProjectDialog(): void {
+    const name: string = this.renameProjectDialogText.trim();
+    if (name.length === 0 || this.renameProjectDialogId.length === 0) {
+      promptAction.showToast({ message: '请输入项目名称', duration: 2000 });
+      return;
+    }
+    const targetId: string = this.renameProjectDialogId;
+    const next: ProjectRecord[] = [];
+    for (let i: number = 0; i < this.projects.length; i += 1) {
+      const p: ProjectRecord = this.projects[i];
+      if (p.id === targetId) {
+        next.push(new ProjectRecord(p.id, name, p.path, p.expanded, p.sourceUri));
+      } else {
+        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, p.sourceUri));
+      }
+    }
+    this.projects = next;
+    this.saveProjects();
+    this.cancelRenameProjectDialog();
+    if (this.renameProjectDialogController !== null) {
+      this.renameProjectDialogController.close();
+    }
+  }
+
+  private openDeleteProjectDialog(proj: ProjectRecord): void {
+    this.deleteProjectDialogId = proj.id;
+    this.deleteProjectDialogName = proj.name;
+    if (this.deleteProjectDialogController !== null) {
+      this.deleteProjectDialogController.open();
+    }
+  }
+
+  private cancelDeleteProjectDialog(): void {
+    this.deleteProjectDialogId = '';
+    this.deleteProjectDialogName = '';
+  }
+
+  private confirmDeleteProjectDialog(): void {
+    const targetId: string = this.deleteProjectDialogId;
+    if (targetId.length === 0) {
+      return;
+    }
+    this.cancelDeleteProjectDialog();
+    if (this.deleteProjectDialogController !== null) {
+      this.deleteProjectDialogController.close();
+    }
+    void this.deleteProject(targetId);
+  }
+
+  private openRenameSessionDialog(item: WorkspaceItem): void {
+    this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
+    this.renameSessionDialogText = item.title;
+    if (this.renameSessionDialogController !== null) {
+      this.renameSessionDialogController.open();
+    }
+  }
+
+  private cancelRenameSessionDialog(): void {
+    this.renameSessionDialogId = '';
+    this.renameSessionDialogText = '';
+  }
+
+  private confirmRenameSessionDialog(): void {
+    const name: string = this.renameSessionDialogText.trim();
+    if (name.length === 0 || this.renameSessionDialogId.length === 0) {
+      promptAction.showToast({ message: '请输入会话名称', duration: 2000 });
+      return;
+    }
+    const targetId: string = this.renameSessionDialogId;
+    const next: WorkspaceItem[] = [];
+    for (let i: number = 0; i < this.workspaces.length; i += 1) {
+      const w: WorkspaceItem = this.workspaces[i];
+      if (this.ensureWorkspaceBinding(w) === targetId) {
+        next.push(new WorkspaceItem(w.id, name, w.description, w.workspaceId, w.projectId));
+      } else {
+        next.push(new WorkspaceItem(w.id, w.title, w.description, w.workspaceId, w.projectId));
+      }
+    }
+    this.workspaces = next;
+    this.syncRecentWorkspaces();
+    this.syncCurrentWorkspaceState();
+    this.persistWorkspaceBindings();
+    this.cancelRenameSessionDialog();
+    if (this.renameSessionDialogController !== null) {
+      this.renameSessionDialogController.close();
+    }
+    void codexBackend.renameSession(targetId, name);
+  }
+
+  private openDeleteSessionDialog(item: WorkspaceItem): void {
+    this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
+    this.deleteSessionDialogTitle = item.title;
+    if (this.deleteSessionDialogController !== null) {
+      this.deleteSessionDialogController.open();
+    }
+  }
+
+  private cancelDeleteSessionDialog(): void {
+    this.deleteSessionDialogId = '';
+    this.deleteSessionDialogTitle = '';
+  }
+
+  private confirmDeleteSessionDialog(): void {
+    const targetId: string = this.deleteSessionDialogId;
+    if (targetId.length === 0) {
+      return;
+    }
+    this.cancelDeleteSessionDialog();
+    if (this.deleteSessionDialogController !== null) {
+      this.deleteSessionDialogController.close();
+    }
+    void this.deleteSession(targetId);
+  }
+
   private sessionsForProject(projectId: string): WorkspaceItem[] {
     const result: WorkspaceItem[] = [];
     for (let i: number = 0; i < this.workspaces.length; i += 1) {
@@ -1461,7 +2156,7 @@ struct Index {
     const next: ProjectRecord[] = [...this.projects, new ProjectRecord(id, name, path, true, sourceUri)];
     this.projects = next;
     this.saveProjects();
-    this.showCreateProjectDialog = false;
+    this.closeCreateProjectDialog();
     this.newProjectName = '';
     this.newProjectSourceUri = '';
     promptAction.showToast({ message: sourceUri.length > 0 ? `项目"${name}"已创建，外部同步文件夹已记录` : `项目"${name}"已创建`, duration: 2000 });
@@ -1535,7 +2230,11 @@ struct Index {
   private openNewSessionDialog(projectId: string): void {
     this.newSessionProjectId = projectId;
     this.newSessionName = '';
-    this.showNewSessionDialog = true;
+    this.showProjectMenuId = '';
+    this.showSessionMenuId = '';
+    if (this.newSessionDialogController !== null) {
+      this.newSessionDialogController.open();
+    }
   }
 
   private async confirmCreateSession(): Promise<void> {
@@ -1553,7 +2252,7 @@ struct Index {
     this.workspaces.push(workspace);
     this.workspaceRoots.set(nextId, proj.path);
     this.workspaceIds.set(nextId, `session:${nextId.toString()}`);
-    this.showNewSessionDialog = false;
+    this.closeNewSessionDialog();
     this.newSessionProjectId = '';
     this.newSessionName = '';
     this.syncRecentWorkspaces();
@@ -5264,16 +5963,12 @@ struct Index {
     Column() {
         this.floatingMenuItem('重命名项目', () => {
           this.showProjectMenuId = '';
-          this.renameProjectDialogId = proj.id;
-          this.renameProjectDialogText = proj.name;
-          this.showRenameProjectDialog = true;
+          this.openRenameProjectDialog(proj);
         })
 
         this.floatingMenuItem('删除项目', () => {
           this.showProjectMenuId = '';
-          this.deleteProjectDialogId = proj.id;
-          this.deleteProjectDialogName = proj.name;
-          this.showDeleteProjectDialog = true;
+          this.openDeleteProjectDialog(proj);
         })
 
         this.floatingMenuItem('复制路径', () => {
@@ -5457,16 +6152,12 @@ struct Index {
     Column() {
         this.floatingMenuItem('重命名会话', () => {
           this.showSessionMenuId = '';
-          this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
-          this.renameSessionDialogText = item.title;
-          this.showRenameSessionDialog = true;
+          this.openRenameSessionDialog(item);
         })
 
         this.floatingMenuItem('删除会话', () => {
           this.showSessionMenuId = '';
-          this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
-          this.deleteSessionDialogTitle = item.title;
-          this.showDeleteSessionDialog = true;
+          this.openDeleteSessionDialog(item);
         })
     }
     .width(this.floatingMenuWidth)
@@ -9311,9 +10002,7 @@ struct Index {
           .fontColor('#71717A')
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .onClick(() => {
-            this.newProjectName = '';
-            this.newProjectSourceUri = '';
-            this.showCreateProjectDialog = true;
+            this.openCreateProjectDialog();
           })
       }
       .width('100%')
@@ -9366,401 +10055,6 @@ struct Index {
         router.pushUrl({ url: 'pages/SettingsPage' });
       })
 
-      // Dialogs — below Settings button
-      if (this.showCreateProjectDialog) {
-        Column() {
-          Text('新建项目')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-            .margin({ bottom: 10 })
-
-          TextInput({ placeholder: '项目名称', text: this.newProjectName })
-            .width('100%')
-            .height(36)
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#D4D4D8' })
-            .borderRadius(8)
-            .padding({ left: 10, right: 10 })
-            .onChange((value: string) => {
-              this.newProjectName = value;
-            })
-
-          Text('运行目录将自动创建在应用内项目目录')
-            .width('100%')
-            .fontSize(11)
-            .fontColor('#71717A')
-            .margin({ top: 8 })
-            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-            .backgroundColor('#F4F4F5')
-            .borderRadius(8)
-
-          Text(this.newProjectSourceUri.length > 0 ? `同步文件夹: ${this.newProjectSourceUri}` : (this.canSelectExternalFolder() ? '未选择同步文件夹' : '未启用下载目录同步'))
-            .width('100%')
-            .fontSize(11)
-            .fontColor(this.newProjectSourceUri.length > 0 ? '#27272A' : '#A1A1AA')
-            .margin({ top: 8 })
-            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-            .backgroundColor('#F4F4F5')
-            .borderRadius(8)
-
-          Button(this.canSelectExternalFolder() ? '选择同步文件夹' : '启用下载目录同步')
-            .width('100%')
-            .height(32)
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .fontColor('#27272A')
-            .border({ width: 0.5, color: '#E4E4E7' })
-            .borderRadius(8)
-            .margin({ top: 8 })
-            .onClick(() => {
-              void this.pickWorkspaceDirectoryForProject();
-            })
-
-          Row() {
-            Button('取消')
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .backgroundColor('#F4F4F5')
-              .fontColor('#27272A')
-              .borderRadius(8)
-              .onClick(() => {
-                this.showCreateProjectDialog = false;
-                this.newProjectSourceUri = '';
-              })
-
-            Button('创建')
-              .layoutWeight(1)
-              .height(32)
-              .margin({ left: 8 })
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => {
-                void this.createProject();
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(12)
-      }
-
-      if (this.showNewSessionDialog) {
-        Column() {
-          Text('新建会话')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-            .margin({ bottom: 10 })
-
-          TextInput({ placeholder: '会话名称', text: this.newSessionName })
-            .width('100%')
-            .height(36)
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#D4D4D8' })
-            .borderRadius(8)
-            .padding({ left: 10, right: 10 })
-            .onChange((value: string) => {
-              this.newSessionName = value;
-            })
-
-          Row() {
-            Button('取消')
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .backgroundColor('#F4F4F5')
-              .fontColor('#27272A')
-              .borderRadius(8)
-              .onClick(() => {
-                this.showNewSessionDialog = false;
-              })
-
-            Button('创建')
-              .layoutWeight(1)
-              .height(32)
-              .margin({ left: 8 })
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => {
-                void this.confirmCreateSession();
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(12)
-      }
-
-      if (this.showRenameProjectDialog) {
-        Column() {
-          Text('重命名项目')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-            .margin({ bottom: 10 })
-
-          TextInput({ placeholder: '项目名称', text: this.renameProjectDialogText })
-            .width('100%')
-            .height(36)
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#D4D4D8' })
-            .borderRadius(8)
-            .padding({ left: 10, right: 10 })
-            .onChange((value: string) => {
-              this.renameProjectDialogText = value;
-            })
-
-          Row() {
-            Button('取消')
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .backgroundColor('#F4F4F5')
-              .fontColor('#27272A')
-              .borderRadius(8)
-              .onClick(() => {
-                this.showRenameProjectDialog = false;
-              })
-
-            Button('确认')
-              .layoutWeight(1)
-              .height(32)
-              .margin({ left: 8 })
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => {
-                const name: string = this.renameProjectDialogText.trim();
-                if (name.length === 0 || this.renameProjectDialogId.length === 0) {
-                  return;
-                }
-                const next: ProjectRecord[] = [];
-                for (let i: number = 0; i < this.projects.length; i += 1) {
-                  const p: ProjectRecord = this.projects[i];
-                  if (p.id === this.renameProjectDialogId) {
-                    next.push(new ProjectRecord(p.id, name, p.path, p.expanded, p.sourceUri));
-                  } else {
-                    next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, p.sourceUri));
-                  }
-                }
-                this.projects = next;
-                this.saveProjects();
-                this.showRenameProjectDialog = false;
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(12)
-      }
-
-      if (this.showDeleteProjectDialog) {
-        Column() {
-          Text('删除项目')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-            .margin({ bottom: 10 })
-
-          Text(`确认删除项目「${this.deleteProjectDialogName}」？`)
-            .fontSize(12)
-            .fontColor('#52525B')
-            .width('100%')
-            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-            .backgroundColor('#FEF2F2')
-            .borderRadius(8)
-
-          Row() {
-            Button('取消')
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .backgroundColor('#F4F4F5')
-              .fontColor('#27272A')
-              .borderRadius(8)
-              .onClick(() => {
-                this.showDeleteProjectDialog = false;
-              })
-
-            Button('删除')
-              .layoutWeight(1)
-              .height(32)
-              .margin({ left: 8 })
-              .fontSize(12)
-              .backgroundColor('#DC2626')
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => {
-                void this.deleteProject(this.deleteProjectDialogId);
-                this.showDeleteProjectDialog = false;
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(12)
-      }
-
-      if (this.showRenameSessionDialog) {
-        Column() {
-          Text('重命名会话')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-            .margin({ bottom: 10 })
-
-          TextInput({ placeholder: '会话名称', text: this.renameSessionDialogText })
-            .width('100%')
-            .height(36)
-            .fontSize(12)
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#D4D4D8' })
-            .borderRadius(8)
-            .padding({ left: 10, right: 10 })
-            .onChange((value: string) => {
-              this.renameSessionDialogText = value;
-            })
-
-          Row() {
-            Button('取消')
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .backgroundColor('#F4F4F5')
-              .fontColor('#27272A')
-              .borderRadius(8)
-              .onClick(() => {
-                this.showRenameSessionDialog = false;
-              })
-
-            Button('确认')
-              .layoutWeight(1)
-              .height(32)
-              .margin({ left: 8 })
-              .fontSize(12)
-              .backgroundColor('#111827')
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => {
-                const name: string = this.renameSessionDialogText.trim();
-                if (name.length === 0 || this.renameSessionDialogId.length === 0) {
-                  return;
-                }
-                const next: WorkspaceItem[] = [];
-                for (let i: number = 0; i < this.workspaces.length; i += 1) {
-                  const w: WorkspaceItem = this.workspaces[i];
-                  if (this.ensureWorkspaceBinding(w) === this.renameSessionDialogId) {
-                    next.push(new WorkspaceItem(w.id, name, w.description, w.workspaceId, w.projectId));
-                  } else {
-                    next.push(new WorkspaceItem(w.id, w.title, w.description, w.workspaceId, w.projectId));
-                  }
-                }
-                this.workspaces = next;
-                this.syncRecentWorkspaces();
-                this.syncCurrentWorkspaceState();
-                this.persistWorkspaceBindings();
-                this.showRenameSessionDialog = false;
-                void codexBackend.renameSession(this.renameSessionDialogId, name);
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(12)
-      }
-
-      if (this.showDeleteSessionDialog) {
-        Column() {
-          Text('删除会话')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
-            .margin({ bottom: 10 })
-
-          Text(`确认删除会话「${this.deleteSessionDialogTitle}」？`)
-            .fontSize(12)
-            .fontColor('#52525B')
-            .width('100%')
-            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-            .backgroundColor('#FEF2F2')
-            .borderRadius(8)
-
-          Row() {
-            Button('取消')
-              .layoutWeight(1)
-              .height(32)
-              .fontSize(12)
-              .backgroundColor('#F4F4F5')
-              .fontColor('#27272A')
-              .borderRadius(8)
-              .onClick(() => {
-                this.showDeleteSessionDialog = false;
-              })
-
-            Button('删除')
-              .layoutWeight(1)
-              .height(32)
-              .margin({ left: 8 })
-              .fontSize(12)
-              .backgroundColor('#DC2626')
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => {
-                void this.deleteSession(this.deleteSessionDialogId);
-                this.showDeleteSessionDialog = false;
-              })
-          }
-          .width('100%')
-          .margin({ top: 10 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(12)
-        .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E4E4E7' })
-        .borderRadius(12)
-      }
     }
     .height('100%')
     .width(this.leftPanelWidth)
