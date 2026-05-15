@@ -112,6 +112,7 @@ class CompactionNotice {
   oldTotalTokens: number;
   newTotalTokens: number;
   timestamp: string;
+  anchorMessageId: string;
 
   constructor(
     id: string,
@@ -121,7 +122,8 @@ class CompactionNotice {
     savedTokens: number,
     oldTotalTokens: number,
     newTotalTokens: number,
-    timestamp: string
+    timestamp: string,
+    anchorMessageId: string = ''
   ) {
     this.id = id;
     this.threadId = threadId;
@@ -131,6 +133,7 @@ class CompactionNotice {
     this.oldTotalTokens = oldTotalTokens;
     this.newTotalTokens = newTotalTokens;
     this.timestamp = timestamp;
+    this.anchorMessageId = anchorMessageId;
   }
 }
 
@@ -1244,7 +1247,6 @@ struct Index {
   @State private tokenTrendRange: number = 0;
   @State private compacting: boolean = false;
   @State private compactError: string = '';
-  private activeCompactionNoticeId: string = '';
   private compactionClearTimerId: number = -1;
   @State private projects: ProjectRecord[] = [];
   @State private newProjectName: string = '';
@@ -1558,6 +1560,7 @@ struct Index {
     const effectiveSaved: number = savedTokens > 0
       ? savedTokens
       : (computedSaved > 0 ? computedSaved : (!isNewRun && previous !== null ? previous.savedTokens : 0));
+    const anchorMessageId: string = isNewRun || previous === null ? this.currentCompactionAnchorMessageId() : previous.anchorMessageId;
     const next = new CompactionNotice(
       noticeId,
       threadId,
@@ -1566,13 +1569,13 @@ struct Index {
       effectiveSaved,
       effectiveOldTotal,
       effectiveNewTotal,
-      isNewRun || previous === null ? this.currentClockLabel() : previous.timestamp
+      isNewRun || previous === null ? this.currentClockLabel() : previous.timestamp,
+      anchorMessageId
     );
     this.compactionNotices = [
       ...this.compactionNotices.filter((item: CompactionNotice) => item.id !== noticeId),
       next
     ];
-    this.activeCompactionNoticeId = noticeId;
     this.compactionNoticeVersion += 1;
     this.scheduleMessageScrollToBottom();
   }
@@ -1606,27 +1609,6 @@ struct Index {
       return false;
     }
     return this.currentCompactionThreadIds().indexOf(trimmedThreadId) >= 0;
-  }
-
-  private latestActiveCompactionNotice(): CompactionNotice | null {
-    this.compactionNoticeVersion;
-    const threadIds: string[] = this.currentCompactionThreadIds();
-    if (threadIds.length === 0) {
-      return this.activeCompactionNoticeById();
-    }
-    for (let index: number = this.compactionNotices.length - 1; index >= 0; index -= 1) {
-      if (threadIds.indexOf(this.compactionNotices[index].threadId) >= 0) {
-        return this.compactionNotices[index];
-      }
-    }
-    return this.activeCompactionNoticeById();
-  }
-
-  private activeCompactionNoticeById(): CompactionNotice | null {
-    if (this.activeCompactionNoticeId.length === 0) {
-      return null;
-    }
-    return this.compactionNoticeById(this.activeCompactionNoticeId);
   }
 
   private scheduleBackendCompactionClear(threadId: string): void {
@@ -4051,7 +4033,18 @@ struct Index {
     const type: string = item.itemType ?? item.role;
     const status: string = item.status ?? '';
     const metadataText: string = item.metadata !== undefined ? JSON.stringify(item.metadata) : '';
-    return `${item.id}:${type}:${status}:${metadataText.length}`;
+    return `${item.id}:${type}:${status}:${metadataText.length}:${this.messageContentRenderSignature(item.content)}`;
+  }
+
+  private messageContentRenderSignature(content: string): string {
+    const length: number = content.length;
+    if (length === 0) {
+      return '0';
+    }
+    const first: number = content.charCodeAt(0);
+    const middle: number = content.charCodeAt(Math.floor(length / 2));
+    const last: number = content.charCodeAt(length - 1);
+    return `${length}:${first}:${middle}:${last}`;
   }
 
   private async connectOrDisconnect(): Promise<void> {
@@ -4252,7 +4245,6 @@ struct Index {
   }
 
   private async selectWorkspace(item: WorkspaceItem): Promise<void> {
-    this.activeCompactionNoticeId = '';
     this.activeWorkspaceId = item.id;
     this.syncSelectedCollaborationMode();
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
@@ -4297,13 +4289,37 @@ struct Index {
       this.diffStat.trim() !== '+0 -0';
   }
 
-  private activeCompactionNotices(): CompactionNotice[] {
-    const latest: CompactionNotice | null = this.latestActiveCompactionNotice();
-    return latest === null ? [] : [latest];
+  private currentCompactionAnchorMessageId(): string {
+    const lastMessage: ChatMessage | null = this.lastConversationMessage();
+    return lastMessage !== null ? lastMessage.id : '';
+  }
+
+  private currentCompactionNotices(): CompactionNotice[] {
+    this.compactionNoticeVersion;
+    const threadIds: string[] = this.currentCompactionThreadIds();
+    if (threadIds.length === 0) {
+      return [...this.compactionNotices];
+    }
+    return this.compactionNotices.filter((notice: CompactionNotice) => {
+      return threadIds.indexOf(notice.threadId) >= 0;
+    });
+  }
+
+  private compactionNoticesBeforeMessages(): CompactionNotice[] {
+    return this.currentCompactionNotices().filter((notice: CompactionNotice) => {
+      const anchorMessageId: string = notice.anchorMessageId.trim();
+      return anchorMessageId.length === 0;
+    });
+  }
+
+  private compactionNoticesAfterMessage(messageId: string): CompactionNotice[] {
+    return this.currentCompactionNotices().filter((notice: CompactionNotice) => {
+      return notice.anchorMessageId === messageId;
+    });
   }
 
   private compactionNoticeRenderKey(notice: CompactionNotice): string {
-    return `${notice.id}:${notice.status}:${notice.savedTokens}:${notice.oldTotalTokens}:${notice.newTotalTokens}:${this.compactionNoticeVersion}`;
+    return `${notice.id}:${notice.status}:${notice.savedTokens}:${notice.oldTotalTokens}:${notice.newTotalTokens}:${notice.anchorMessageId}:${this.compactionNoticeVersion}`;
   }
 
   private isCompactionNoticeExpanded(noticeId: string): boolean {
@@ -7344,21 +7360,19 @@ struct Index {
 
         Text(this.compactionNoticeStatusLabel(notice.status))
           .copyOption(CopyOptions.None)
-          .fontSize(10)
+          .fontSize(this.conversationFontSize(10))
           .fontColor(this.compactionNoticeColor(notice.status))
           .padding({ left: 7, right: 7, top: 2, bottom: 2 })
           .backgroundColor(this.compactionNoticeSoftBackground(notice.status))
           .borderRadius(6)
           .margin({ left: 8 })
 
-        Blank()
-
         Text(notice.timestamp)
           .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
+          .fontSize(this.conversationFontSize(10))
           .fontColor('#94A3B8')
+          .margin({ left: 10 })
       }
-      .width('100%')
       .alignItems(VerticalAlign.Center)
       .hitTestBehavior(HitTestMode.Block)
       .onClick(() => {
@@ -7370,7 +7384,8 @@ struct Index {
         .fontSize(this.conversationFontSize(11))
         .fontColor(this.compactionNoticeColor(notice.status))
         .lineHeight(this.conversationLineHeight(17))
-        .width('100%')
+        .constraintSize({ maxWidth: '100%' })
+        .wordBreak(WordBreak.BREAK_WORD)
         .margin({ top: 6, left: 28 })
         .maxLines(this.isCompactionNoticeExpanded(notice.id) ? 3 : 1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7391,7 +7406,7 @@ struct Index {
           if (notice.status === 'failed' || notice.status === 'timeout') {
             Text('重试压缩')
               .copyOption(CopyOptions.None)
-              .fontSize(10)
+              .fontSize(this.conversationFontSize(10))
               .fontColor('#4338CA')
               .fontWeight(FontWeight.Medium)
               .padding({ left: 8, right: 8, top: 5, bottom: 5 })
@@ -7403,13 +7418,12 @@ struct Index {
               })
           }
         }
-        .width('100%')
+        .constraintSize({ maxWidth: '100%' })
         .alignItems(HorizontalAlign.Start)
         .margin({ top: 8, left: 28 })
       }
     }
-    .width('92%')
-    .constraintSize({ maxWidth: '92%' })
+    .constraintSize({ maxWidth: '72%' })
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 9 })
     .backgroundColor('#F8FAFC')
@@ -7421,7 +7435,7 @@ struct Index {
     Row() {
       Text(label)
         .copyOption(CopyOptions.None)
-        .fontSize(10)
+        .fontSize(this.conversationFontSize(10))
         .fontColor('#64748B')
         .width(56)
 
@@ -10272,12 +10286,15 @@ struct Index {
       Column() {
         Scroll(this.messageScroller) {
           Column() {
-            ForEach(this.visibleMessages(), (item: ChatMessage) => {
-              this.messageLine(item)
-            }, (item: ChatMessage) => this.messageRenderKey(item))
-            ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
+            ForEach(this.compactionNoticesBeforeMessages(), (notice: CompactionNotice) => {
               this.compactionNoticeLine(notice)
             }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
+            ForEach(this.visibleMessages(), (item: ChatMessage) => {
+              this.messageLine(item)
+              ForEach(this.compactionNoticesAfterMessage(item.id), (notice: CompactionNotice) => {
+                this.compactionNoticeLine(notice)
+              }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
+            }, (item: ChatMessage) => this.messageRenderKey(item))
             if (this.shouldShowTurnActivityLine()) {
               this.turnActivityLine()
             }
