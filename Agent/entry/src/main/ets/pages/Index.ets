@@ -112,6 +112,7 @@ class CompactionNotice {
   oldTotalTokens: number;
   newTotalTokens: number;
   timestamp: string;
+  anchorMessageId: string;
 
   constructor(
     id: string,
@@ -121,7 +122,8 @@ class CompactionNotice {
     savedTokens: number,
     oldTotalTokens: number,
     newTotalTokens: number,
-    timestamp: string
+    timestamp: string,
+    anchorMessageId: string = ''
   ) {
     this.id = id;
     this.threadId = threadId;
@@ -131,6 +133,7 @@ class CompactionNotice {
     this.oldTotalTokens = oldTotalTokens;
     this.newTotalTokens = newTotalTokens;
     this.timestamp = timestamp;
+    this.anchorMessageId = anchorMessageId;
   }
 }
 
@@ -1244,7 +1247,6 @@ struct Index {
   @State private tokenTrendRange: number = 0;
   @State private compacting: boolean = false;
   @State private compactError: string = '';
-  private activeCompactionNoticeId: string = '';
   private compactionClearTimerId: number = -1;
   @State private projects: ProjectRecord[] = [];
   @State private newProjectName: string = '';
@@ -1558,6 +1560,7 @@ struct Index {
     const effectiveSaved: number = savedTokens > 0
       ? savedTokens
       : (computedSaved > 0 ? computedSaved : (!isNewRun && previous !== null ? previous.savedTokens : 0));
+    const anchorMessageId: string = isNewRun || previous === null ? this.currentCompactionAnchorMessageId() : previous.anchorMessageId;
     const next = new CompactionNotice(
       noticeId,
       threadId,
@@ -1566,13 +1569,13 @@ struct Index {
       effectiveSaved,
       effectiveOldTotal,
       effectiveNewTotal,
-      isNewRun || previous === null ? this.currentClockLabel() : previous.timestamp
+      isNewRun || previous === null ? this.currentClockLabel() : previous.timestamp,
+      anchorMessageId
     );
     this.compactionNotices = [
       ...this.compactionNotices.filter((item: CompactionNotice) => item.id !== noticeId),
       next
     ];
-    this.activeCompactionNoticeId = noticeId;
     this.compactionNoticeVersion += 1;
     this.scheduleMessageScrollToBottom();
   }
@@ -1606,27 +1609,6 @@ struct Index {
       return false;
     }
     return this.currentCompactionThreadIds().indexOf(trimmedThreadId) >= 0;
-  }
-
-  private latestActiveCompactionNotice(): CompactionNotice | null {
-    this.compactionNoticeVersion;
-    const threadIds: string[] = this.currentCompactionThreadIds();
-    if (threadIds.length === 0) {
-      return this.activeCompactionNoticeById();
-    }
-    for (let index: number = this.compactionNotices.length - 1; index >= 0; index -= 1) {
-      if (threadIds.indexOf(this.compactionNotices[index].threadId) >= 0) {
-        return this.compactionNotices[index];
-      }
-    }
-    return this.activeCompactionNoticeById();
-  }
-
-  private activeCompactionNoticeById(): CompactionNotice | null {
-    if (this.activeCompactionNoticeId.length === 0) {
-      return null;
-    }
-    return this.compactionNoticeById(this.activeCompactionNoticeId);
   }
 
   private scheduleBackendCompactionClear(threadId: string): void {
@@ -4263,7 +4245,6 @@ struct Index {
   }
 
   private async selectWorkspace(item: WorkspaceItem): Promise<void> {
-    this.activeCompactionNoticeId = '';
     this.activeWorkspaceId = item.id;
     this.syncSelectedCollaborationMode();
     this.workspaceRoot = this.workspaceRoots.get(item.id) ?? '';
@@ -4308,13 +4289,37 @@ struct Index {
       this.diffStat.trim() !== '+0 -0';
   }
 
-  private activeCompactionNotices(): CompactionNotice[] {
-    const latest: CompactionNotice | null = this.latestActiveCompactionNotice();
-    return latest === null ? [] : [latest];
+  private currentCompactionAnchorMessageId(): string {
+    const lastMessage: ChatMessage | null = this.lastConversationMessage();
+    return lastMessage !== null ? lastMessage.id : '';
+  }
+
+  private currentCompactionNotices(): CompactionNotice[] {
+    this.compactionNoticeVersion;
+    const threadIds: string[] = this.currentCompactionThreadIds();
+    if (threadIds.length === 0) {
+      return [...this.compactionNotices];
+    }
+    return this.compactionNotices.filter((notice: CompactionNotice) => {
+      return threadIds.indexOf(notice.threadId) >= 0;
+    });
+  }
+
+  private compactionNoticesBeforeMessages(): CompactionNotice[] {
+    return this.currentCompactionNotices().filter((notice: CompactionNotice) => {
+      const anchorMessageId: string = notice.anchorMessageId.trim();
+      return anchorMessageId.length === 0;
+    });
+  }
+
+  private compactionNoticesAfterMessage(messageId: string): CompactionNotice[] {
+    return this.currentCompactionNotices().filter((notice: CompactionNotice) => {
+      return notice.anchorMessageId === messageId;
+    });
   }
 
   private compactionNoticeRenderKey(notice: CompactionNotice): string {
-    return `${notice.id}:${notice.status}:${notice.savedTokens}:${notice.oldTotalTokens}:${notice.newTotalTokens}:${this.compactionNoticeVersion}`;
+    return `${notice.id}:${notice.status}:${notice.savedTokens}:${notice.oldTotalTokens}:${notice.newTotalTokens}:${notice.anchorMessageId}:${this.compactionNoticeVersion}`;
   }
 
   private isCompactionNoticeExpanded(noticeId: string): boolean {
@@ -10283,12 +10288,15 @@ struct Index {
       Column() {
         Scroll(this.messageScroller) {
           Column() {
-            ForEach(this.visibleMessages(), (item: ChatMessage) => {
-              this.messageLine(item)
-            }, (item: ChatMessage) => this.messageRenderKey(item))
-            ForEach(this.activeCompactionNotices(), (notice: CompactionNotice) => {
+            ForEach(this.compactionNoticesBeforeMessages(), (notice: CompactionNotice) => {
               this.compactionNoticeLine(notice)
             }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
+            ForEach(this.visibleMessages(), (item: ChatMessage) => {
+              this.messageLine(item)
+              ForEach(this.compactionNoticesAfterMessage(item.id), (notice: CompactionNotice) => {
+                this.compactionNoticeLine(notice)
+              }, (notice: CompactionNotice) => this.compactionNoticeRenderKey(notice))
+            }, (item: ChatMessage) => this.messageRenderKey(item))
             if (this.shouldShowTurnActivityLine()) {
               this.turnActivityLine()
             }
