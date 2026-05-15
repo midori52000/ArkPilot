@@ -289,7 +289,7 @@ fn run_apply_patch_in_process(req: &ApplyPatchRequest) -> Result<ExecToolCallOut
 1. 给 OHOS apply_patch 加一个全局 mutex，确保同一时刻只有一个 patch 修改 cwd；或
 2. 更干净地在 `codex_apply_patch` crate 增加一个 `apply_patch_with_cwd(patch, cwd, stdout, stderr)`，解析后把每个 hunk 的路径解析成绝对路径再写，不改进程 cwd。
 
-我更推荐第 2 个方案。
+我更推荐第 2 个方案
 
 ### 次修：不要把 Picker URI 的 path 直接当工作区路径
 
