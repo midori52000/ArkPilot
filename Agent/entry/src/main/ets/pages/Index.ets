@@ -738,6 +738,11 @@ struct Index {
   @State private renameSessionText: string = '';
   @State private hoveredProjectId: string = '';
   @State private hoveredSessionId: string = '';
+  @State private hasPointerHover: boolean = false;
+  @State private lastMenuTouchWindowX: number = 0;
+  @State private lastMenuTouchWindowY: number = 0;
+  @State private suppressProjectClickId: string = '';
+  @State private suppressSessionClickId: string = '';
   @State private mouseNearRightEdge: boolean = false;
   @State private chatAreaWidth: number = 0;
   @State private showProjectMenuId: string = '';
@@ -5034,6 +5039,43 @@ struct Index {
     this.floatingMenuY = Math.max(8, windowY - 20);
   }
 
+  private rememberMenuTouchPosition(event: TouchEvent): void {
+    if (event.touches.length > 0) {
+      const touch: TouchObject = event.touches[0];
+      this.lastMenuTouchWindowX = touch.windowX;
+      this.lastMenuTouchWindowY = touch.windowY;
+    }
+  }
+
+  private showProjectFloatingMenu(proj: ProjectRecord, windowX: number, windowY: number): void {
+    this.placeFloatingMenu(windowX, windowY, this.projectFloatingMenuWidth(proj));
+    this.showSessionMenuId = '';
+    this.showProjectMenuId = this.showProjectMenuId === proj.id ? '' : proj.id;
+  }
+
+  private showProjectFloatingMenuFromTouch(proj: ProjectRecord): void {
+    const menuWidth: number = this.projectFloatingMenuWidth(proj);
+    const windowX: number = this.lastMenuTouchWindowX > 0 ? this.lastMenuTouchWindowX : menuWidth + 8;
+    const windowY: number = this.lastMenuTouchWindowY > 0 ? this.lastMenuTouchWindowY : 48;
+    this.showProjectFloatingMenu(proj, windowX, windowY);
+    this.suppressProjectClickId = proj.id;
+  }
+
+  private showSessionFloatingMenu(item: WorkspaceItem, windowX: number, windowY: number): void {
+    const sid: string = this.ensureWorkspaceBinding(item);
+    this.placeFloatingMenu(windowX, windowY, this.sessionFloatingMenuWidth());
+    this.showProjectMenuId = '';
+    this.showSessionMenuId = this.showSessionMenuId === sid ? '' : sid;
+  }
+
+  private showSessionFloatingMenuFromTouch(item: WorkspaceItem): void {
+    const menuWidth: number = this.sessionFloatingMenuWidth();
+    const windowX: number = this.lastMenuTouchWindowX > 0 ? this.lastMenuTouchWindowX : menuWidth + 8;
+    const windowY: number = this.lastMenuTouchWindowY > 0 ? this.lastMenuTouchWindowY : 48;
+    this.showSessionFloatingMenu(item, windowX, windowY);
+    this.suppressSessionClickId = this.ensureWorkspaceBinding(item);
+  }
+
   private closeFloatingMenus(): void {
     this.showProjectMenuId = '';
     this.showSessionMenuId = '';
@@ -5114,11 +5156,9 @@ struct Index {
             .fontColor('#52525B')
             .padding({ left: 6, right: 6, top: 0, bottom: 0 })
             .height(20)
-            .visibility(this.hoveredProjectId === proj.id ? Visibility.Visible : Visibility.Hidden)
+            .visibility(this.hasPointerHover && this.hoveredProjectId === proj.id ? Visibility.Visible : Visibility.Hidden)
             .onClick((event: ClickEvent) => {
-              this.placeFloatingMenu(event.windowX, event.windowY, this.projectFloatingMenuWidth(proj));
-              this.showSessionMenuId = '';
-              this.showProjectMenuId = this.showProjectMenuId === proj.id ? '' : proj.id;
+              this.showProjectFloatingMenu(proj, event.windowX, event.windowY);
             })
 
           // New session button (plus)
@@ -5137,11 +5177,27 @@ struct Index {
         .scale({ x: this.hoveredProjectId === proj.id ? 1.01 : 1, y: this.hoveredProjectId === proj.id ? 1.01 : 1 })
         .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
         .onHover((isHover: boolean) => {
+          if (isHover) {
+            this.hasPointerHover = true;
+          }
           if (this.showProjectMenuId.length === 0) {
             this.hoveredProjectId = isHover ? proj.id : '';
           }
         })
+        .onTouch((event: TouchEvent) => {
+          this.rememberMenuTouchPosition(event);
+        })
+        .gesture(
+          LongPressGesture({ repeat: false, duration: 500 })
+            .onAction(() => {
+              this.showProjectFloatingMenuFromTouch(proj);
+            })
+        )
         .onClick(() => {
+          if (this.suppressProjectClickId === proj.id) {
+            this.suppressProjectClickId = '';
+            return;
+          }
           this.toggleProjectExpanded(proj.id);
         })
 
@@ -5332,12 +5388,9 @@ struct Index {
               .fontSize(16)
               .fontColor('#52525B')
               .padding({ left: 2, right: 2 })
-              .visibility(this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? Visibility.Visible : Visibility.Hidden)
+              .visibility(this.hasPointerHover && this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? Visibility.Visible : Visibility.Hidden)
               .onClick((event: ClickEvent) => {
-                const sid: string = this.ensureWorkspaceBinding(item);
-                this.placeFloatingMenu(event.windowX, event.windowY, this.sessionFloatingMenuWidth());
-                this.showProjectMenuId = '';
-                this.showSessionMenuId = this.showSessionMenuId === sid ? '' : sid;
+                this.showSessionFloatingMenu(item, event.windowX, event.windowY);
               })
           }
           .width('100%')
@@ -5346,7 +5399,21 @@ struct Index {
           .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
           .scale({ x: this.isWorkspaceActive(item) || this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? 1.01 : 1, y: this.isWorkspaceActive(item) || this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? 1.01 : 1 })
           .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
+          .onTouch((event: TouchEvent) => {
+            this.rememberMenuTouchPosition(event);
+          })
+          .gesture(
+            LongPressGesture({ repeat: false, duration: 500 })
+              .onAction(() => {
+                this.showSessionFloatingMenuFromTouch(item);
+              })
+          )
           .onClick(() => {
+            const sid: string = this.ensureWorkspaceBinding(item);
+            if (this.suppressSessionClickId === sid) {
+              this.suppressSessionClickId = '';
+              return;
+            }
             void this.selectWorkspace(item);
           })
         }
@@ -5354,6 +5421,9 @@ struct Index {
         .width('100%')
         .hitTestBehavior(HitTestMode.Transparent)
         .onHover((isHover: boolean) => {
+          if (isHover) {
+            this.hasPointerHover = true;
+          }
           if (this.showSessionMenuId.length === 0) {
             this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
           }
