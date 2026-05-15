@@ -5276,6 +5276,23 @@ struct Index {
           this.showDeleteProjectDialog = true;
         })
 
+        this.floatingMenuItem('复制路径', () => {
+          this.showProjectMenuId = '';
+          let targetPath: string = '';
+          for (let i: number = 0; i < this.projects.length; i += 1) {
+            if (this.projects[i].id === proj.id) {
+              targetPath = this.projects[i].path;
+              break;
+            }
+          }
+          if (targetPath.length > 0) {
+            this.copyPlainText(targetPath, '路径已复制');
+          }
+        })
+
+        this.floatingMenuSeparator()
+        this.floatingMenuSectionTitle('同步文件夹')
+
         if (proj.sourceUri.trim().length > 0) {
           this.floatingMenuItem(this.projectSyncMenuLabel(), () => {
             this.showProjectMenuId = '';
@@ -5291,20 +5308,6 @@ struct Index {
         this.floatingMenuItem(this.projectSourceMenuLabel(proj), () => {
           this.showProjectMenuId = '';
           void this.reselectProjectImportSource(proj.id);
-        })
-
-        this.floatingMenuItem('复制路径', () => {
-          this.showProjectMenuId = '';
-          let targetPath: string = '';
-          for (let i: number = 0; i < this.projects.length; i += 1) {
-            if (this.projects[i].id === proj.id) {
-              targetPath = this.projects[i].path;
-              break;
-            }
-          }
-          if (targetPath.length > 0) {
-            this.copyPlainText(targetPath, '路径已复制');
-          }
         })
     }
     .width(this.floatingMenuWidth)
@@ -5328,6 +5331,25 @@ struct Index {
       .onClick(() => {
         onPress();
       })
+  }
+
+  @Builder
+  private floatingMenuSeparator() {
+    Divider()
+      .width('100%')
+      .color('#E4E4E7')
+      .strokeWidth(0.5)
+      .margin({ top: 4, bottom: 4 })
+  }
+
+  @Builder
+  private floatingMenuSectionTitle(label: string) {
+    Text(label)
+      .copyOption(CopyOptions.None)
+      .fontSize(10)
+      .fontColor('#A1A1AA')
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 2, bottom: 2 })
   }
 
 
