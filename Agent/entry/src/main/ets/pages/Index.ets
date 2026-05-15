@@ -9665,31 +9665,6 @@ struct Index {
 
 
   @Builder
-  private messageJumpToLatestButton() {
-    Row() {
-      Blank()
-        .layoutWeight(1)
-      Row() {
-        Text('回到底部')
-          .copyOption(CopyOptions.None)
-          .fontSize(this.conversationFontSize(11))
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#18181B')
-      }
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: 0.5, color: '#D4D4D8' })
-      .borderRadius(8)
-      .shadow({ radius: 8, color: '#1A000000', offsetY: 2 })
-      .onClick(() => {
-        this.jumpToLatestMessage();
-      })
-    }
-    .width('100%')
-    .margin({ top: 6 })
-  }
-
-  @Builder
   private approvalCard(approval: CodexApprovalRequest) {
     Column() {
       Row() {
@@ -10186,10 +10161,6 @@ struct Index {
           this.mouseNearRightEdge = false;
         }
       })
-
-      if (!this.messageAutoFollowToBottom) {
-        this.messageJumpToLatestButton()
-      }
 
       Column() {
           Row() {
