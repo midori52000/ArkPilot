@@ -7360,21 +7360,19 @@ struct Index {
 
         Text(this.compactionNoticeStatusLabel(notice.status))
           .copyOption(CopyOptions.None)
-          .fontSize(10)
+          .fontSize(this.conversationFontSize(10))
           .fontColor(this.compactionNoticeColor(notice.status))
           .padding({ left: 7, right: 7, top: 2, bottom: 2 })
           .backgroundColor(this.compactionNoticeSoftBackground(notice.status))
           .borderRadius(6)
           .margin({ left: 8 })
 
-        Blank()
-
         Text(notice.timestamp)
           .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
+          .fontSize(this.conversationFontSize(10))
           .fontColor('#94A3B8')
+          .margin({ left: 10 })
       }
-      .width('100%')
       .alignItems(VerticalAlign.Center)
       .hitTestBehavior(HitTestMode.Block)
       .onClick(() => {
@@ -7386,7 +7384,8 @@ struct Index {
         .fontSize(this.conversationFontSize(11))
         .fontColor(this.compactionNoticeColor(notice.status))
         .lineHeight(this.conversationLineHeight(17))
-        .width('100%')
+        .constraintSize({ maxWidth: '100%' })
+        .wordBreak(WordBreak.BREAK_WORD)
         .margin({ top: 6, left: 28 })
         .maxLines(this.isCompactionNoticeExpanded(notice.id) ? 3 : 1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7407,7 +7406,7 @@ struct Index {
           if (notice.status === 'failed' || notice.status === 'timeout') {
             Text('重试压缩')
               .copyOption(CopyOptions.None)
-              .fontSize(10)
+              .fontSize(this.conversationFontSize(10))
               .fontColor('#4338CA')
               .fontWeight(FontWeight.Medium)
               .padding({ left: 8, right: 8, top: 5, bottom: 5 })
@@ -7419,13 +7418,12 @@ struct Index {
               })
           }
         }
-        .width('100%')
+        .constraintSize({ maxWidth: '100%' })
         .alignItems(HorizontalAlign.Start)
         .margin({ top: 8, left: 28 })
       }
     }
-    .width('92%')
-    .constraintSize({ maxWidth: '92%' })
+    .constraintSize({ maxWidth: '72%' })
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 9 })
     .backgroundColor('#F8FAFC')
@@ -7437,7 +7435,7 @@ struct Index {
     Row() {
       Text(label)
         .copyOption(CopyOptions.None)
-        .fontSize(10)
+        .fontSize(this.conversationFontSize(10))
         .fontColor('#64748B')
         .width(56)
 
