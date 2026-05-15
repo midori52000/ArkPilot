@@ -4051,7 +4051,18 @@ struct Index {
     const type: string = item.itemType ?? item.role;
     const status: string = item.status ?? '';
     const metadataText: string = item.metadata !== undefined ? JSON.stringify(item.metadata) : '';
-    return `${item.id}:${type}:${status}:${metadataText.length}`;
+    return `${item.id}:${type}:${status}:${metadataText.length}:${this.messageContentRenderSignature(item.content)}`;
+  }
+
+  private messageContentRenderSignature(content: string): string {
+    const length: number = content.length;
+    if (length === 0) {
+      return '0';
+    }
+    const first: number = content.charCodeAt(0);
+    const middle: number = content.charCodeAt(Math.floor(length / 2));
+    const last: number = content.charCodeAt(length - 1);
+    return `${length}:${first}:${middle}:${last}`;
   }
 
   private async connectOrDisconnect(): Promise<void> {
