@@ -11564,6 +11564,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .backgroundColor('#EEF2F7')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       Stack({ alignContent: Alignment.BottomEnd }) {
         Column() {
@@ -11578,6 +11579,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .padding(10)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         if (this.isPhoneBreakpoint() && this.showLeftDrawer) {
           Stack({ alignContent: Alignment.TopStart }) {

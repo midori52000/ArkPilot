@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { startEmbeddedCodexHost } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { installBundledSkills } from '../skills/BundledSkills';
@@ -66,6 +67,34 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onWindowStageCreate');
+
+    // 设置沉浸式窗口
+    windowStage.getMainWindow((err: BusinessError, windowClass: window.Window) => {
+      if (err.code) {
+        hilog.error(DOMAIN, TAG, 'Failed to get main window. Cause: %{public}s', JSON.stringify(err));
+        return;
+      }
+
+      // 设置沉浸式布局
+      let isLayoutFullScreen = true;
+      try {
+        windowClass.setWindowLayoutFullScreen(isLayoutFullScreen).then(() => {
+          hilog.info(DOMAIN, TAG, '%{public}s', 'Succeeded in setting the window layout to full-screen mode.');
+
+          // 隐藏状态栏和导航栏
+          let names: Array<'status' | 'navigation'> = [];
+          windowClass.setWindowSystemBarEnable(names).then(() => {
+            hilog.info(DOMAIN, TAG, '%{public}s', 'Succeeded in hiding the system bar.');
+          }).catch((err: BusinessError) => {
+            hilog.error(DOMAIN, TAG, 'Failed to hide the system bar. Cause: %{public}s', JSON.stringify(err));
+          });
+        }).catch((err: BusinessError) => {
+          hilog.error(DOMAIN, TAG, 'Failed to set the window layout to full-screen mode. Cause: %{public}s', JSON.stringify(err));
+        });
+      } catch (exception) {
+        hilog.error(DOMAIN, TAG, 'Failed to set the window layout to full-screen mode. Cause: %{public}s', JSON.stringify(exception));
+      }
+    });
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
