@@ -926,12 +926,6 @@ struct Index {
   @StorageProp('arkPilotBreakpoint')
   @Watch('onBreakpointChanged')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
-
-  private readonly quickActions: string[] = [
-    '检查当前工作目录的变更',
-    '总结最近一次改动',
-    '解释右侧 diff'
-  ];
   private readonly thinkingStatusPhrases: string[] = [
     '正在厘清问题',
     '正在读取上下文',
@@ -1000,7 +994,6 @@ struct Index {
   @State private workspaceStatusText: string = 'å°šæœªæ£€æµ‹å·¥ä½œåŒºæƒé™';
   @State private selectedEffortIndex: number = 0;
   @State private showEffortOptions: boolean = false;
-  @State private showComposerToolbar: boolean = false;
   @State private collaborationModes: CollaborationModeOption[] = [];
   @State private selectedCollaborationModeName: string = 'default';
   @State private collaborationModeVersion: number = 0;
@@ -4159,13 +4152,6 @@ struct Index {
       lowerText.indexOf('exception') >= 0;
   }
 
-  private hasChoiceSignal(text: string): boolean {
-    return text.indexOf('需要') >= 0 ||
-      text.indexOf('选择') >= 0 ||
-      text.indexOf('确认') >= 0 ||
-      text.indexOf('补充') >= 0 ||
-      text.indexOf('请先') >= 0;
-  }
 
   private hasDiffSignal(): boolean {
     return this.diffFiles.length > 0 ||
@@ -4241,83 +4227,6 @@ struct Index {
     }
   }
 
-  private uniqueInputHints(values: string[], maxCount: number): string[] {
-    const result: string[] = [];
-    for (let index = 0; index < values.length; index += 1) {
-      const value: string = values[index].trim();
-      if (value.length === 0 || result.indexOf(value) >= 0) {
-        continue;
-      }
-      result.push(value);
-      if (result.length >= maxCount) {
-        break;
-      }
-    }
-    return result;
-  }
-
-  private dynamicInputHints(): string[] {
-    if (this.pendingRequestUserInput !== null) {
-      const firstQuestion: string = this.pendingRequestUserInput.questions.length > 0
-        ? this.pendingRequestUserInput.questions[0].header.trim()
-        : '';
-      return this.uniqueInputHints([
-        firstQuestion.length > 0 ? `补充“${firstQuestion}”` : '补充上方需要的信息',
-        '说明我还不确定的部分',
-        '让 ArkPilot 先给可选方案'
-      ], 3);
-    }
-
-    if (this.pendingApproval !== null) {
-      return this.uniqueInputHints([
-        '解释这次操作的影响',
-        '改用不需要审批的方案',
-        '停止当前操作并总结原因'
-      ], 3);
-    }
-
-    if (this.isRunning) {
-      return this.uniqueInputHints([
-        '完成后总结当前进展',
-        '完成后检查 diff',
-        '停止后保留当前草稿'
-      ], 3);
-    }
-
-    const lastMessage: ChatMessage | null = this.lastConversationMessage();
-    const contextText: string = `${this.summaryTitle}\n${this.summaryPoints.join('\n')}\n${lastMessage !== null ? lastMessage.content : ''}`;
-    const hints: string[] = [];
-
-    if (this.hasFailureSignal(contextText)) {
-      hints.push('根据最新错误继续修复');
-      hints.push('定位失败原因并给出最小改动');
-      hints.push('重新运行验证并报告结果');
-    } else if (lastMessage !== null && this.hasChoiceSignal(lastMessage.content)) {
-      hints.push('按推荐方案继续');
-      hints.push('先比较可选方案再执行');
-      hints.push('我补充约束后再处理');
-    } else if (this.hasDiffSignal()) {
-      hints.push('检查当前 diff 是否有风险');
-      hints.push('总结本轮改动和验证结果');
-      hints.push('继续完善右侧变更');
-    } else if (lastMessage !== null && lastMessage.role === 'user') {
-      hints.push('补充上条需求的限制条件');
-      hints.push('换一种实现方案');
-      hints.push('基于当前工作目录继续');
-    } else if (lastMessage !== null) {
-      hints.push('继续处理最新回复里的下一步');
-      hints.push('总结刚才的结论和风险');
-      hints.push('检查当前工作目录是否还有遗漏');
-    }
-
-    if (this.workspaceRoot.trim().length > 0) {
-      hints.push('检查当前工作目录的变更');
-    } else {
-      hints.push('说明当前默认 cwd 并检查可操作范围');
-    }
-
-    return this.uniqueInputHints([...hints, ...this.quickActions], 3);
-  }
 
   private dynamicInputPlaceholder(): string {
     if (this.pendingRequestUserInput !== null) {
@@ -4346,7 +4255,7 @@ struct Index {
     if (lastMessage.role === 'user') {
       return '补充上条需求的背景、路径或验收条件...';
     }
-    return '基于最新回复继续追问、修正或要求验证...';
+    return '基于最新回复继续追问...';
   }
 
   private connectionButtonLabel(): string {
@@ -5485,14 +5394,16 @@ struct Index {
     Text(option.label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor(selected ? '#18181B' : '#71717A')
+      .fontColor(selected ? '#0F172A' : '#64748B')
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Normal)
-      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-      .backgroundColor(selected ? '#E4E4E7' : '#FAFAFA')
-      .borderRadius(6)
-      .scale({ x: selected ? 1.04 : 1, y: selected ? 1.04 : 1 })
+      .padding({ left: 11, right: 11, top: 6, bottom: 6 })
+      .backgroundColor(selected ? '#EEF6FF' : '#FFFFFF')
+      .border({ width: 0.5, color: selected ? '#93C5FD' : '#E2E8F0' })
+      .borderRadius(10)
+      .shadow(selected ? { radius: 8, color: '#143B82F6', offsetY: 2 } : { radius: 0, color: '#00000000', offsetY: 0 })
+      .scale({ x: selected ? 1.03 : 1, y: selected ? 1.03 : 1 })
       .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
-      .margin({ right: 6, bottom: 6 })
+      .margin({ right: 7, bottom: 7 })
       .onClick(() => {
         onPress();
       })
@@ -9752,20 +9663,6 @@ struct Index {
     })
   }
 
-  @Builder
-  private actionChip(label: string) {
-    Text(label)
-      .copyOption(CopyOptions.None)
-      .fontSize(this.conversationFontSize(10))
-      .fontColor('#71717A')
-      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-      .backgroundColor('#FAFAFA')
-      .borderRadius(6)
-      .margin({ right: 6, bottom: 6 })
-      .onClick(() => {
-        this.draft = label;
-      })
-  }
 
   @Builder
   private messageJumpToLatestButton() {
@@ -10295,63 +10192,28 @@ struct Index {
       }
 
       Column() {
-        if (this.isPhoneBreakpoint()) {
-          Row() {
-            Text(this.currentCollaborationModeLabel())
-              .copyOption(CopyOptions.None)
-              .fontSize(10)
-              .fontColor('#71717A')
-            Text('/')
-              .copyOption(CopyOptions.None)
-              .fontSize(10)
-              .fontColor('#D4D4D8')
-              .margin({ left: 4, right: 4 })
-            Text(this.currentEffortLabel())
-              .copyOption(CopyOptions.None)
-              .fontSize(10)
-              .fontColor('#71717A')
-            Blank()
-              .layoutWeight(1)
-            Text(this.showComposerToolbar ? '▴' : '▾')
-              .copyOption(CopyOptions.None)
-              .fontSize(10)
-              .fontColor('#A1A1AA')
-          }
-          .width('100%')
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('#FAFAFA')
-          .borderRadius(8)
-          .scale({ x: this.showComposerToolbar ? 1.01 : 1, y: this.showComposerToolbar ? 1.01 : 1 })
-          .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
-          .onClick(() => {
-            this.runFastMotion(() => {
-              this.showComposerToolbar = !this.showComposerToolbar;
-            });
-          })
-        }
-
-        if (!this.isPhoneBreakpoint() || this.showComposerToolbar) {
           Row() {
             Row() {
               Text('模式')
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#71717A')
+                .fontColor('#64748B')
               Text(this.currentCollaborationModeLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#18181B')
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#0F172A')
                 .margin({ left: 6 })
               Text('▾')
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#A1A1AA')
+                .fontColor('#94A3B8')
                 .margin({ left: 6 })
             }
-            .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-            .backgroundColor(this.showCollaborationModeOptions ? '#F4F4F5' : '#FAFAFA')
-            .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#D4D4D8' : '#E4E4E7' })
-            .borderRadius(8)
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .backgroundColor(this.showCollaborationModeOptions ? '#EEF6FF' : '#FFFFFF')
+            .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#93C5FD' : '#E2E8F0' })
+            .borderRadius(12)
             .scale({ x: this.showCollaborationModeOptions ? 1.02 : 1, y: this.showCollaborationModeOptions ? 1.02 : 1 })
             .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
             .onClick(() => {
@@ -10383,9 +10245,9 @@ struct Index {
                 .fontColor('#94A3B8')
                 .margin({ left: 6 })
             }
-            .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-            .backgroundColor(this.showEffortOptions ? '#EEF4FF' : '#FFFFFF')
-            .border({ width: 1, color: this.showEffortOptions ? '#BFDBFE' : '#D7DEE8' })
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .backgroundColor(this.showEffortOptions ? '#EEF6FF' : '#FFFFFF')
+            .border({ width: 0.5, color: this.showEffortOptions ? '#93C5FD' : '#E2E8F0' })
             .borderRadius(12)
             .scale({ x: this.showEffortOptions ? 1.02 : 1, y: this.showEffortOptions ? 1.02 : 1 })
             .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
@@ -10399,7 +10261,7 @@ struct Index {
             })
           }
           .width('100%')
-          .margin({ top: this.isPhoneBreakpoint() ? 6 : 0 })
+          .margin({ top: 0 })
           .transition(TransitionEffect.OPACITY.animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn }))
 
           if (this.showCollaborationModeOptions) {
@@ -10435,30 +10297,21 @@ struct Index {
             .transition(TransitionEffect.OPACITY.animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn }))
           }
 
-          Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-            ForEach(this.dynamicInputHints(), (item: string) => {
-              this.actionChip(item)
-            }, (item: string) => item)
-          }
-          .width('100%')
-          .margin({ top: 8 })
-        }
-
         Row() {
           TextArea({ text: this.draft, placeholder: this.dynamicInputPlaceholder() })
             .layoutWeight(1)
-            .constraintSize({ minHeight: 40, maxHeight: 132 })
+            .constraintSize({ minHeight: 42, maxHeight: 136 })
             .minLines(1)
             .maxLines(5, { overflowMode: MaxLinesMode.SCROLL })
-            .fontSize(this.conversationFontSize(12))
-            .lineHeight(this.conversationLineHeight(19))
-            .fontColor('#18181B')
+            .fontSize(this.conversationFontSize(13))
+            .lineHeight(this.conversationLineHeight(20))
+            .fontColor('#0F172A')
             .wordBreak(WordBreak.BREAK_WORD)
-            .placeholderColor('#A1A1AA')
-            .backgroundColor('#FAFAFA')
-            .borderRadius(10)
-            .border({ width: 0.5, color: '#E4E4E7' })
-            .padding({ left: 12, right: 12 })
+            .placeholderColor('#94A3B8')
+            .backgroundColor('#FFFFFF')
+            .borderRadius(14)
+            .border({ width: 0.5, color: '#D7DEE8' })
+            .padding({ left: 14, right: 14 })
             .enterKeyType(EnterKeyType.Send)
             .onChange((value: string) => {
               this.draft = value;
@@ -10480,15 +10333,16 @@ struct Index {
           Button() {
             Text(this.isRunning ? '■' : '发送')
               .fontSize(this.isRunning ? 14 : 12)
-              .fontWeight(FontWeight.Medium)
+              .fontWeight(FontWeight.Bold)
               .fontColor('#FFFFFF')
               .copyOption(CopyOptions.None)
           }
-            .width(64)
-            .height(36)
-            .margin({ left: 8 })
-            .backgroundColor('#27272A')
-            .borderRadius(10)
+            .width(66)
+            .height(42)
+            .margin({ left: 9 })
+            .backgroundColor(this.isRunning ? '#27272A' : '#111827')
+            .borderRadius(14)
+            .shadow({ radius: 12, color: this.isRunning ? '#22DC2626' : '#24111827', offsetY: 4 })
             .opacity(1)
             .onClick(() => {
               if (this.isRunning) {
@@ -10506,26 +10360,28 @@ struct Index {
           Text(this.connectionText)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#A1A1AA')
+            .fontColor('#64748B')
+            .fontWeight(FontWeight.Medium)
 
           Text(this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#A1A1AA')
+            .fontColor('#94A3B8')
             .margin({ left: 10 })
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .width('100%')
-        .margin({ top: 8 })
+        .margin({ top: 9 })
       }
       .width('100%')
-      .padding(12)
+      .padding({ left: 14, right: 14, top: 12, bottom: 10 })
       .margin({ top: 10 })
       .backgroundColor('#FAFAFA')
       .border({ width: 0.5, color: '#E4E4E7' })
-      .borderRadius(10)
+      .borderRadius(18)
+      .shadow({ radius: 18, color: '#120F172A', offsetY: 6 })
     }
     .height('100%')
     .width('100%')
