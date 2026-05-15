@@ -5,6 +5,9 @@
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.FILE_ACCESS_PERSIST"
       }
     ],
     "description": "$string:module_desc",

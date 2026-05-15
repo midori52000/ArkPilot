@@ -45,8 +45,9 @@ function safeParseSnapshot(rawText: string): ProjectStoreSnapshot {
         const name: string = typeof itemRecord['name'] === 'string' ? (itemRecord['name'] as string) : '';
         const path: string = typeof itemRecord['path'] === 'string' ? (itemRecord['path'] as string) : '';
         const expanded: boolean = typeof itemRecord['expanded'] === 'boolean' ? (itemRecord['expanded'] as boolean) : true;
+        const sourceUri: string = typeof itemRecord['sourceUri'] === 'string' ? (itemRecord['sourceUri'] as string) : '';
         if (id.length > 0 && name.length > 0) {
-          projects.push(new ProjectRecord(id, name, path, expanded));
+          projects.push(new ProjectRecord(id, name, path, expanded, sourceUri));
         }
       });
     }

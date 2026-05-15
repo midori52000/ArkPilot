@@ -34,7 +34,7 @@ import pasteboard from '@ohos.pasteboard';
 import { promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { fileUri, picker } from '@kit.CoreFileKit';
+import { fileShare, fileUri, picker } from '@kit.CoreFileKit';
 import fileIo from '@ohos.file.fs';
 import uri from '@ohos.uri';
 
@@ -44,7 +44,10 @@ const WAITING_FOR_DIFF_TEXT: string = '\u7b49\u5f85 turn/diff/updated \u901a\u77
 const NO_DIFF_TEXT: string = '\u672c\u8f6e\u5c1a\u672a\u4ea7\u751f diff\u3002';
 const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
 const UNKNOWN_DIFF_FILE_TEXT: string = '\u672a\u8bc6\u522b\u6587\u4ef6';
+const USER_FILE_SERVICE_SYSCAP: string = 'SystemCapability.FileManagement.UserFileService';
 const FOLDER_SELECTION_SYSCAP: string = 'SystemCapability.FileManagement.UserFileService.FolderSelection';
+const FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.AppFileService.FolderAuthorization';
+const LEGACY_FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.File.Environment.FolderObtain';
 
 class ChatMessage {
   id: string;
@@ -264,6 +267,16 @@ class FormulaParseResult {
   constructor(node: FormulaNode, nextIndex: number) {
     this.node = node;
     this.nextIndex = nextIndex;
+  }
+}
+
+class DirectoryMirrorResult {
+  copiedFiles: number;
+  deletedEntries: number;
+
+  constructor(copiedFiles: number, deletedEntries: number) {
+    this.copiedFiles = copiedFiles;
+    this.deletedEntries = deletedEntries;
   }
 }
 
@@ -714,7 +727,7 @@ struct Index {
   @State private projects: ProjectRecord[] = [];
   @State private showCreateProjectDialog: boolean = false;
   @State private newProjectName: string = '';
-  @State private newProjectPath: string = '';
+  @State private newProjectSourceUri: string = '';
   @State private renamingProjectId: string = '';
   @State private renameProjectText: string = '';
   @State private showAboutDialog: boolean = false;
@@ -729,6 +742,9 @@ struct Index {
   @State private chatAreaWidth: number = 0;
   @State private showProjectMenuId: string = '';
   @State private showSessionMenuId: string = '';
+  @State private floatingMenuX: number = 0;
+  @State private floatingMenuY: number = 0;
+  @State private floatingMenuWidth: number = 120;
   @State private showRenameSessionDialog: boolean = false;
   @State private renameSessionDialogText: string = '';
   @State private renameSessionDialogId: string = '';
@@ -1430,19 +1446,20 @@ struct Index {
 
   private async createProject(): Promise<void> {
     const name: string = this.newProjectName.trim();
-    const path: string = this.newProjectPath.trim();
-    if (name.length === 0 || path.length === 0) {
-      promptAction.showToast({ message: '请输入项目名称并选择目录', duration: 2000 });
+    if (name.length === 0) {
+      promptAction.showToast({ message: '请输入项目名称', duration: 2000 });
       return;
     }
+    const path: string = this.sandboxProjectPath();
+    const sourceUri: string = this.newProjectSourceUri.trim();
     const id: string = `proj_${Date.now().toString()}`;
-    const next: ProjectRecord[] = [...this.projects, new ProjectRecord(id, name, path, true)];
+    const next: ProjectRecord[] = [...this.projects, new ProjectRecord(id, name, path, true, sourceUri)];
     this.projects = next;
     this.saveProjects();
     this.showCreateProjectDialog = false;
     this.newProjectName = '';
-    this.newProjectPath = '';
-    promptAction.showToast({ message: `项目"${name}"已创建`, duration: 2000 });
+    this.newProjectSourceUri = '';
+    promptAction.showToast({ message: sourceUri.length > 0 ? `项目"${name}"已创建，外部同步文件夹已记录` : `项目"${name}"已创建`, duration: 2000 });
   }
 
   private startRenameProject(projectId: string): void {
@@ -1462,9 +1479,9 @@ struct Index {
     for (let i: number = 0; i < this.projects.length; i += 1) {
       const p: ProjectRecord = this.projects[i];
       if (p.id === this.renamingProjectId) {
-        next.push(new ProjectRecord(p.id, name, p.path, p.expanded));
+        next.push(new ProjectRecord(p.id, name, p.path, p.expanded, p.sourceUri));
       } else {
-        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
+        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, p.sourceUri));
       }
     }
     this.projects = next;
@@ -1496,9 +1513,9 @@ struct Index {
     for (let i: number = 0; i < this.projects.length; i += 1) {
       const p: ProjectRecord = this.projects[i];
       if (p.id === projectId) {
-        next.push(new ProjectRecord(p.id, p.name, p.path, !p.expanded));
+        next.push(new ProjectRecord(p.id, p.name, p.path, !p.expanded, p.sourceUri));
       } else {
-        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
+        next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, p.sourceUri));
       }
     }
     this.runFastMotion(() => {
@@ -1707,6 +1724,49 @@ struct Index {
     }
   }
 
+  private canUseUserFileService(): boolean {
+    try {
+      return canIUse(USER_FILE_SERVICE_SYSCAP);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private canPersistExternalFolderPermission(): boolean {
+    try {
+      return canIUse(FOLDER_AUTHORIZATION_SYSCAP) || canIUse(LEGACY_FOLDER_AUTHORIZATION_SYSCAP);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private projectSourcePermissionMode(): number {
+    return fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE;
+  }
+
+  private async persistProjectSourcePermission(sourceUri: string): Promise<boolean> {
+    if (sourceUri.trim().length === 0 || !this.canPersistExternalFolderPermission()) {
+      return false;
+    }
+    try {
+      await fileShare.persistPermission([{ uri: sourceUri, operationMode: this.projectSourcePermissionMode() }]);
+      return true;
+    } catch (err) {
+      hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'persist source permission failed: %{public}s', this.describeError(err));
+      return false;
+    }
+  }
+
+  private async activateProjectSourcePermission(sourceUri: string): Promise<void> {
+    if (sourceUri.trim().length === 0) {
+      throw new Error('项目没有同步文件夹。');
+    }
+    if (!this.canPersistExternalFolderPermission()) {
+      return;
+    }
+    await fileShare.activatePermission([{ uri: sourceUri, operationMode: this.projectSourcePermissionMode() }]);
+  }
+
   private sanitizeProjectDirectoryName(projectName: string): string {
     const sanitized: string = projectName.trim().replace(/[\/\\:*?"<>|]/g, '_');
     if (sanitized.length === 0 || sanitized === '.' || sanitized === '..') {
@@ -1730,7 +1790,7 @@ struct Index {
     if (context === null) {
       throw new Error('当前页面上下文不可用，无法创建应用内项目目录。');
     }
-    const basePath: string = `${context.filesDir}/codex-home/projects`;
+    const basePath: string = `${context.filesDir}/projects`;
     const directoryName: string = this.sanitizeProjectDirectoryName(this.newProjectName);
     let candidatePath: string = `${basePath}/${directoryName}`;
     let suffix: number = 2;
@@ -1766,6 +1826,29 @@ struct Index {
     return new WorkspaceDirectorySelection(candidatePath, selectedUri);
   }
 
+  private async pickDownloadDirectorySelection(projectDirectoryName?: string): Promise<WorkspaceDirectorySelection | null> {
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined) {
+      throw new Error('当前页面上下文不可用，无法打开下载目录授权。');
+    }
+    if (!this.canUseUserFileService()) {
+      throw new Error('当前设备不支持下载目录授权。');
+    }
+    const documentSaveOptions = new picker.DocumentSaveOptions();
+    documentSaveOptions.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+    const documentPicker = new picker.DocumentViewPicker(hostContext);
+    const selectedUris: Array<string> = await documentPicker.save(documentSaveOptions);
+    if (selectedUris.length === 0) {
+      return null;
+    }
+    let selectedUri: string = selectedUris[0];
+    if (projectDirectoryName !== undefined && projectDirectoryName.trim().length > 0) {
+      selectedUri = this.childUri(this.childUri(selectedUri, 'projects'), projectDirectoryName.trim());
+    }
+    const candidatePath: string = this.fileUriToFsPath(selectedUri);
+    return new WorkspaceDirectorySelection(candidatePath, selectedUri);
+  }
+
   private async pickWorkspaceDirectory(): Promise<void> {
     try {
       const selection: WorkspaceDirectorySelection | null = await this.pickDirectorySelection();
@@ -1782,16 +1865,76 @@ struct Index {
   private async pickWorkspaceDirectoryForProject(): Promise<void> {
     try {
       if (!this.canSelectExternalFolder()) {
-        this.newProjectPath = this.sandboxProjectPath();
-        promptAction.showToast({ message: '当前设备不支持选择外部目录，已使用应用内项目目录', duration: 3000 });
+        if (this.newProjectName.trim().length === 0) {
+          promptAction.showToast({ message: '请先输入项目名称，再启用下载目录同步', duration: 2500 });
+          return;
+        }
+        const downloadSelection: WorkspaceDirectorySelection | null = await this.pickDownloadDirectorySelection(this.sanitizeProjectDirectoryName(this.newProjectName));
+        if (downloadSelection !== null) {
+          this.newProjectSourceUri = downloadSelection.sourceUri;
+          promptAction.showToast({ message: '已启用下载目录同步，项目将使用应用内目录', duration: 3000 });
+        }
         return;
       }
       const selection: WorkspaceDirectorySelection | null = await this.pickDirectorySelection();
       if (selection !== null) {
-        this.newProjectPath = selection.rootPath;
+        this.newProjectSourceUri = selection.sourceUri;
+        const persisted: boolean = await this.persistProjectSourcePermission(selection.sourceUri);
+        promptAction.showToast({
+          message: persisted
+            ? '外部目录已记录为同步文件夹，读写授权已持久化'
+            : '外部目录已记录为同步文件夹；授权未持久化，重启后同步可能需要重新选择',
+          duration: 3000
+        });
       }
     } catch (err) {
-      promptAction.showToast({ message: `选择目录失败: ${this.describeError(err)}`, duration: 3000 });
+      promptAction.showToast({ message: `选择同步文件夹失败: ${this.describeError(err)}`, duration: 3000 });
+    }
+  }
+
+  private async reselectProjectImportSource(projectId: string): Promise<void> {
+    try {
+      let selection: WorkspaceDirectorySelection | null = null;
+      let persisted: boolean = false;
+      let downloadMode: boolean = false;
+      if (this.canSelectExternalFolder()) {
+        selection = await this.pickDirectorySelection();
+        if (selection !== null) {
+          persisted = await this.persistProjectSourcePermission(selection.sourceUri);
+        }
+      } else {
+        let projectDirectoryName: string = '';
+        for (let i: number = 0; i < this.projects.length; i += 1) {
+          if (this.projects[i].id === projectId) {
+            projectDirectoryName = this.sanitizeProjectDirectoryName(this.projects[i].name);
+            break;
+          }
+        }
+        selection = await this.pickDownloadDirectorySelection(projectDirectoryName);
+        downloadMode = true;
+      }
+      if (selection === null) {
+        return;
+      }
+      const next: ProjectRecord[] = [];
+      for (let i: number = 0; i < this.projects.length; i += 1) {
+        const p: ProjectRecord = this.projects[i];
+        if (p.id === projectId) {
+          next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, selection.sourceUri));
+        } else {
+          next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, p.sourceUri));
+        }
+      }
+      this.projects = next;
+      this.saveProjects();
+      promptAction.showToast({
+        message: downloadMode
+          ? '下载目录同步文件夹已更新'
+          : (persisted ? '同步文件夹已更新，读写授权已持久化' : '同步文件夹已更新；授权未持久化，重启后同步可能需要重新选择'),
+        duration: 3000
+      });
+    } catch (err) {
+      promptAction.showToast({ message: `更新同步文件夹失败: ${this.describeError(err)}`, duration: 3000 });
     }
   }
 
@@ -3717,6 +3860,312 @@ struct Index {
     return JSON.stringify(err);
   }
 
+  private normalizedDirectoryUri(rawUri: string): string {
+    let result: string = rawUri.trim();
+    while (result.endsWith('/')) {
+      result = result.substring(0, result.length - 1);
+    }
+    return result;
+  }
+
+  private fileUriToFsPath(rawUri: string): string {
+    try {
+      return new fileUri.FileUri(rawUri).path;
+    } catch (_err) {
+      return rawUri;
+    }
+  }
+
+  private encodeUriPathSegment(segment: string): string {
+    return encodeURIComponent(segment).replace(/%2F/g, '/');
+  }
+
+  private childUri(parentUri: string, childName: string): string {
+    return `${this.normalizedDirectoryUri(parentUri)}/${this.encodeUriPathSegment(childName)}`;
+  }
+
+  private copyProjectFileToUri(sourcePath: string, targetUri: string): void {
+    const targetPath: string = this.fileUriToFsPath(targetUri);
+    let source: fileIo.File | null = null;
+    let target: fileIo.File | null = null;
+    try {
+      source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+    } catch (err) {
+      throw new Error(`打开源文件失败: ${sourcePath}; ${this.describeError(err)}`);
+    }
+    try {
+      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+    } catch (err) {
+      fileIo.closeSync(source);
+      throw new Error(`打开目标文件失败: ${targetUri}; ${this.describeError(err)}`);
+    }
+    try {
+      const stat = fileIo.statSync(sourcePath);
+      const chunkSize: number = 64 * 1024;
+      let offset: number = 0;
+      while (offset < stat.size) {
+        const readLength: number = Math.min(chunkSize, stat.size - offset);
+        const buffer = new ArrayBuffer(readLength);
+        const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
+        if (bytesRead <= 0) {
+          break;
+        }
+        const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
+        fileIo.writeSync(target.fd, data);
+        offset += bytesRead;
+      }
+    } catch (err) {
+      throw new Error(`复制文件失败: ${sourcePath} -> ${targetUri}; ${this.describeError(err)}`);
+    } finally {
+      fileIo.closeSync(source);
+      fileIo.closeSync(target);
+    }
+  }
+
+  private copyProjectDirectoryToUri(sourceRoot: string, targetRootUri: string): number {
+    const targetRootPath: string = this.fileUriToFsPath(targetRootUri);
+    try {
+      const sourceStat = fileIo.statSync(sourceRoot);
+      if (!sourceStat.isDirectory()) {
+        throw new Error('源路径不是目录');
+      }
+    } catch (err) {
+      throw new Error(`读取源目录失败: ${sourceRoot}; ${this.describeError(err)}`);
+    }
+    try {
+      fileIo.mkdirSync(targetRootPath, true);
+    } catch (_err) {
+    }
+    let copiedCount: number = 0;
+    let entries: string[] = [];
+    try {
+      entries = fileIo.listFileSync(sourceRoot) as string[];
+    } catch (err) {
+      throw new Error(`列出源目录失败: ${sourceRoot}; ${this.describeError(err)}`);
+    }
+    for (let index: number = 0; index < entries.length; index += 1) {
+      const entry: string = entries[index];
+      const sourcePath: string = `${sourceRoot}/${entry}`;
+      const targetUri: string = this.childUri(targetRootUri, entry);
+      try {
+        const stat = fileIo.statSync(sourcePath);
+        if (stat.isDirectory()) {
+          copiedCount += this.copyProjectDirectoryToUri(sourcePath, targetUri);
+        } else if (stat.isFile()) {
+          this.copyProjectFileToUri(sourcePath, targetUri);
+          copiedCount += 1;
+        }
+      } catch (err) {
+        throw new Error(`同步条目失败: ${sourcePath} -> ${targetUri}; ${this.describeError(err)}`);
+      }
+    }
+    return copiedCount;
+  }
+
+  private copyFileByPath(sourcePath: string, targetPath: string): void {
+    if (sourcePath === targetPath) {
+      return;
+    }
+    let source: fileIo.File | null = null;
+    let target: fileIo.File | null = null;
+    try {
+      source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+    } catch (err) {
+      throw new Error(`打开源文件失败: ${sourcePath}; ${this.describeError(err)}`);
+    }
+    try {
+      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+    } catch (err) {
+      fileIo.closeSync(source);
+      throw new Error(`打开目标文件失败: ${targetPath}; ${this.describeError(err)}`);
+    }
+    try {
+      const stat = fileIo.statSync(sourcePath);
+      const chunkSize: number = 64 * 1024;
+      let offset: number = 0;
+      while (offset < stat.size) {
+        const readLength: number = Math.min(chunkSize, stat.size - offset);
+        const buffer = new ArrayBuffer(readLength);
+        const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
+        if (bytesRead <= 0) {
+          break;
+        }
+        const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
+        fileIo.writeSync(target.fd, data);
+        offset += bytesRead;
+      }
+    } catch (err) {
+      throw new Error(`复制文件失败: ${sourcePath} -> ${targetPath}; ${this.describeError(err)}`);
+    } finally {
+      fileIo.closeSync(source);
+      fileIo.closeSync(target);
+    }
+  }
+
+  private deletePathRecursively(path: string): number {
+    try {
+      const stat = fileIo.statSync(path);
+      if (stat.isDirectory()) {
+        let deletedCount: number = 0;
+        const entries: string[] = fileIo.listFileSync(path) as string[];
+        for (let index: number = 0; index < entries.length; index += 1) {
+          deletedCount += this.deletePathRecursively(`${path}/${entries[index]}`);
+        }
+        fileIo.rmdirSync(path);
+        return deletedCount + 1;
+      }
+      fileIo.unlinkSync(path);
+      return 1;
+    } catch (err) {
+      throw new Error(`删除路径失败: ${path}; ${this.describeError(err)}`);
+    }
+  }
+
+  private ensureMirrorTargetDirectory(path: string): void {
+    try {
+      const stat = fileIo.statSync(path);
+      if (stat.isDirectory()) {
+        return;
+      }
+      this.deletePathRecursively(path);
+    } catch (_err) {
+    }
+    try {
+      fileIo.mkdirSync(path, true);
+    } catch (err) {
+      try {
+        const stat = fileIo.statSync(path);
+        if (stat.isDirectory()) {
+          return;
+        }
+      } catch (_statErr) {
+      }
+      throw new Error(`创建项目目录失败: ${path}; ${this.describeError(err)}`);
+    }
+  }
+
+  private mirrorDirectoryByPath(sourceRoot: string, targetRoot: string): DirectoryMirrorResult {
+    try {
+      const sourceStat = fileIo.statSync(sourceRoot);
+      if (!sourceStat.isDirectory()) {
+        throw new Error('同步文件夹不是目录');
+      }
+    } catch (err) {
+      throw new Error(`读取同步文件夹失败: ${sourceRoot}; ${this.describeError(err)}`);
+    }
+    this.ensureMirrorTargetDirectory(targetRoot);
+
+    let sourceEntries: string[] = [];
+    let targetEntries: string[] = [];
+    try {
+      sourceEntries = fileIo.listFileSync(sourceRoot) as string[];
+    } catch (err) {
+      throw new Error(`列出同步文件夹失败: ${sourceRoot}; ${this.describeError(err)}`);
+    }
+    try {
+      targetEntries = fileIo.listFileSync(targetRoot) as string[];
+    } catch (err) {
+      throw new Error(`列出项目目录失败: ${targetRoot}; ${this.describeError(err)}`);
+    }
+
+    let copiedFiles: number = 0;
+    let deletedEntries: number = 0;
+    for (let index: number = 0; index < targetEntries.length; index += 1) {
+      const entry: string = targetEntries[index];
+      if (sourceEntries.indexOf(entry) < 0) {
+        deletedEntries += this.deletePathRecursively(`${targetRoot}/${entry}`);
+      }
+    }
+
+    for (let index: number = 0; index < sourceEntries.length; index += 1) {
+      const entry: string = sourceEntries[index];
+      const sourcePath: string = `${sourceRoot}/${entry}`;
+      const targetPath: string = `${targetRoot}/${entry}`;
+      try {
+        const sourceStat = fileIo.statSync(sourcePath);
+        if (sourceStat.isDirectory()) {
+          try {
+            const targetStat = fileIo.statSync(targetPath);
+            if (!targetStat.isDirectory()) {
+              deletedEntries += this.deletePathRecursively(targetPath);
+            }
+          } catch (_err) {
+          }
+          const childResult: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, targetPath);
+          copiedFiles += childResult.copiedFiles;
+          deletedEntries += childResult.deletedEntries;
+        } else if (sourceStat.isFile()) {
+          try {
+            const targetStat = fileIo.statSync(targetPath);
+            if (targetStat.isDirectory()) {
+              deletedEntries += this.deletePathRecursively(targetPath);
+            }
+          } catch (_err) {
+          }
+          this.copyFileByPath(sourcePath, targetPath);
+          copiedFiles += 1;
+        }
+      } catch (err) {
+        throw new Error(`导入条目失败: ${sourcePath} -> ${targetPath}; ${this.describeError(err)}`);
+      }
+    }
+    return new DirectoryMirrorResult(copiedFiles, deletedEntries);
+  }
+
+  private async syncProjectToImportSource(proj: ProjectRecord): Promise<void> {
+    const sourceUri: string = proj.sourceUri.trim();
+    if (sourceUri.length === 0) {
+      promptAction.showToast({ message: '该项目没有同步文件夹', duration: 2000 });
+      return;
+    }
+    const projectPath: string = proj.path.trim();
+    if (projectPath.length === 0) {
+      promptAction.showToast({ message: '项目运行目录为空，无法同步', duration: 2000 });
+      return;
+    }
+    const targetLabel: string = this.canSelectExternalFolder() ? '同步文件夹' : '下载目录';
+    promptAction.showToast({ message: `开始同步到${targetLabel}...`, duration: 1200 });
+    try {
+      try {
+        await this.activateProjectSourcePermission(sourceUri);
+      } catch (activationErr) {
+        hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
+      }
+      const copiedCount: number = this.copyProjectDirectoryToUri(projectPath, sourceUri);
+      promptAction.showToast({ message: `已同步 ${copiedCount.toString()} 个文件到${targetLabel}`, duration: 2600 });
+    } catch (err) {
+      hilog.error(INDEX_DOMAIN, INDEX_TAG, 'sync project to import source failed: %{public}s', this.describeError(err));
+      promptAction.showToast({ message: `同步失败: ${this.describeError(err)}；同步文件夹可能已被删除或授权失效，请重新选择同步文件夹`, duration: 3200 });
+    }
+  }
+
+  private async importProjectFromSyncFolder(proj: ProjectRecord): Promise<void> {
+    const sourceUri: string = proj.sourceUri.trim();
+    if (sourceUri.length === 0) {
+      promptAction.showToast({ message: '该项目没有同步文件夹', duration: 2000 });
+      return;
+    }
+    const projectPath: string = proj.path.trim();
+    if (projectPath.length === 0) {
+      promptAction.showToast({ message: '项目运行目录为空，无法导入', duration: 2000 });
+      return;
+    }
+    promptAction.showToast({ message: '开始导入同步文件夹内容...', duration: 1200 });
+    try {
+      try {
+        await this.activateProjectSourcePermission(sourceUri);
+      } catch (activationErr) {
+        hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
+      }
+      const sourcePath: string = this.fileUriToFsPath(sourceUri);
+      const result: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, projectPath);
+      promptAction.showToast({ message: `已导入 ${result.copiedFiles.toString()} 个文件，删除 ${result.deletedEntries.toString()} 个多余条目`, duration: 3000 });
+    } catch (err) {
+      hilog.error(INDEX_DOMAIN, INDEX_TAG, 'import project from sync folder failed: %{public}s', this.describeError(err));
+      promptAction.showToast({ message: `导入失败: ${this.describeError(err)}；同步文件夹可能已被删除或授权失效，请重新选择同步文件夹`, duration: 3600 });
+    }
+  }
+
   private openWebTarget(rawTarget: string, label: string, sourceMessageId?: string): void {
     const target: string = this.cleanMarkdownLinkTarget(rawTarget);
     if (target.length === 0) {
@@ -4546,6 +4995,82 @@ struct Index {
     })
   }
 
+  private floatingMenuWidthForMaxLabelLength(maxLabelLength: number): number {
+    return Math.min(180, Math.max(96, maxLabelLength * 13 + 28));
+  }
+
+  private projectSyncMenuLabel(): string {
+    return this.canSelectExternalFolder() ? '导出到同步文件夹' : '导出到下载目录';
+  }
+
+  private projectSourceMenuLabel(proj: ProjectRecord): string {
+    if (this.canSelectExternalFolder()) {
+      return proj.sourceUri.trim().length > 0 ? '重新选择同步文件夹' : '选择同步文件夹';
+    }
+    return proj.sourceUri.trim().length > 0 ? '重新启用下载目录同步' : '启用下载目录同步';
+  }
+
+  private projectFloatingMenuWidth(proj: ProjectRecord): number {
+    let maxLabelLength: number = '重命名项目'.length;
+    maxLabelLength = Math.max(maxLabelLength, '删除项目'.length);
+    if (proj.sourceUri.trim().length > 0) {
+      maxLabelLength = Math.max(maxLabelLength, this.projectSyncMenuLabel().length);
+      maxLabelLength = Math.max(maxLabelLength, '导入同步文件夹内容'.length);
+    }
+    maxLabelLength = Math.max(maxLabelLength, this.projectSourceMenuLabel(proj).length);
+    maxLabelLength = Math.max(maxLabelLength, '复制路径'.length);
+    return this.floatingMenuWidthForMaxLabelLength(maxLabelLength);
+  }
+
+  private sessionFloatingMenuWidth(): number {
+    let maxLabelLength: number = '重命名会话'.length;
+    maxLabelLength = Math.max(maxLabelLength, '删除会话'.length);
+    return this.floatingMenuWidthForMaxLabelLength(maxLabelLength);
+  }
+
+  private placeFloatingMenu(windowX: number, windowY: number, menuWidth: number): void {
+    this.floatingMenuWidth = menuWidth;
+    this.floatingMenuX = Math.max(8, windowX - menuWidth + 2);
+    this.floatingMenuY = Math.max(8, windowY - 20);
+  }
+
+  private closeFloatingMenus(): void {
+    this.showProjectMenuId = '';
+    this.showSessionMenuId = '';
+  }
+
+  @Builder
+  private topLevelFloatingMenus() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#00000000')
+        .onClick(() => {
+          this.closeFloatingMenus();
+        })
+
+      if (this.showProjectMenuId.length > 0) {
+        ForEach(this.projects, (proj: ProjectRecord) => {
+          if (proj.id === this.showProjectMenuId) {
+            this.projectFloatingMenu(proj)
+          }
+        }, (proj: ProjectRecord) => proj.id)
+      }
+
+      if (this.showSessionMenuId.length > 0) {
+        ForEach(this.workspaces, (item: WorkspaceItem) => {
+          if (this.ensureWorkspaceBinding(item) === this.showSessionMenuId) {
+            this.sessionFloatingMenu(item)
+          }
+        }, (item: WorkspaceItem) => this.ensureWorkspaceBinding(item))
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(1000)
+  }
+
   @Builder
   private projectGroup(proj: ProjectRecord) {
       Column() {
@@ -4583,15 +5108,16 @@ struct Index {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          // Context menu button (hover-visible)
+          // Floating menu button (hover-visible)
           Text('···')
             .fontSize(16)
             .fontColor('#52525B')
             .padding({ left: 6, right: 6, top: 0, bottom: 0 })
             .height(20)
             .visibility(this.hoveredProjectId === proj.id ? Visibility.Visible : Visibility.Hidden)
-            .bindContextMenu(!!this.showProjectMenuId, this.projectContextMenuBuilder(proj), { placement: Placement.TopRight })
-            .onClick(() => {
+            .onClick((event: ClickEvent) => {
+              this.placeFloatingMenu(event.windowX, event.windowY, this.projectFloatingMenuWidth(proj));
+              this.showSessionMenuId = '';
               this.showProjectMenuId = this.showProjectMenuId === proj.id ? '' : proj.id;
             })
 
@@ -4618,7 +5144,6 @@ struct Index {
         .onClick(() => {
           this.toggleProjectExpanded(proj.id);
         })
-        .bindContextMenu(this.projectContextMenuBuilder(proj), ResponseType.RightClick)
 
         // Inline rename input
         if (this.renamingProjectId === proj.id) {
@@ -4679,24 +5204,41 @@ struct Index {
   }
 
   @Builder
-  private projectContextMenuBuilder(proj: ProjectRecord) {
-    Menu() {
-      MenuItem({ content: '重命名项目' })
-        .onClick(() => {
+  private projectFloatingMenu(proj: ProjectRecord) {
+    Column() {
+        this.floatingMenuItem('重命名项目', () => {
+          this.showProjectMenuId = '';
           this.renameProjectDialogId = proj.id;
           this.renameProjectDialogText = proj.name;
           this.showRenameProjectDialog = true;
         })
 
-      MenuItem({ content: '删除项目' })
-        .onClick(() => {
+        this.floatingMenuItem('删除项目', () => {
+          this.showProjectMenuId = '';
           this.deleteProjectDialogId = proj.id;
           this.deleteProjectDialogName = proj.name;
           this.showDeleteProjectDialog = true;
         })
 
-      MenuItem({ content: '复制路径' })
-        .onClick(() => {
+        if (proj.sourceUri.trim().length > 0) {
+          this.floatingMenuItem(this.projectSyncMenuLabel(), () => {
+            this.showProjectMenuId = '';
+            void this.syncProjectToImportSource(proj);
+          })
+
+          this.floatingMenuItem('导入同步文件夹内容', () => {
+            this.showProjectMenuId = '';
+            void this.importProjectFromSyncFolder(proj);
+          })
+        }
+
+        this.floatingMenuItem(this.projectSourceMenuLabel(proj), () => {
+          this.showProjectMenuId = '';
+          void this.reselectProjectImportSource(proj.id);
+        })
+
+        this.floatingMenuItem('复制路径', () => {
+          this.showProjectMenuId = '';
           let targetPath: string = '';
           for (let i: number = 0; i < this.projects.length; i += 1) {
             if (this.projects[i].id === proj.id) {
@@ -4709,7 +5251,29 @@ struct Index {
           }
         })
     }
+    .width(this.floatingMenuWidth)
+    .padding({ top: 4, bottom: 4 })
+    .borderRadius(8)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 0.5, color: '#E4E4E7' })
+    .shadow({ radius: 12, color: '#1A000000', offsetX: 0, offsetY: 4 })
+    .position({ x: this.floatingMenuX, y: this.floatingMenuY })
+    .zIndex(1000)
   }
+
+  @Builder
+  private floatingMenuItem(label: string, onPress: () => void) {
+    Text(label)
+      .copyOption(CopyOptions.None)
+      .fontSize(12)
+      .fontColor('#18181B')
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .onClick(() => {
+        onPress();
+      })
+  }
+
 
   @Builder
   private sessionItem(item: WorkspaceItem) {
@@ -4765,13 +5329,14 @@ struct Index {
               .margin({ right: 4 })
 
             Text('···')
-              .fontSize(11)
-              .fontColor('#A1A1AA')
+              .fontSize(16)
+              .fontColor('#52525B')
               .padding({ left: 2, right: 2 })
               .visibility(this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? Visibility.Visible : Visibility.Hidden)
-              .bindContextMenu(!!this.showSessionMenuId, this.sessionContextMenuBuilder(item), { placement: Placement.TopRight })
-              .onClick(() => {
+              .onClick((event: ClickEvent) => {
                 const sid: string = this.ensureWorkspaceBinding(item);
+                this.placeFloatingMenu(event.windowX, event.windowY, this.sessionFloatingMenuWidth());
+                this.showProjectMenuId = '';
                 this.showSessionMenuId = this.showSessionMenuId === sid ? '' : sid;
               })
           }
@@ -4784,16 +5349,42 @@ struct Index {
           .onClick(() => {
             void this.selectWorkspace(item);
           })
-          .bindContextMenu(this.sessionContextMenuBuilder(item), ResponseType.RightClick)
         }
       }
-      .width('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
-      .onHover((isHover: boolean) => {
-        if (this.showSessionMenuId.length === 0) {
-          this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
-        }
-      })
+        .width('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
+        .onHover((isHover: boolean) => {
+          if (this.showSessionMenuId.length === 0) {
+            this.hoveredSessionId = isHover ? this.ensureWorkspaceBinding(item) : '';
+          }
+        })
+  }
+
+  @Builder
+  private sessionFloatingMenu(item: WorkspaceItem) {
+    Column() {
+        this.floatingMenuItem('重命名会话', () => {
+          this.showSessionMenuId = '';
+          this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
+          this.renameSessionDialogText = item.title;
+          this.showRenameSessionDialog = true;
+        })
+
+        this.floatingMenuItem('删除会话', () => {
+          this.showSessionMenuId = '';
+          this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
+          this.deleteSessionDialogTitle = item.title;
+          this.showDeleteSessionDialog = true;
+        })
+    }
+    .width(this.floatingMenuWidth)
+    .padding({ top: 4, bottom: 4 })
+    .borderRadius(8)
+    .backgroundColor('#FFFFFF')
+    .border({ width: 0.5, color: '#E4E4E7' })
+    .shadow({ radius: 12, color: '#1A000000', offsetX: 0, offsetY: 4 })
+    .position({ x: this.floatingMenuX, y: this.floatingMenuY })
+    .zIndex(1000)
   }
 
   private findSessionUpdatedAt(item: WorkspaceItem): string {
@@ -4807,24 +5398,6 @@ struct Index {
     return '';
   }
 
-  @Builder
-  private sessionContextMenuBuilder(item: WorkspaceItem) {
-    Menu() {
-      MenuItem({ content: '重命名会话' })
-        .onClick(() => {
-          this.renameSessionDialogId = this.ensureWorkspaceBinding(item);
-          this.renameSessionDialogText = item.title;
-          this.showRenameSessionDialog = true;
-        })
-
-      MenuItem({ content: '删除会话' })
-        .onClick(() => {
-          this.deleteSessionDialogId = this.ensureWorkspaceBinding(item);
-          this.deleteSessionDialogTitle = item.title;
-          this.showDeleteSessionDialog = true;
-        })
-    }
-  }
 
   @Builder
   private infoRow(label: string, value: string) {
@@ -8647,7 +9220,7 @@ struct Index {
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .onClick(() => {
             this.newProjectName = '';
-            this.newProjectPath = '';
+            this.newProjectSourceUri = '';
             this.showCreateProjectDialog = true;
           })
       }
@@ -8722,16 +9295,25 @@ struct Index {
               this.newProjectName = value;
             })
 
-          Text(this.newProjectPath.length > 0 ? this.newProjectPath : '未选择目录')
+          Text('运行目录将自动创建在应用内项目目录')
             .width('100%')
             .fontSize(11)
-            .fontColor(this.newProjectPath.length > 0 ? '#27272A' : '#A1A1AA')
+            .fontColor('#71717A')
             .margin({ top: 8 })
             .padding({ left: 10, right: 10, top: 8, bottom: 8 })
             .backgroundColor('#F4F4F5')
             .borderRadius(8)
 
-          Button('选择目录')
+          Text(this.newProjectSourceUri.length > 0 ? `同步文件夹: ${this.newProjectSourceUri}` : (this.canSelectExternalFolder() ? '未选择同步文件夹' : '未启用下载目录同步'))
+            .width('100%')
+            .fontSize(11)
+            .fontColor(this.newProjectSourceUri.length > 0 ? '#27272A' : '#A1A1AA')
+            .margin({ top: 8 })
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .backgroundColor('#F4F4F5')
+            .borderRadius(8)
+
+          Button(this.canSelectExternalFolder() ? '选择同步文件夹' : '启用下载目录同步')
             .width('100%')
             .height(32)
             .fontSize(12)
@@ -8754,6 +9336,7 @@ struct Index {
               .borderRadius(8)
               .onClick(() => {
                 this.showCreateProjectDialog = false;
+                this.newProjectSourceUri = '';
               })
 
             Button('创建')
@@ -8885,9 +9468,9 @@ struct Index {
                 for (let i: number = 0; i < this.projects.length; i += 1) {
                   const p: ProjectRecord = this.projects[i];
                   if (p.id === this.renameProjectDialogId) {
-                    next.push(new ProjectRecord(p.id, name, p.path, p.expanded));
+                    next.push(new ProjectRecord(p.id, name, p.path, p.expanded, p.sourceUri));
                   } else {
-                    next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded));
+                    next.push(new ProjectRecord(p.id, p.name, p.path, p.expanded, p.sourceUri));
                   }
                 }
                 this.projects = next;
@@ -10891,6 +11474,10 @@ struct Index {
       }
       .width('100%')
       .height('100%')
+
+      if (this.showProjectMenuId.length > 0 || this.showSessionMenuId.length > 0) {
+        this.topLevelFloatingMenus()
+      }
     }
     .width('100%')
     .height('100%')

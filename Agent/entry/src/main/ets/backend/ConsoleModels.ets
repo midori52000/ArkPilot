@@ -492,12 +492,14 @@ export class ProjectRecord {
   name: string;
   path: string;
   expanded: boolean;
+  sourceUri: string;
 
-  constructor(id: string, name: string, path: string, expanded?: boolean) {
+  constructor(id: string, name: string, path: string, expanded?: boolean, sourceUri?: string) {
     this.id = id;
     this.name = name;
     this.path = path;
     this.expanded = expanded ?? true;
+    this.sourceUri = sourceUri ?? '';
   }
 }
 
