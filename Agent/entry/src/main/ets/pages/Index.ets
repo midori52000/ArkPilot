@@ -5671,6 +5671,17 @@ struct Index {
     this.suppressProjectClickId = proj.id;
   }
 
+  private showProjectFloatingMenuFromMouse(proj: ProjectRecord, event: MouseEvent): void {
+    if (event.button !== MouseButton.Right || event.action !== MouseAction.Press) {
+      return;
+    }
+    if (event.stopPropagation !== undefined) {
+      event.stopPropagation();
+    }
+    this.showProjectFloatingMenu(proj, event.windowX, event.windowY);
+    this.suppressProjectClickId = proj.id;
+  }
+
   private showSessionFloatingMenu(item: WorkspaceItem, windowX: number, windowY: number): void {
     const sid: string = this.ensureWorkspaceBinding(item);
     this.placeFloatingMenu(windowX, windowY, this.sessionFloatingMenuWidth());
@@ -5683,6 +5694,17 @@ struct Index {
     const windowX: number = this.lastMenuTouchWindowX > 0 ? this.lastMenuTouchWindowX : menuWidth + 8;
     const windowY: number = this.lastMenuTouchWindowY > 0 ? this.lastMenuTouchWindowY : 48;
     this.showSessionFloatingMenu(item, windowX, windowY);
+    this.suppressSessionClickId = this.ensureWorkspaceBinding(item);
+  }
+
+  private showSessionFloatingMenuFromMouse(item: WorkspaceItem, event: MouseEvent): void {
+    if (event.button !== MouseButton.Right || event.action !== MouseAction.Press) {
+      return;
+    }
+    if (event.stopPropagation !== undefined) {
+      event.stopPropagation();
+    }
+    this.showSessionFloatingMenu(item, event.windowX, event.windowY);
     this.suppressSessionClickId = this.ensureWorkspaceBinding(item);
   }
 
@@ -5796,6 +5818,9 @@ struct Index {
         })
         .onTouch((event: TouchEvent) => {
           this.rememberMenuTouchPosition(event);
+        })
+        .onMouse((event: MouseEvent) => {
+          this.showProjectFloatingMenuFromMouse(proj, event);
         })
         .gesture(
           LongPressGesture({ repeat: false, duration: 500 })
@@ -6029,6 +6054,9 @@ struct Index {
           .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
           .onTouch((event: TouchEvent) => {
             this.rememberMenuTouchPosition(event);
+          })
+          .onMouse((event: MouseEvent) => {
+            this.showSessionFloatingMenuFromMouse(item, event);
           })
           .gesture(
             LongPressGesture({ repeat: false, duration: 500 })
