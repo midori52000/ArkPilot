@@ -290,15 +290,44 @@ class MermaidScaleEntry {
   }
 }
 
+class MermaidSizeBridge {
+  private onSizeChange: (width: number, height: number) => void = (_width: number, _height: number): void => {};
+
+  setOnSizeChange(callback: (width: number, height: number) => void): void {
+    this.onSizeChange = callback;
+  }
+
+  reportSize(width: number, height: number): void {
+    this.onSizeChange(width, height);
+  }
+}
+
 @Component
 struct MermaidWebDiagram {
-  @Prop source: string = '';
-  @Prop diagramHeight: number = 260;
+  @Prop
+  @Watch('onSourceChanged')
+  source: string = '';
+  @Prop
+  @Watch('onDiagramHeightChanged')
+  diagramHeight: number = 260;
   @Prop
   @Watch('onFontScaleChanged')
   fontScale: number = 1;
+  @State private measuredDiagramHeight: number = 260;
 
   private controller: webview.WebviewController = new webview.WebviewController();
+  private sizeBridge: MermaidSizeBridge = new MermaidSizeBridge();
+
+  aboutToAppear(): void {
+    this.sizeBridge.setOnSizeChange((width: number, height: number): void => {
+      this.updateMeasuredDiagramSize(width, height);
+    });
+    this.resetMeasuredDiagramHeight();
+  }
+
+  aboutToDisappear(): void {
+    this.sizeBridge.setOnSizeChange((_width: number, _height: number): void => {});
+  }
 
   private mermaidDataUrl(): string {
     return `data:text/html;charset=utf-8,${encodeURIComponent(this.mermaidHtml())}`;
@@ -364,6 +393,9 @@ struct MermaidWebDiagram {
     const minScale = 0.6;
     const maxScale = 1.8;
     let diagramScale = 1;
+    let resizeObserver = null;
+    let lastReportedWidth = 0;
+    let lastReportedHeight = 0;
     const mermaidUrls = [
       'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js',
       'https://unpkg.com/mermaid@11/dist/mermaid.min.js'
@@ -395,6 +427,73 @@ struct MermaidWebDiagram {
       svg.setAttribute('data-arkpilot-base-width', width.toString());
       return width;
     }
+    function safeNumber(value) {
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    }
+    function currentDiagramSize() {
+      const svg = target.querySelector('svg');
+      const html = document.documentElement;
+      const body = document.body;
+      const bodyRect = body.getBoundingClientRect();
+      let measuredWidth = Math.max(
+        safeNumber(html.scrollWidth),
+        safeNumber(body.scrollWidth),
+        safeNumber(target.scrollWidth),
+        safeNumber(target.getBoundingClientRect().width)
+      );
+      let measuredHeight = Math.max(
+        safeNumber(html.scrollHeight),
+        safeNumber(body.scrollHeight),
+        safeNumber(target.scrollHeight),
+        safeNumber(target.getBoundingClientRect().height)
+      );
+      if (svg) {
+        const svgRect = svg.getBoundingClientRect();
+        measuredWidth = Math.max(measuredWidth, safeNumber(svgRect.right - bodyRect.left + 12));
+        measuredHeight = Math.max(measuredHeight, safeNumber(svgRect.bottom - bodyRect.top + 12));
+      }
+      return {
+        width: Math.ceil(measuredWidth),
+        height: Math.ceil(measuredHeight)
+      };
+    }
+    function reportDiagramSize() {
+      const size = currentDiagramSize();
+      if (size.height <= 0 || size.width <= 0) {
+        return;
+      }
+      if (Math.abs(size.width - lastReportedWidth) < 2 && Math.abs(size.height - lastReportedHeight) < 2) {
+        return;
+      }
+      lastReportedWidth = size.width;
+      lastReportedHeight = size.height;
+      if (window.arkpilotMermaidBridge && window.arkpilotMermaidBridge.reportSize) {
+        window.arkpilotMermaidBridge.reportSize(size.width, size.height);
+      }
+    }
+    function scheduleDiagramSizeReport() {
+      requestAnimationFrame(function() {
+        reportDiagramSize();
+        setTimeout(reportDiagramSize, 80);
+        setTimeout(reportDiagramSize, 240);
+      });
+    }
+    function observeDiagramSize() {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
+      if (window.ResizeObserver) {
+        resizeObserver = new ResizeObserver(scheduleDiagramSizeReport);
+        resizeObserver.observe(target);
+        const svg = target.querySelector('svg');
+        if (svg) {
+          resizeObserver.observe(svg);
+        }
+      }
+      window.removeEventListener('resize', scheduleDiagramSizeReport);
+      window.addEventListener('resize', scheduleDiagramSizeReport);
+    }
     function applyDiagramScale() {
       diagramScale = clampScale(diagramScale);
       target.style.zoom = '';
@@ -412,8 +511,10 @@ struct MermaidWebDiagram {
         svg.style.maxWidth = '180%';
         svg.style.height = 'auto';
         svg.setAttribute('width', nextWidth.toFixed(2));
+        scheduleDiagramSizeReport();
         return 'applied:' + nextWidthText;
       }
+      scheduleDiagramSizeReport();
       return 'pending';
     }
     window.__arkpilotApplyMermaidScale = function(value) {
@@ -425,6 +526,7 @@ struct MermaidWebDiagram {
       target.innerHTML = '<div class="render-error">Mermaid 渲染失败\\n\\n' + detail.replace(/[&<>"']/g, function(ch) {
         return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
       }) + '</div>';
+      scheduleDiagramSizeReport();
     }
     function loadMermaid(index) {
       if (window.mermaid) {
@@ -470,6 +572,8 @@ struct MermaidWebDiagram {
           result.bindFunctions(target);
         }
         applyDiagramScale();
+        observeDiagramSize();
+        scheduleDiagramSizeReport();
       } catch (error) {
         showError(error);
       }
@@ -500,6 +604,33 @@ struct MermaidWebDiagram {
     return Math.min(1.8, Math.max(0.6, value));
   }
 
+  private normalizedDiagramHeight(value: number): number {
+    if (value !== value || value <= 0) {
+      return 260;
+    }
+    return Math.min(12000, Math.max(220, Math.ceil(value)));
+  }
+
+  private resetMeasuredDiagramHeight(): void {
+    this.measuredDiagramHeight = this.normalizedDiagramHeight(this.diagramHeight);
+  }
+
+  private onSourceChanged(): void {
+    this.resetMeasuredDiagramHeight();
+  }
+
+  private onDiagramHeightChanged(): void {
+    this.resetMeasuredDiagramHeight();
+  }
+
+  private updateMeasuredDiagramSize(_width: number, height: number): void {
+    const fallbackHeight: number = this.normalizedDiagramHeight(this.diagramHeight);
+    const nextHeight: number = Math.max(fallbackHeight, this.normalizedDiagramHeight(height));
+    if (Math.abs(nextHeight - this.measuredDiagramHeight) >= 2) {
+      this.measuredDiagramHeight = nextHeight;
+    }
+  }
+
   private onFontScaleChanged(): void {
     const scaleText: string = this.normalizedScale(this.fontScale).toFixed(2);
     try {
@@ -513,6 +644,13 @@ struct MermaidWebDiagram {
   build() {
     Web({ src: this.mermaidDataUrl(), controller: this.controller })
       .javaScriptAccess(true)
+      .javaScriptProxy({
+        object: this.sizeBridge,
+        name: 'arkpilotMermaidBridge',
+        methodList: new Array<string>(),
+        asyncMethodList: ['reportSize'],
+        controller: this.controller
+      })
       .darkMode(WebDarkMode.Off)
       .forceDarkAccess(false)
       .zoomAccess(false)
@@ -522,7 +660,7 @@ struct MermaidWebDiagram {
         this.onFontScaleChanged();
       })
       .width('100%')
-      .height(this.diagramHeight)
+      .height(this.measuredDiagramHeight)
       .backgroundColor('#FFFFFF')
       .zIndex(0)
       .hitTestBehavior(HitTestMode.Transparent)
