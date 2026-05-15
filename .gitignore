@@ -10,6 +10,7 @@
 
 # Design directory
 /design/
+/pics/
 
 # Build outputs
 /Agent/entry/build/
