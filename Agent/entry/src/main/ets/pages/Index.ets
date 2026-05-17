@@ -2043,6 +2043,9 @@ struct Index {
       if (cachedResult !== null) {
         this.applyBackendResultForWorkspace(requestedWorkspaceId, requestedThreadKey, cachedResult);
       }
+      if (this.isWorkspaceRunning(requestedWorkspaceId)) {
+        return;
+      }
       const result: CodexTurnResult = await codexBackend.loadThreadHistory(workspace.workspaceId);
       this.applyBackendResultForWorkspace(requestedWorkspaceId, requestedThreadKey, result);
     } catch (err) {

@@ -1327,7 +1327,14 @@ export class CodexBackend {
   }
 
   resultForThreadKey(threadKey: string): CodexTurnResult | null {
-    const thread: CodexThreadRecord | undefined = this.threads.get(threadKey);
+    const trimmedThreadKey: string = threadKey.trim();
+    let thread: CodexThreadRecord | undefined = this.threads.get(trimmedThreadKey);
+    if (thread === undefined) {
+      const localKey: string | undefined = this.threadKeysByRemoteId.get(trimmedThreadKey);
+      if (localKey !== undefined) {
+        thread = this.threads.get(localKey);
+      }
+    }
     if (thread === undefined) {
       return null;
     }
