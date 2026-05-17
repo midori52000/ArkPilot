@@ -1142,6 +1142,8 @@ struct Index {
   private readonly collaborationModeByWorkspaceId: Map<string, string> = new Map();
   private readonly requestUserInputDrafts: Map<string, string> = new Map();
   private readonly workspaceRunStates: Map<number, WorkspaceRunState> = new Map();
+  private renderedWorkspaceId: number = 0;
+  private renderedThreadId: string = '';
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private workspaces: WorkspaceItem[] = [];
@@ -1864,6 +1866,8 @@ struct Index {
     this.changedFiles = '尚未产生文件改动';
     this.diffStat = '+0 -0';
     this.currentTurnId = '';
+    this.renderedWorkspaceId = this.activeWorkspaceId;
+    this.renderedThreadId = this.activeWorkspaceBindingId;
     this.expandedCompactionIds = [];
     this.clearLiveThinking();
     this.resumeMessageAutoFollow();
@@ -3623,11 +3627,16 @@ struct Index {
     if (workspaceId !== this.activeWorkspaceId) {
       return;
     }
-    this.applyBackendResult(result);
+    const resultThreadId: string = result.threadId.trim();
+    const isSameRenderedConversation: boolean = this.renderedWorkspaceId === workspaceId &&
+      (resultThreadId.length === 0 || this.renderedThreadId.length === 0 || this.renderedThreadId === resultThreadId);
+    this.applyBackendResult(result, isSameRenderedConversation);
+    this.renderedWorkspaceId = workspaceId;
+    this.renderedThreadId = resultThreadId.length > 0 ? resultThreadId : threadKey;
     this.syncActiveWorkspaceRunState();
   }
 
-  private applyBackendResult(result: CodexTurnResult): void {
+  private applyBackendResult(result: CodexTurnResult, preserveDisplayState: boolean = true): void {
     this.currentTurnId = result.turnId;
     this.currentTurnStatus = result.status;
     this.syncThinkingAnimation();
@@ -3637,7 +3646,9 @@ struct Index {
     const rawMessages: ChatMessage[] = result.messages.map((item) => {
       return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
     });
-    const displayMessages: ChatMessage[] = this.preserveStableMessageTimestamps(this.mergeStreamingDisplayMessages(rawMessages, result));
+    const displayMessages: ChatMessage[] = preserveDisplayState
+      ? this.preserveStableMessageTimestamps(this.mergeStreamingDisplayMessages(rawMessages, result))
+      : rawMessages;
     this.updateLiveThinking(result, displayMessages);
     this.messages = displayMessages.filter((item: ChatMessage) => {
       return !this.isReasoningMessage(item);
