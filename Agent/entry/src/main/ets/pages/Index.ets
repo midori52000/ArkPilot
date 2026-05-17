@@ -1148,6 +1148,7 @@ struct Index {
   @State private activeWorkspaceId: number = 1;
   @State private activeWorkspaceBindingId: string = 'session:1';
   @State private backendActiveThreadId: string = '';
+  @State private runningWorkspaceVersion: number = 0;
   @State private currentWorkspaceTitle: string = '新会话 1';
   @State private currentWorkspaceDescription: string = '等待通过 app-server 创建真实会话';
   @State private activeWorkspacePermissionState: WorkspacePermissionState = 'unavailable';
@@ -2058,8 +2059,13 @@ struct Index {
   }
 
   private isWorkspaceRunning(workspaceId: number): boolean {
+    this.runningWorkspaceVersion;
     const runState: WorkspaceRunState | undefined = this.workspaceRunStates.get(workspaceId);
     return runState !== undefined && runState.status === 'inProgress';
+  }
+
+  private refreshRunningWorkspaceIndicators(): void {
+    this.runningWorkspaceVersion += 1;
   }
 
   private syncActiveWorkspaceRunState(): void {
@@ -3519,6 +3525,7 @@ struct Index {
     const runSavedDraft: string = this.savedDraft;
     const runBoundary: number = this.messages.length;
     this.workspaceRunStates.set(runWorkspaceId, new WorkspaceRunState(runWorkspaceId, threadKey, prompt, runSavedDraft, runBoundary));
+    this.refreshRunningWorkspaceIndicators();
     this.isRunning = true;
     this.currentTurnStatus = 'inProgress';
     this.pendingUserPrompt = prompt;
@@ -3573,6 +3580,7 @@ struct Index {
       }
     } catch (err) {
       this.workspaceRunStates.delete(runWorkspaceId);
+      this.refreshRunningWorkspaceIndicators();
       if (this.activeWorkspaceId === runWorkspaceId) {
         this.currentTurnStatus = 'failed';
         this.summaryTitle = '调用失败';
@@ -3582,6 +3590,7 @@ struct Index {
       }
     } finally {
       this.workspaceRunStates.delete(runWorkspaceId);
+      this.refreshRunningWorkspaceIndicators();
       if (this.activeWorkspaceId === runWorkspaceId) {
         this.isRunning = false;
         this.pendingUserPrompt = '';
@@ -3608,6 +3617,7 @@ struct Index {
       }
       if (result.status !== 'inProgress') {
         this.workspaceRunStates.delete(workspaceId);
+        this.refreshRunningWorkspaceIndicators();
       }
     }
     if (workspaceId !== this.activeWorkspaceId) {
@@ -6320,6 +6330,23 @@ struct Index {
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            if (this.isWorkspaceRunning(item.id)) {
+              Row() {
+                Circle({ width: 5, height: 5 })
+                  .fill('#22C55E')
+
+                Text('运行中')
+                  .copyOption(CopyOptions.None)
+                  .fontSize(8)
+                  .fontColor('#15803D')
+                  .margin({ left: 4 })
+              }
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor('#DCFCE7')
+              .borderRadius(8)
+              .margin({ right: 4 })
+            }
 
             Text(this.relativeTime(this.findSessionUpdatedAt(item)))
               .fontSize(9)
