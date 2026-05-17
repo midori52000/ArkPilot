@@ -137,6 +137,25 @@ class CompactionNotice {
   }
 }
 
+class WorkspaceRunState {
+  workspaceId: number;
+  threadKey: string;
+  threadId: string = '';
+  turnId: string = '';
+  status: string = 'inProgress';
+  pendingUserPrompt: string;
+  savedDraft: string;
+  thinkingMessageBoundary: number;
+
+  constructor(workspaceId: number, threadKey: string, pendingUserPrompt: string, savedDraft: string, thinkingMessageBoundary: number) {
+    this.workspaceId = workspaceId;
+    this.threadKey = threadKey;
+    this.pendingUserPrompt = pendingUserPrompt;
+    this.savedDraft = savedDraft;
+    this.thinkingMessageBoundary = thinkingMessageBoundary;
+  }
+}
+
 class MarkdownBlock {
   id: string;
   kind: string;
@@ -1122,6 +1141,7 @@ struct Index {
   private readonly workspaceUris: Map<number, string> = new Map();
   private readonly collaborationModeByWorkspaceId: Map<string, string> = new Map();
   private readonly requestUserInputDrafts: Map<string, string> = new Map();
+  private readonly workspaceRunStates: Map<number, WorkspaceRunState> = new Map();
   private readonly messageScroller: Scroller = new Scroller();
 
   @State private workspaces: WorkspaceItem[] = [];
@@ -1190,6 +1210,8 @@ struct Index {
   @State private directoryFilterText: string = '使用默认工作区';
   @State private draft: string = '';
   private savedDraft: string = '';
+  private backendPendingApproval: CodexApprovalRequest | null = null;
+  private backendPendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private pendingApproval: CodexApprovalRequest | null = null;
   @State private pendingRequestUserInput: CodexRequestUserInput | null = null;
   @State private requestUserInputVersion: number = 0;
@@ -1473,22 +1495,57 @@ struct Index {
     this.serverUrl = snapshot.serverUrl;
     this.connectionState = snapshot.connectionState;
     this.connectionText = snapshot.connectionText;
-    this.pendingApproval = snapshot.pendingApproval;
+    this.backendPendingApproval = snapshot.pendingApproval;
+    this.backendPendingRequestUserInput = snapshot.pendingRequestUserInput;
     const previousRequestId: string = this.pendingRequestUserInput !== null ? `${this.pendingRequestUserInput.requestId}` : '';
-    const nextRequestId: string = snapshot.pendingRequestUserInput !== null ? `${snapshot.pendingRequestUserInput.requestId}` : '';
-    this.pendingRequestUserInput = snapshot.pendingRequestUserInput;
+    this.applyPendingRequestsForActiveWorkspace();
+    const nextRequestId: string = this.pendingRequestUserInput !== null ? `${this.pendingRequestUserInput.requestId}` : '';
     this.collaborationModes = snapshot.collaborationModes;
     if (previousRequestId !== nextRequestId) {
       this.requestUserInputDrafts.clear();
       this.requestUserInputVersion += 1;
     }
     this.syncSelectedCollaborationMode();
-    this.backendActiveThreadId = snapshot.activeThreadId.trim();
-    this.tokenUsage = snapshot.tokenUsage;
+    const snapshotThreadId: string = snapshot.activeThreadId.trim();
+    if (this.requestBelongsToWorkspace(snapshotThreadId, this.activeWorkspaceId)) {
+      this.backendActiveThreadId = snapshotThreadId;
+      this.tokenUsage = snapshot.tokenUsage;
+    } else {
+      this.backendActiveThreadId = this.activeWorkspaceBindingId.trim();
+    }
     this.applyCompactionSnapshot(snapshot);
     if (codexBackend.shouldStartFallbackCompaction(this.backendActiveThreadId)) {
       this.retryCurrentCompaction(this.backendActiveThreadId);
     }
+  }
+
+  private applyPendingRequestsForActiveWorkspace(): void {
+    this.pendingApproval = this.backendPendingApproval !== null && this.requestBelongsToWorkspace(this.backendPendingApproval.threadId, this.activeWorkspaceId)
+      ? this.backendPendingApproval
+      : null;
+    this.pendingRequestUserInput = this.backendPendingRequestUserInput !== null && this.requestBelongsToWorkspace(this.backendPendingRequestUserInput.threadId, this.activeWorkspaceId)
+      ? this.backendPendingRequestUserInput
+      : null;
+  }
+
+  private requestBelongsToWorkspace(threadId: string, workspaceId: number): boolean {
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0) {
+      return false;
+    }
+    const workspace: WorkspaceItem | undefined = this.workspaces.find((item: WorkspaceItem) => item.id === workspaceId);
+    if (workspace !== undefined && workspace.workspaceId.trim() === trimmedThreadId) {
+      return true;
+    }
+    const bindingId: string | undefined = this.workspaceIds.get(workspaceId);
+    if (bindingId !== undefined && bindingId.trim() === trimmedThreadId) {
+      return true;
+    }
+    const runState: WorkspaceRunState | undefined = this.workspaceRunStates.get(workspaceId);
+    if (runState !== undefined) {
+      return runState.threadId.trim() === trimmedThreadId || runState.threadKey.trim() === trimmedThreadId;
+    }
+    return workspaceId === this.activeWorkspaceId && this.activeWorkspaceBindingId.trim() === trimmedThreadId;
   }
 
   private applyCompactionSnapshot(snapshot: CodexBackendSnapshot): void {
@@ -1972,34 +2029,69 @@ struct Index {
       return;
     }
     const workspace: WorkspaceItem = this.activeWorkspace()!;
+    const requestedWorkspaceId: number = workspace.id;
+    const requestedThreadKey: string = workspace.workspaceId;
     if (!this.isRemoteThreadId(workspace.workspaceId)) {
       codexBackend.setActiveThread('');
       this.resetConversationSurface('等待创建新会话', ['当前会话尚未在 app-server 中创建，发送第一条消息后会自动建立线程。']);
+      this.syncActiveWorkspaceRunState();
       return;
     }
     codexBackend.setActiveThread(workspace.workspaceId);
     try {
+      const cachedResult: CodexTurnResult | null = codexBackend.resultForThreadKey(workspace.workspaceId);
+      if (cachedResult !== null) {
+        this.applyBackendResultForWorkspace(requestedWorkspaceId, requestedThreadKey, cachedResult);
+      }
       const result: CodexTurnResult = await codexBackend.loadThreadHistory(workspace.workspaceId);
-      this.applyBackendResult(result);
+      this.applyBackendResultForWorkspace(requestedWorkspaceId, requestedThreadKey, result);
     } catch (err) {
+      if (this.activeWorkspaceId !== requestedWorkspaceId) {
+        return;
+      }
       this.summaryTitle = '恢复会话失败';
       this.summaryPoints = [this.describeError(err)];
     }
   }
 
-  private syncWorkspaceWithRemoteThreadId(remoteThreadId: string): void {
+  private isWorkspaceRunning(workspaceId: number): boolean {
+    const runState: WorkspaceRunState | undefined = this.workspaceRunStates.get(workspaceId);
+    return runState !== undefined && runState.status === 'inProgress';
+  }
+
+  private syncActiveWorkspaceRunState(): void {
+    const runState: WorkspaceRunState | undefined = this.workspaceRunStates.get(this.activeWorkspaceId);
+    this.isRunning = runState !== undefined && runState.status === 'inProgress';
+    if (runState !== undefined) {
+      this.currentTurnId = runState.turnId;
+      this.currentTurnStatus = runState.status;
+      this.pendingUserPrompt = runState.pendingUserPrompt;
+      this.thinkingMessageBoundary = runState.thinkingMessageBoundary;
+    } else {
+      this.pendingUserPrompt = '';
+      this.thinkingMessageBoundary = -1;
+      this.showIdleThinkingIndicator = false;
+      this.clearIdleThinkingTimer();
+    }
+    this.syncThinkingAnimation();
+  }
+
+  private syncWorkspaceWithRemoteThreadIdForWorkspace(workspaceId: number, remoteThreadId: string): void {
     const trimmedThreadId: string = remoteThreadId.trim();
     if (trimmedThreadId.length === 0 || this.workspaces.length === 0) {
       return;
     }
-    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    const workspace: WorkspaceItem | undefined = this.workspaces.find((item: WorkspaceItem) => item.id === workspaceId);
     if (workspace === undefined) {
       return;
     }
     workspace.workspaceId = trimmedThreadId;
     this.workspaceIds.set(workspace.id, trimmedThreadId);
-    this.activeWorkspaceBindingId = trimmedThreadId;
-    codexBackend.setActiveThread(trimmedThreadId);
+    if (workspaceId === this.activeWorkspaceId) {
+      this.activeWorkspaceBindingId = trimmedThreadId;
+      codexBackend.setActiveThread(trimmedThreadId);
+      this.applyPendingRequestsForActiveWorkspace();
+    }
     this.persistWorkspaceBindings();
   }
 
@@ -3380,7 +3472,7 @@ struct Index {
 
   private sendMessage(): void {
     const prompt: string = this.draft.trim();
-    if (prompt.length === 0 || this.isRunning) {
+    if (prompt.length === 0 || this.isWorkspaceRunning(this.activeWorkspaceId)) {
       return;
     }
     this.resumeMessageAutoFollow();
@@ -3391,17 +3483,43 @@ struct Index {
   }
 
   private stopTurn(): void {
-    codexBackend.interruptTurn();
+    const runState: WorkspaceRunState | undefined = this.workspaceRunStates.get(this.activeWorkspaceId);
+    const threadKey: string = runState !== undefined
+      ? (runState.threadId.trim().length > 0 ? runState.threadId : runState.threadKey)
+      : this.activeWorkspaceBindingId;
+    codexBackend.interruptTurnForThreadKey(threadKey);
   }
 
   private async runTurn(prompt: string): Promise<void> {
     if (this.workspaces.length === 0) {
       return;
     }
+    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (workspace === undefined) {
+      return;
+    }
+    const runWorkspaceId: number = workspace.id;
+    if (this.isWorkspaceRunning(runWorkspaceId)) {
+      return;
+    }
+    if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
+      this.applyWorkspaceRootBinding();
+    }
+    const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
+    const threadKey: string = workspace.workspaceId.trim().length > 0 ? workspace.workspaceId : this.activeWorkspaceBindingId;
+    const runBindingId: string = this.activeWorkspaceBindingId;
+    const runPermissionState: WorkspacePermissionState = this.activeWorkspacePermissionState;
+    const runAccessKind: WorkspaceAccessKind = this.activeWorkspaceAccessKind;
+    const runModel: string = this.currentModelValue();
+    const runEffort: string = this.currentEffortValue();
+    const runCollaborationMode: CollaborationModeOption | null = this.selectedCollaborationMode();
+    const runSavedDraft: string = this.savedDraft;
+    const runBoundary: number = this.messages.length;
+    this.workspaceRunStates.set(runWorkspaceId, new WorkspaceRunState(runWorkspaceId, threadKey, prompt, runSavedDraft, runBoundary));
     this.isRunning = true;
     this.currentTurnStatus = 'inProgress';
     this.pendingUserPrompt = prompt;
-    this.thinkingMessageBoundary = this.messages.length;
+    this.thinkingMessageBoundary = runBoundary;
     this.thinkingPulseIndex = 0;
     this.thinkingNormalPhrase = '';
     this.thinkingNormalPhraseBucket = -1;
@@ -3419,73 +3537,84 @@ struct Index {
     this.refreshThinkingNormalPhrase();
     this.startThinkingAnimation();
     this.resetIdleThinkingTimer();
-    if (this.workspaceDraftText.trim() !== this.workspaceRoot.trim()) {
-      this.applyWorkspaceRootBinding();
-    }
-    this.workspaceRoots.set(this.activeWorkspaceId, this.workspaceRoot);
+    this.workspaceRoots.set(runWorkspaceId, this.workspaceRoot);
     this.refreshWorkspaceBindingState();
     codexBackend.configureServerUrl(this.serverUrl);
 
-    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
-    if (workspace === undefined) {
-      this.isRunning = false;
-      this.currentTurnStatus = '';
-      this.pendingUserPrompt = '';
-      this.thinkingMessageBoundary = -1;
-      this.showIdleThinkingIndicator = false;
-      this.lastTextOutputSignature = '';
-      this.clearLiveThinking();
-      this.clearIdleThinkingTimer();
-      this.syncThinkingAnimation();
-      return;
-    }
-    const trimmedWorkspaceRoot: string = this.workspaceRoot.trim();
-    const threadKey: string = workspace.workspaceId.trim().length > 0 ? workspace.workspaceId : this.activeWorkspaceBindingId;
     await this.applyEmbeddedHostStatus();
     try {
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(
           threadKey,
           workspace.title,
-          this.activeWorkspaceBindingId,
+          runBindingId,
           trimmedWorkspaceRoot,
-          this.activeWorkspacePermissionState,
-          this.activeWorkspaceAccessKind,
+          runPermissionState,
+          runAccessKind,
           trimmedWorkspaceRoot.length > 0 ? [trimmedWorkspaceRoot] : [],
-          this.currentModelValue(),
-          this.currentEffortValue(),
-          this.selectedCollaborationMode(),
+          runModel,
+          runEffort,
+          runCollaborationMode,
           prompt
         ),
         (update: CodexTurnResult) => {
-          this.applyBackendResult(update);
+          this.applyBackendResultForWorkspace(runWorkspaceId, threadKey, update);
         }
       );
-      this.applyBackendResult(result);
-      if (result.status === 'interrupted' || result.status === 'failed') {
-        this.draft = this.savedDraft;
+      this.applyBackendResultForWorkspace(runWorkspaceId, threadKey, result);
+      if ((result.status === 'interrupted' || result.status === 'failed') && this.activeWorkspaceId === runWorkspaceId) {
+        this.draft = runSavedDraft;
       }
-      this.savedDraft = '';
+      if (this.activeWorkspaceId === runWorkspaceId) {
+        this.savedDraft = '';
+      }
     } catch (err) {
-      this.currentTurnStatus = 'failed';
-      this.summaryTitle = '调用失败';
-      this.summaryPoints = [this.describeError(err)];
-      this.draft = this.savedDraft;
-      this.savedDraft = '';
+      this.workspaceRunStates.delete(runWorkspaceId);
+      if (this.activeWorkspaceId === runWorkspaceId) {
+        this.currentTurnStatus = 'failed';
+        this.summaryTitle = '调用失败';
+        this.summaryPoints = [this.describeError(err)];
+        this.draft = runSavedDraft;
+        this.savedDraft = '';
+      }
     } finally {
-      this.isRunning = false;
-      this.pendingUserPrompt = '';
-      this.thinkingMessageBoundary = -1;
-      this.showIdleThinkingIndicator = false;
-      this.lastTextOutputSignature = '';
-      this.clearLiveThinking();
-      this.clearIdleThinkingTimer();
-      this.syncThinkingAnimation();
+      this.workspaceRunStates.delete(runWorkspaceId);
+      if (this.activeWorkspaceId === runWorkspaceId) {
+        this.isRunning = false;
+        this.pendingUserPrompt = '';
+        this.thinkingMessageBoundary = -1;
+        this.showIdleThinkingIndicator = false;
+        this.lastTextOutputSignature = '';
+        this.clearLiveThinking();
+        this.clearIdleThinkingTimer();
+        this.syncThinkingAnimation();
+      }
     }
   }
 
+  private applyBackendResultForWorkspace(workspaceId: number, threadKey: string, result: CodexTurnResult): void {
+    this.syncWorkspaceWithRemoteThreadIdForWorkspace(workspaceId, result.threadId);
+    const runState: WorkspaceRunState | undefined = this.workspaceRunStates.get(workspaceId);
+    if (runState !== undefined) {
+      runState.threadKey = threadKey;
+      runState.threadId = result.threadId;
+      runState.turnId = result.turnId;
+      runState.status = result.status;
+      if (this.backendResultContainsPendingPrompt(result)) {
+        runState.pendingUserPrompt = '';
+      }
+      if (result.status !== 'inProgress') {
+        this.workspaceRunStates.delete(workspaceId);
+      }
+    }
+    if (workspaceId !== this.activeWorkspaceId) {
+      return;
+    }
+    this.applyBackendResult(result);
+    this.syncActiveWorkspaceRunState();
+  }
+
   private applyBackendResult(result: CodexTurnResult): void {
-    this.syncWorkspaceWithRemoteThreadId(result.threadId);
     this.currentTurnId = result.turnId;
     this.currentTurnStatus = result.status;
     this.syncThinkingAnimation();
@@ -4254,8 +4383,11 @@ struct Index {
     this.syncRecentWorkspaces();
     this.refreshWorkspaceBindingState();
     this.syncCurrentWorkspaceState();
+    this.syncActiveWorkspaceRunState();
+    this.applyPendingRequestsForActiveWorkspace();
     this.persistWorkspaceBindings();
     await this.loadSelectedWorkspaceHistory();
+    this.syncActiveWorkspaceRunState();
   }
 
   private lastConversationMessage(): ChatMessage | null {

@@ -1681,8 +1681,38 @@ export class CodexBackend {
     if (activeThread === null) {
       return;
     }
-    const thread: CodexThreadRecord = activeThread;
-    const activeTurn: PendingTurnState = thread.activeTurn!;
+    this.interruptThread(activeThread);
+  }
+
+  interruptTurnForThreadKey(threadKey: string): void {
+    const trimmedThreadKey: string = threadKey.trim();
+    if (trimmedThreadKey.length === 0) {
+      return;
+    }
+    let thread: CodexThreadRecord | undefined = this.threads.get(trimmedThreadKey);
+    if (thread === undefined) {
+      const localKey: string | undefined = this.threadKeysByRemoteId.get(trimmedThreadKey);
+      if (localKey !== undefined) {
+        thread = this.threads.get(localKey);
+      }
+    }
+    if (thread === undefined) {
+      const normalizedThreadId: string = this.normalizeThreadId(trimmedThreadKey);
+      if (normalizedThreadId.length > 0) {
+        thread = this.threads.get(normalizedThreadId);
+      }
+    }
+    if (thread === undefined || thread.activeTurn === null) {
+      return;
+    }
+    this.interruptThread(thread);
+  }
+
+  private interruptThread(thread: CodexThreadRecord): void {
+    const activeTurn: PendingTurnState | null = thread.activeTurn;
+    if (activeTurn === null) {
+      return;
+    }
     activeTurn.cancelled = true;
     turnInterruptNative(thread.remoteThreadId, activeTurn.turnId);
   }
@@ -1715,6 +1745,11 @@ export class CodexBackend {
     if (thread.activeTurn !== null) {
       const message: string = '当前 turn 尚未结束，暂不允许压缩。';
       this.failCompaction(message, thread.remoteThreadId);
+      throw new Error(message);
+    }
+    if ((this.compactionState.status === 'starting' || this.compactionState.status === 'running') &&
+        this.compactionState.threadId !== thread.remoteThreadId) {
+      const message: string = '已有其他会话正在压缩，请等待完成后再试。';
       throw new Error(message);
     }
     try {
