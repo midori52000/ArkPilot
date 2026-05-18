@@ -6,6 +6,7 @@ use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::compact::CompactionTriggerSource;
 use crate::codex::PreviousTurnSettings;
 use crate::codex::SessionConfiguration;
 use crate::context_manager::ContextManager;
@@ -15,6 +16,8 @@ use crate::protocol::TokenUsageInfo;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
 use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
+
+const AUTO_COMPACT_FAILURE_TRIP: i64 = 3;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
@@ -30,8 +33,15 @@ pub(crate) struct SessionState {
     previous_turn_settings: Option<PreviousTurnSettings>,
     /// Startup prewarmed session prepared during session initialization.
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
+    recent_artifact_refs: Option<Vec<String>>,
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
+    auto_compact_failure_count: i64,
+    auto_compact_circuit_open: bool,
+    auto_compact_turn_id: Option<String>,
+    auto_compact_model_switch_used: bool,
+    auto_compact_pre_turn_used: bool,
+    auto_compact_mid_turn_used: bool,
     granted_permissions: Option<PermissionProfile>,
 }
 
@@ -48,8 +58,15 @@ impl SessionState {
             mcp_dependency_prompted: HashSet::new(),
             previous_turn_settings: None,
             startup_prewarm: None,
+            recent_artifact_refs: None,
             active_connector_selection: HashSet::new(),
             pending_session_start_source: None,
+            auto_compact_failure_count: 0,
+            auto_compact_circuit_open: false,
+            auto_compact_turn_id: None,
+            auto_compact_model_switch_used: false,
+            auto_compact_pre_turn_used: false,
+            auto_compact_mid_turn_used: false,
             granted_permissions: None,
         }
     }
@@ -99,6 +116,14 @@ impl SessionState {
         self.history.reference_context_item()
     }
 
+    pub(crate) fn recent_artifact_refs(&self) -> Option<Vec<String>> {
+        self.recent_artifact_refs.clone()
+    }
+
+    pub(crate) fn set_recent_artifact_refs(&mut self, refs: Option<Vec<String>>) {
+        self.recent_artifact_refs = refs;
+    }
+
     // Token/rate limit helpers
     pub(crate) fn update_token_info_from_usage(
         &mut self,
@@ -140,6 +165,63 @@ impl SessionState {
 
     pub(crate) fn server_reasoning_included(&self) -> bool {
         self.server_reasoning_included
+    }
+
+    pub(crate) fn auto_compact_failure_state(&self) -> (i64, bool) {
+        (
+            self.auto_compact_failure_count,
+            self.auto_compact_circuit_open,
+        )
+    }
+
+    pub(crate) fn record_auto_compact_failure(&mut self) -> (i64, bool) {
+        self.auto_compact_failure_count = self.auto_compact_failure_count.saturating_add(1);
+        if self.auto_compact_failure_count >= AUTO_COMPACT_FAILURE_TRIP {
+            self.auto_compact_circuit_open = true;
+        }
+        self.auto_compact_failure_state()
+    }
+
+    pub(crate) fn clear_auto_compact_failure_state(&mut self) {
+        self.auto_compact_failure_count = 0;
+        self.auto_compact_circuit_open = false;
+    }
+
+    fn ensure_auto_compact_turn_state(&mut self, turn_id: &str) {
+        if self.auto_compact_turn_id.as_deref() != Some(turn_id) {
+            self.auto_compact_turn_id = Some(turn_id.to_string());
+            self.auto_compact_model_switch_used = false;
+            self.auto_compact_pre_turn_used = false;
+            self.auto_compact_mid_turn_used = false;
+        }
+    }
+
+    pub(crate) fn should_skip_auto_compact(
+        &mut self,
+        turn_id: &str,
+        trigger_source: CompactionTriggerSource,
+    ) -> bool {
+        self.ensure_auto_compact_turn_state(turn_id);
+        match trigger_source {
+            CompactionTriggerSource::ModelSwitch => self.auto_compact_model_switch_used,
+            CompactionTriggerSource::MidTurn => self.auto_compact_mid_turn_used,
+            CompactionTriggerSource::PreTurn => self.auto_compact_pre_turn_used,
+            CompactionTriggerSource::Manual => false,
+        }
+    }
+
+    pub(crate) fn record_auto_compact_attempt(
+        &mut self,
+        turn_id: &str,
+        trigger_source: CompactionTriggerSource,
+    ) {
+        self.ensure_auto_compact_turn_state(turn_id);
+        match trigger_source {
+            CompactionTriggerSource::ModelSwitch => self.auto_compact_model_switch_used = true,
+            CompactionTriggerSource::MidTurn => self.auto_compact_mid_turn_used = true,
+            CompactionTriggerSource::PreTurn => self.auto_compact_pre_turn_used = true,
+            CompactionTriggerSource::Manual => {}
+        }
     }
 
     pub(crate) fn record_mcp_dependency_prompted<I>(&mut self, names: I)

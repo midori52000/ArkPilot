@@ -846,11 +846,23 @@ fn thread_item_to_core(item: &ThreadItem) -> Option<TurnItem> {
             result: result.clone(),
             saved_path: saved_path.clone(),
         })),
-        ThreadItem::ContextCompaction { id } => {
-            Some(TurnItem::ContextCompaction(ContextCompactionItem {
-                id: id.clone(),
-            }))
-        }
+        ThreadItem::ContextCompaction {
+            id,
+            trigger_source,
+            provider_mode,
+            micro_compaction_item_count,
+            micro_compaction_saved_tokens,
+            trimmed_item_count,
+            reference_context_reestablished,
+        } => Some(TurnItem::ContextCompaction(ContextCompactionItem {
+            id: id.clone(),
+            trigger_source: trigger_source.clone(),
+            provider_mode: provider_mode.clone(),
+            micro_compaction_item_count: *micro_compaction_item_count,
+            micro_compaction_saved_tokens: *micro_compaction_saved_tokens,
+            trimmed_item_count: *trimmed_item_count,
+            reference_context_reestablished: *reference_context_reestablished,
+        })),
         ThreadItem::CommandExecution { .. }
         | ThreadItem::FileChange { .. }
         | ThreadItem::McpToolCall { .. }
@@ -1522,6 +1534,12 @@ mod tests {
                     },
                     ThreadItem::ContextCompaction {
                         id: "compact-1".to_string(),
+                        trigger_source: Some("pre_turn".to_string()),
+                        provider_mode: Some("remote".to_string()),
+                        micro_compaction_item_count: None,
+                        micro_compaction_saved_tokens: None,
+                        trimmed_item_count: Some(2),
+                        reference_context_reestablished: Some(false),
                     },
                 ],
                 status: TurnStatus::Completed,

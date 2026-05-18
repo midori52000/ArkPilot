@@ -444,6 +444,98 @@ export class TurnTokenUsage {
   }
 }
 
+export class CodexContextManagementSnapshot {
+  memoryMode: string | null;
+  recentArtifactRefs: string[] | null;
+  memoryUsageCount: number | null;
+  memoryLastUsageAt: number | null;
+  memoryStage1GeneratedAt: number | null;
+  memoryStage1UpToDate: boolean | null;
+  memoryStage1JobStatus: string | null;
+  memoryStage1RetryAt: number | null;
+  memoryStage1RetryRemaining: number | null;
+  memoryForgettingPending: boolean | null;
+  memoryForgettingCompletedAt: number | null;
+  memoryPhase2SelectedAt: number | null;
+  memoryPhase2UpdatedAt: number | null;
+  memoryPhase2SelectionCount: number | null;
+  memoryPhase2AddedCount: number | null;
+  memoryPhase2RetainedCount: number | null;
+  memoryPhase2RemovedCount: number | null;
+  memorySummaryUpdatedAt: number | null;
+  memorySummaryPreview: string | null;
+  lastMicroCompactionAt: number | null;
+  lastMicroCompactionItemCount: number | null;
+  lastMicroCompactionSavedTokens: number | null;
+  compactionFailureCount: number | null;
+  compactionCircuitOpen: boolean | null;
+  lastFullCompactionTrigger: string | null;
+  lastFullCompactionProviderMode: string | null;
+  lastFullCompactionTrimmedItemCount: number | null;
+  lastFullCompactionReferenceContextReestablished: boolean | null;
+
+  constructor(
+    memoryMode?: string | null,
+    recentArtifactRefs?: string[] | null,
+    memoryUsageCount?: number | null,
+    memoryLastUsageAt?: number | null,
+    memoryStage1GeneratedAt?: number | null,
+    memoryStage1UpToDate?: boolean | null,
+    memoryStage1JobStatus?: string | null,
+    memoryStage1RetryAt?: number | null,
+    memoryStage1RetryRemaining?: number | null,
+    memoryForgettingPending?: boolean | null,
+    memoryForgettingCompletedAt?: number | null,
+    memoryPhase2SelectedAt?: number | null,
+    memoryPhase2UpdatedAt?: number | null,
+    memoryPhase2SelectionCount?: number | null,
+    memoryPhase2AddedCount?: number | null,
+    memoryPhase2RetainedCount?: number | null,
+    memoryPhase2RemovedCount?: number | null,
+    memorySummaryUpdatedAt?: number | null,
+    memorySummaryPreview?: string | null,
+    lastMicroCompactionAt?: number | null,
+    lastMicroCompactionItemCount?: number | null,
+    lastMicroCompactionSavedTokens?: number | null,
+    compactionFailureCount?: number | null,
+    compactionCircuitOpen?: boolean | null,
+    lastFullCompactionTrigger?: string | null,
+    lastFullCompactionProviderMode?: string | null,
+    lastFullCompactionTrimmedItemCount?: number | null,
+    lastFullCompactionReferenceContextReestablished?: boolean | null
+  ) {
+    this.memoryMode = memoryMode ?? null;
+    this.recentArtifactRefs = recentArtifactRefs ?? null;
+    this.memoryUsageCount = memoryUsageCount ?? null;
+    this.memoryLastUsageAt = memoryLastUsageAt ?? null;
+    this.memoryStage1GeneratedAt = memoryStage1GeneratedAt ?? null;
+    this.memoryStage1UpToDate = memoryStage1UpToDate ?? null;
+    this.memoryStage1JobStatus = memoryStage1JobStatus ?? null;
+    this.memoryStage1RetryAt = memoryStage1RetryAt ?? null;
+    this.memoryStage1RetryRemaining = memoryStage1RetryRemaining ?? null;
+    this.memoryForgettingPending = memoryForgettingPending ?? null;
+    this.memoryForgettingCompletedAt = memoryForgettingCompletedAt ?? null;
+    this.memoryPhase2SelectedAt = memoryPhase2SelectedAt ?? null;
+    this.memoryPhase2UpdatedAt = memoryPhase2UpdatedAt ?? null;
+    this.memoryPhase2SelectionCount = memoryPhase2SelectionCount ?? null;
+    this.memoryPhase2AddedCount = memoryPhase2AddedCount ?? null;
+    this.memoryPhase2RetainedCount = memoryPhase2RetainedCount ?? null;
+    this.memoryPhase2RemovedCount = memoryPhase2RemovedCount ?? null;
+    this.memorySummaryUpdatedAt = memorySummaryUpdatedAt ?? null;
+    this.memorySummaryPreview = memorySummaryPreview ?? null;
+    this.lastMicroCompactionAt = lastMicroCompactionAt ?? null;
+    this.lastMicroCompactionItemCount = lastMicroCompactionItemCount ?? null;
+    this.lastMicroCompactionSavedTokens = lastMicroCompactionSavedTokens ?? null;
+    this.compactionFailureCount = compactionFailureCount ?? null;
+    this.compactionCircuitOpen = compactionCircuitOpen ?? null;
+    this.lastFullCompactionTrigger = lastFullCompactionTrigger ?? null;
+    this.lastFullCompactionProviderMode = lastFullCompactionProviderMode ?? null;
+    this.lastFullCompactionTrimmedItemCount = lastFullCompactionTrimmedItemCount ?? null;
+    this.lastFullCompactionReferenceContextReestablished =
+      lastFullCompactionReferenceContextReestablished ?? null;
+  }
+}
+
 export class TodayTokenDetail {
   totalTokens: number;
   inputTokens: number;

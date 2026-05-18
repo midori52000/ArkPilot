@@ -1067,8 +1067,8 @@ fn record_items_truncates_function_call_output_content() {
                 "expected token-based truncation marker, got {content}"
             );
             assert!(
-                content.contains("tokens truncated"),
-                "expected truncation marker, got {content}"
+                content.contains("[output compacted; replay locator: call_id=call-100]"),
+                "expected replay locator marker, got {content}"
             );
         }
         other => panic!("unexpected history item: {other:?}"),
@@ -1099,8 +1099,145 @@ fn record_items_truncates_custom_tool_call_output_content() {
                 "expected token-based truncation marker, got {output}"
             );
             assert!(
-                output.contains("tokens truncated") || output.contains("bytes truncated"),
-                "expected truncation marker, got {output}"
+                output.contains("[output compacted; replay locator: call_id=tool-200]"),
+                "expected replay locator marker, got {output}"
+            );
+        }
+        other => panic!("unexpected history item: {other:?}"),
+    }
+}
+
+#[test]
+fn record_items_appends_replay_note_to_truncated_content_items_output() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(1_000);
+    let long_output = "structured output that is very long\n".repeat(2_500);
+    let item = ResponseItem::FunctionCallOutput {
+        call_id: "call-structured".to_string(),
+        output: FunctionCallOutputPayload::from_content_items(vec![
+            FunctionCallOutputContentItem::InputText { text: long_output },
+        ]),
+    };
+
+    history.record_items([&item], policy);
+
+    match &history.items[0] {
+        ResponseItem::FunctionCallOutput { output, .. } => {
+            let items = output.content_items().expect("expected content items output");
+            assert!(
+                items.iter().any(|item| matches!(
+                    item,
+                    FunctionCallOutputContentItem::InputText { text }
+                        if text.contains("tokens truncated") || text.contains("bytes truncated")
+                )),
+                "expected truncated content item marker, got {items:?}"
+            );
+            assert!(
+                items.iter().any(|item| matches!(
+                    item,
+                    FunctionCallOutputContentItem::InputText { text }
+                        if text == "[output compacted; replay locator: call_id=call-structured]"
+                )),
+                "expected replay locator marker, got {items:?}"
+            );
+        }
+        other => panic!("unexpected history item: {other:?}"),
+    }
+}
+
+#[test]
+fn record_items_appends_tool_name_to_custom_tool_replay_note_when_present() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(1_000);
+    let line = "named custom output that is very long\n";
+    let long_output = line.repeat(2_500);
+    let item = ResponseItem::CustomToolCallOutput {
+        call_id: "tool-201".to_string(),
+        name: Some("grep".to_string()),
+        output: FunctionCallOutputPayload::from_text(long_output),
+    };
+
+    history.record_items([&item], policy);
+
+    let stored = match &history.items[0] {
+        ResponseItem::CustomToolCallOutput { output, .. } => output,
+        other => panic!("unexpected history item: {other:?}"),
+    };
+    assert!(
+        stored.text_content().is_some_and(|content| {
+            content.contains("[output compacted; replay locator: call_id=tool-201; tool_name=grep]")
+        }),
+        "expected replay locator with tool_name, got {stored:?}"
+    );
+}
+
+#[test]
+fn record_items_does_not_append_replay_note_without_truncation() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(1_000);
+    let item = ResponseItem::FunctionCallOutput {
+        call_id: "call-short".to_string(),
+        output: FunctionCallOutputPayload::from_text("short output".to_string()),
+    };
+
+    history.record_items([&item], policy);
+
+    let stored = match &history.items[0] {
+        ResponseItem::FunctionCallOutput { output, .. } => output,
+        other => panic!("unexpected history item: {other:?}"),
+    };
+    assert_eq!(stored.text_content(), Some("short output"));
+}
+
+#[test]
+fn record_items_compacts_tool_search_output_tools() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(200);
+    let original_tools = (0..24)
+        .map(|index| {
+            serde_json::json!({
+                "type": "function",
+                "name": format!("tool_{index}"),
+                "description": "tool description ".repeat(60),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "field description ".repeat(30)}
+                    }
+                }
+            })
+        })
+        .collect::<Vec<serde_json::Value>>();
+    let item = ResponseItem::ToolSearchOutput {
+        call_id: Some("search-200".to_string()),
+        status: "completed".to_string(),
+        execution: "client".to_string(),
+        tools: original_tools.clone(),
+    };
+
+    history.record_items([&item], policy);
+
+    match &history.items[0] {
+        ResponseItem::ToolSearchOutput {
+            tools: stored_tools, ..
+        } => {
+            assert_ne!(stored_tools, &original_tools);
+            assert_eq!(stored_tools.len(), 1);
+            let summary = stored_tools[0]
+                .as_object()
+                .expect("expected compacted summary object");
+            assert_eq!(
+                summary.get("type"),
+                Some(&serde_json::json!("tool_search_compacted"))
+            );
+            assert_eq!(summary.get("tool_count"), Some(&serde_json::json!(24)));
+            assert_eq!(
+                summary.get("preview_names"),
+                Some(&serde_json::json!(["tool_0", "tool_1", "tool_2"]))
+            );
+            assert_eq!(
+                summary.get("replay_note"),
+                Some(&serde_json::json!("[output compacted; replay locator: call_id=search-200]"))
             );
         }
         other => panic!("unexpected history item: {other:?}"),

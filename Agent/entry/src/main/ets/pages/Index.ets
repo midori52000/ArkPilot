@@ -25,7 +25,7 @@ import {
   saveEmbeddedCodexProviderConfig
 } from '../backend/CodexNative';
 import { providerCatalogService } from '../backend/ProviderCatalogService';
-import { SessionSummary, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, DailyTokenSnapshot, ProjectRecord } from '../backend/ConsoleModels';
+import { SessionSummary, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, DailyTokenSnapshot, ProjectRecord, CodexContextManagementSnapshot } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import { projectStore } from '../backend/ProjectStore';
 import { common, OpenLinkOptions, Want, wantConstant } from '@kit.AbilityKit';
@@ -1261,6 +1261,7 @@ struct Index {
     new CodeDiffLine('placeholder-1', '1', ' ', '等待 turn/diff/updated 通知。', 'context')
   ];
   @State private tokenUsage: TurnTokenUsage | null = null;
+  @State private contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
   @State private tokenAggregate: TokenUsageAggregate | null = null;
   @State private tokenCardExpanded: boolean = true;
   @State private tokenCardHeight: number = 280;
@@ -1271,6 +1272,7 @@ struct Index {
   @State private compacting: boolean = false;
   @State private compactError: string = '';
   private compactionClearTimerId: number = -1;
+  private pendingCompactionThreadId: string = '';
   @State private projects: ProjectRecord[] = [];
   @State private newProjectName: string = '';
   @State private newProjectSourceUri: string = '';
@@ -1511,13 +1513,11 @@ struct Index {
     if (this.requestBelongsToWorkspace(snapshotThreadId, this.activeWorkspaceId)) {
       this.backendActiveThreadId = snapshotThreadId;
       this.tokenUsage = snapshot.tokenUsage;
+      this.contextManagement = snapshot.contextManagement;
     } else {
       this.backendActiveThreadId = this.activeWorkspaceBindingId.trim();
     }
     this.applyCompactionSnapshot(snapshot);
-    if (codexBackend.shouldStartFallbackCompaction(this.backendActiveThreadId)) {
-      this.retryCurrentCompaction(this.backendActiveThreadId);
-    }
   }
 
   private applyPendingRequestsForActiveWorkspace(): void {
@@ -1556,7 +1556,13 @@ struct Index {
     const isCurrentThread: boolean = this.isCurrentCompactionThreadId(compaction.threadId);
     const nextCompacting: boolean = isCurrentThread && (compaction.status === 'starting' || compaction.status === 'running');
     this.compacting = nextCompacting;
+    if (nextCompacting && isCurrentThread) {
+      this.pendingCompactionThreadId = compaction.threadId.trim();
+    }
     if (compaction.status === 'idle') {
+      if (!this.compacting) {
+        this.pendingCompactionThreadId = '';
+      }
       this.compactError = '';
       return;
     }
@@ -1575,10 +1581,12 @@ struct Index {
       return;
     }
     if (compaction.status === 'failed' || compaction.status === 'timeout') {
+      this.pendingCompactionThreadId = '';
       this.compactError = compaction.errorMessage;
       return;
     }
     if (compaction.status === 'completed') {
+      this.pendingCompactionThreadId = '';
       this.compactError = '';
       if (wasCompacting || hadError) {
         if (compaction.savedTokens > 0) {
@@ -2094,14 +2102,19 @@ struct Index {
     if (workspace === undefined) {
       return;
     }
+    const changed: boolean = workspace.workspaceId !== trimmedThreadId;
     workspace.workspaceId = trimmedThreadId;
     this.workspaceIds.set(workspace.id, trimmedThreadId);
     if (workspaceId === this.activeWorkspaceId) {
       this.activeWorkspaceBindingId = trimmedThreadId;
-      codexBackend.setActiveThread(trimmedThreadId);
-      this.applyPendingRequestsForActiveWorkspace();
+      if (changed) {
+        codexBackend.setActiveThread(trimmedThreadId);
+        this.applyPendingRequestsForActiveWorkspace();
+      }
     }
-    this.persistWorkspaceBindings();
+    if (changed) {
+      this.persistWorkspaceBindings();
+    }
   }
 
   private restoreWorkspaceBindings(): void {
@@ -3625,6 +3638,9 @@ struct Index {
     }
     this.applyBackendResult(result);
     this.syncActiveWorkspaceRunState();
+    if (result.status !== 'inProgress' && codexBackend.shouldStartFallbackCompaction(this.backendActiveThreadId)) {
+      this.retryCurrentCompaction(this.backendActiveThreadId);
+    }
   }
 
   private applyBackendResult(result: CodexTurnResult): void {
@@ -3659,6 +3675,9 @@ struct Index {
     this.diffStat = result.diffStat;
     if (result.tokenUsage !== null) {
       this.tokenUsage = result.tokenUsage;
+    }
+    if (result.contextManagement !== null) {
+      this.contextManagement = result.contextManagement;
     }
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
     this.syncTextOutputIdleState();
@@ -4484,13 +4503,15 @@ struct Index {
     const targetThreadId: string = preferredThreadId.length > 0
       ? preferredThreadId
       : (this.backendActiveThreadId.trim().length > 0 ? this.backendActiveThreadId.trim() : this.activeWorkspaceBindingId.trim());
-    if (targetThreadId.length === 0 || this.compacting) {
+    if (targetThreadId.length === 0 || this.compacting || this.pendingCompactionThreadId === targetThreadId) {
       return;
     }
+    this.pendingCompactionThreadId = targetThreadId;
     this.resumeMessageAutoFollow();
     this.compactError = '';
     codexBackend.clearCompactionNotice(targetThreadId);
     void codexBackend.compactThread(targetThreadId).catch((err: Error) => {
+      this.pendingCompactionThreadId = '';
       this.compactError = err.message.trim().length > 0 ? err.message : codexBackend.getLastCompactError();
     });
   }
@@ -9869,10 +9890,13 @@ struct Index {
     if (notice.errorMessage.trim().length > 0) {
       return notice.errorMessage.trim();
     }
+    const detailText = this.currentFullCompactionDetailText();
     if (notice.savedTokens > 0) {
-      return `释放 ${this.formatTokenCount(notice.savedTokens)} tokens。`;
+      return detailText.length > 0
+        ? `释放 ${this.formatTokenCount(notice.savedTokens)} tokens（${detailText}）。`
+        : `释放 ${this.formatTokenCount(notice.savedTokens)} tokens。`;
     }
-    return '压缩完成，token 用量暂无明显变化。';
+    return detailText.length > 0 ? `压缩完成（${detailText}）。` : '压缩完成，token 用量暂无明显变化。';
   }
 
   private compactionSavedText(notice: CompactionNotice): string {
@@ -11368,6 +11392,436 @@ struct Index {
     return '总 ' + this.formatTokenCount(total) + suffix;
   }
 
+  private currentThreadCompactionNotice(): CompactionNotice | null {
+    const threadId: string = this.backendActiveThreadId.trim();
+    if (threadId.length === 0) {
+      return null;
+    }
+    return this.compactionNoticeById(`compaction:${threadId}`);
+  }
+
+  private contextMemoryModeText(): string {
+    const mode = this.contextManagement.memoryMode;
+    const forgettingPending = this.contextManagement.memoryForgettingPending === true;
+    const forgettingCompletedAt = this.contextManagement.memoryForgettingCompletedAt;
+    const forgettingCompleted = typeof forgettingCompletedAt === 'number' && forgettingCompletedAt > 0;
+    const baselineSelectedAt = this.contextManagement.memoryPhase2SelectedAt;
+    const baselineSelected = typeof baselineSelectedAt === 'number' && baselineSelectedAt > 0;
+    const forgettingRelative = forgettingCompleted ? this.relativeTimeFromEpoch(forgettingCompletedAt as number) : '';
+    const baselineRelative = baselineSelected ? this.relativeTimeFromEpoch(baselineSelectedAt as number) : '';
+    if (mode === null || mode === undefined || mode.trim().length === 0) {
+      return '未上报';
+    }
+    if (mode === 'enabled') {
+      if (!baselineSelected) {
+        return '已启用';
+      }
+      if (baselineRelative.length === 0) {
+        return '已启用（已纳入基线）';
+      }
+      if (baselineRelative === '刚刚') {
+        return `已启用（${baselineRelative}纳入基线）`;
+      }
+      return `已启用（${baselineRelative}前纳入基线）`;
+    }
+    if (mode === 'disabled') return '已禁用';
+    if (mode === 'polluted') {
+      if (forgettingPending) {
+        return '已污染（等待遗忘）';
+      }
+      if (!forgettingCompleted) {
+        return '已污染';
+      }
+      if (forgettingRelative.length === 0) {
+        return '已污染（已完成遗忘）';
+      }
+      if (forgettingRelative === '刚刚') {
+        return `已污染（${forgettingRelative}完成遗忘）`;
+      }
+      return `已污染（${forgettingRelative}前完成遗忘）`;
+    }
+    return mode;
+  }
+
+  private contextMicroCompactionText(): string {
+    const savedTokens = this.contextManagement.lastMicroCompactionSavedTokens;
+    const itemCount = this.contextManagement.lastMicroCompactionItemCount;
+    const executedAt = this.contextManagement.lastMicroCompactionAt;
+    const relative = typeof executedAt === 'number' && executedAt > 0
+      ? this.relativeTimeFromEpoch(executedAt)
+      : '';
+    const parts: string[] = [];
+    if (typeof itemCount === 'number' && itemCount > 0) {
+      parts.push(`处理 ${itemCount} 项`);
+    }
+    if (typeof savedTokens === 'number' && savedTokens > 0) {
+      parts.push(`节省 ${this.formatTokenCount(savedTokens)} tokens`);
+    }
+    if (parts.length > 0) {
+      const summary = parts.join('，');
+      if (relative.length === 0) {
+        return summary;
+      }
+      if (relative === '刚刚') {
+        return `${summary}（${relative}）`;
+      }
+      return `${summary}（${relative}前）`;
+    }
+    if (typeof executedAt === 'number' && executedAt > 0) {
+      if (relative.length === 0) {
+        return '已执行';
+      }
+      if (relative === '刚刚') {
+        return `已执行（${relative}）`;
+      }
+      return `已执行（${relative}前）`;
+    }
+    return '暂无记录';
+  }
+
+  private relativeTimeFromEpoch(timestamp: number): string {
+    if (timestamp !== timestamp || timestamp <= 0) {
+      return '';
+    }
+    const normalizedMs: number = timestamp > 1000000000000 ? timestamp : timestamp * 1000;
+    return this.relativeTime(new Date(normalizedMs).toISOString());
+  }
+
+  private contextMemoryPhase2Text(): string {
+    const updatedAt = this.contextManagement.memoryPhase2UpdatedAt;
+    const selectionCount = this.contextManagement.memoryPhase2SelectionCount;
+    const addedCount = this.contextManagement.memoryPhase2AddedCount;
+    const retainedCount = this.contextManagement.memoryPhase2RetainedCount;
+    const removedCount = this.contextManagement.memoryPhase2RemovedCount;
+    if (
+      typeof selectionCount === 'number' && selectionCount >= 0 &&
+      typeof addedCount === 'number' && addedCount >= 0 &&
+      typeof retainedCount === 'number' && retainedCount >= 0 &&
+      typeof removedCount === 'number' && removedCount >= 0
+    ) {
+      const summary = `选中 ${selectionCount}（新增 ${addedCount} / 保留 ${retainedCount} / 移除 ${removedCount}）`;
+      if (typeof updatedAt !== 'number' || updatedAt <= 0) {
+        return summary;
+      }
+      const relative = this.relativeTimeFromEpoch(updatedAt);
+      if (relative.length === 0) {
+        return summary;
+      }
+      if (relative === '刚刚') {
+        return `${summary}（${relative}）`;
+      }
+      return `${summary}（${relative}前）`;
+    }
+    if (typeof updatedAt !== 'number' || updatedAt <= 0) {
+      return '暂无记录';
+    }
+    const relative = this.relativeTimeFromEpoch(updatedAt);
+    if (relative.length === 0) {
+      return '已完成';
+    }
+    if (relative === '刚刚') {
+      return relative;
+    }
+    return `${relative}前`;
+  }
+
+  private contextMemorySummaryText(): string {
+    const preview = this.contextManagement.memorySummaryPreview;
+    const updatedAt = this.contextManagement.memorySummaryUpdatedAt;
+    const relative = typeof updatedAt === 'number' && updatedAt > 0
+      ? this.relativeTimeFromEpoch(updatedAt)
+      : '';
+    if (typeof preview === 'string' && preview.trim().length > 0) {
+      const summary = preview.trim();
+      if (relative.length === 0) {
+        return summary;
+      }
+      if (relative === '刚刚') {
+        return `${summary}（${relative}）`;
+      }
+      return `${summary}（${relative}前）`;
+    }
+    if (typeof updatedAt === 'number' && updatedAt > 0) {
+      if (relative.length === 0) {
+        return '已生成';
+      }
+      if (relative === '刚刚') {
+        return `已生成（${relative}）`;
+      }
+      return `已生成（${relative}前）`;
+    }
+    return '暂无摘要';
+  }
+
+  private contextMemoryUsageText(): string {
+    const usageCount = this.contextManagement.memoryUsageCount;
+    const lastUsageAt = this.contextManagement.memoryLastUsageAt;
+    if (typeof usageCount !== 'number' || usageCount < 0) {
+      return '暂无记录';
+    }
+    if (usageCount === 0) {
+      return '尚未引用';
+    }
+    const relative = typeof lastUsageAt === 'number' && lastUsageAt > 0
+      ? this.relativeTimeFromEpoch(lastUsageAt)
+      : '';
+    if (relative.length === 0) {
+      return `已引用 ${usageCount} 次`;
+    }
+    if (relative === '刚刚') {
+      return `已引用 ${usageCount} 次（${relative}）`;
+    }
+    return `已引用 ${usageCount} 次（${relative}前）`;
+  }
+
+  private contextMemoryStage1Text(): string {
+    const generatedAt = this.contextManagement.memoryStage1GeneratedAt;
+    const upToDate = this.contextManagement.memoryStage1UpToDate;
+    const jobStatus = this.contextManagement.memoryStage1JobStatus;
+    const retryAt = this.contextManagement.memoryStage1RetryAt;
+    const retryRemaining = this.contextManagement.memoryStage1RetryRemaining;
+    const relative = typeof generatedAt === 'number' && generatedAt > 0
+      ? this.relativeTimeFromEpoch(generatedAt)
+      : '';
+    const retryRelative = typeof retryAt === 'number' && retryAt > 0
+      ? this.relativeTimeFromEpoch(retryAt)
+      : '';
+    if (jobStatus === 'running') {
+      if (typeof generatedAt === 'number' && generatedAt > 0) {
+        if (relative.length === 0) {
+          return '提炼中';
+        }
+        if (relative === '刚刚') {
+          return `提炼中（上次 ${relative}）`;
+        }
+        return `提炼中（上次 ${relative}前）`;
+      }
+      return '提炼中';
+    }
+    if (jobStatus === 'error') {
+      if (typeof retryRemaining === 'number' && retryRemaining <= 0) {
+        return '提炼失败（重试已耗尽）';
+      }
+      if (retryRelative.length === 0) {
+        if (typeof retryRemaining === 'number' && retryRemaining > 0) {
+          return `等待重试（剩余 ${retryRemaining} 次）`;
+        }
+        return '等待重试';
+      }
+      if (retryRelative === '刚刚') {
+        if (typeof retryRemaining === 'number' && retryRemaining > 0) {
+          return `等待重试（${retryRelative}，剩余 ${retryRemaining} 次）`;
+        }
+        return `等待重试（${retryRelative}）`;
+      }
+      if (typeof retryRemaining === 'number' && retryRemaining > 0) {
+        return `等待重试（${retryRelative}后，剩余 ${retryRemaining} 次）`;
+      }
+      return `等待重试（${retryRelative}后）`;
+    }
+    if (jobStatus === 'pending') {
+      if (typeof generatedAt === 'number' && generatedAt > 0) {
+        if (relative.length === 0) {
+          return '排队刷新';
+        }
+        if (relative === '刚刚') {
+          return `排队刷新（上次 ${relative}）`;
+        }
+        return `排队刷新（上次 ${relative}前）`;
+      }
+      return '排队提炼';
+    }
+    if (upToDate === true) {
+      if (relative.length === 0) {
+        return '已同步';
+      }
+      if (relative === '刚刚') {
+        return `已同步（${relative}）`;
+      }
+      return `已同步（${relative}前）`;
+    }
+    if (upToDate === false) {
+      if (typeof generatedAt === 'number' && generatedAt > 0) {
+        if (relative.length === 0) {
+          return '待刷新';
+        }
+        if (relative === '刚刚') {
+          return `待刷新（上次 ${relative}）`;
+        }
+        return `待刷新（上次 ${relative}前）`;
+      }
+      return '待提炼';
+    }
+    if (typeof generatedAt === 'number' && generatedAt > 0) {
+      if (relative.length === 0) {
+        return '已有记录';
+      }
+      if (relative === '刚刚') {
+        return `已有记录（${relative}）`;
+      }
+      return `已有记录（${relative}前）`;
+    }
+    return '暂无记录';
+  }
+
+  private fullCompactionTriggerText(trigger: string | null): string {
+    if (trigger === 'manual') return '手动';
+    if (trigger === 'pre_turn') return '预压缩';
+    if (trigger === 'mid_turn') return '中途压缩';
+    if (trigger === 'model_switch') return '模型切换';
+    if (trigger === null || trigger === undefined || trigger.trim().length === 0) {
+      return '';
+    }
+    return trigger;
+  }
+
+  private fullCompactionProviderModeText(providerMode: string | null): string {
+    if (providerMode === 'local') return '本地';
+    if (providerMode === 'remote') return '远程';
+    if (providerMode === null || providerMode === undefined || providerMode.trim().length === 0) {
+      return '';
+    }
+    return providerMode;
+  }
+
+  private fullCompactionTrimmedItemText(trimmedItemCount: number | null): string {
+    if (typeof trimmedItemCount === 'number' && trimmedItemCount > 0) {
+      return `裁剪 ${trimmedItemCount} 项`;
+    }
+    return '';
+  }
+
+  private fullCompactionReferenceContextText(reestablished: boolean | null): string {
+    if (reestablished === true) {
+      return '已重建上下文';
+    }
+    if (reestablished === false) {
+      return '待重建上下文';
+    }
+    return '';
+  }
+
+  private fullCompactionSourceDetail(
+    triggerText: string,
+    providerModeText: string,
+    trimmedItemText: string,
+    referenceContextText: string
+  ): string {
+    let detailText = '';
+    if (triggerText.length > 0 && providerModeText.length > 0) {
+      detailText = `${triggerText} / ${providerModeText}`;
+    } else if (triggerText.length > 0) {
+      detailText = triggerText;
+    } else {
+      detailText = providerModeText;
+    }
+    if (trimmedItemText.length > 0) {
+      detailText = detailText.length > 0 ? `${detailText}，${trimmedItemText}` : trimmedItemText;
+    }
+    if (referenceContextText.length > 0) {
+      return detailText.length > 0 ? `${detailText}，${referenceContextText}` : referenceContextText;
+    }
+    return detailText;
+  }
+
+  private currentFullCompactionDetailText(): string {
+    const triggerText = this.fullCompactionTriggerText(this.contextManagement.lastFullCompactionTrigger);
+    const providerModeText = this.fullCompactionProviderModeText(this.contextManagement.lastFullCompactionProviderMode);
+    const trimmedItemText = this.fullCompactionTrimmedItemText(this.contextManagement.lastFullCompactionTrimmedItemCount);
+    const referenceContextText = this.fullCompactionReferenceContextText(
+      this.contextManagement.lastFullCompactionReferenceContextReestablished
+    );
+    return this.fullCompactionSourceDetail(
+      triggerText,
+      providerModeText,
+      trimmedItemText,
+      referenceContextText
+    );
+  }
+
+  private contextFullCompactionText(): string {
+    const notice = this.currentThreadCompactionNotice();
+    const detailText = this.currentFullCompactionDetailText();
+    if (notice !== null) {
+      if (notice.status === 'completed') {
+        if (notice.savedTokens > 0) {
+          return detailText.length > 0
+            ? `已完成（${detailText}），释放 ${this.formatTokenCount(notice.savedTokens)} tokens`
+            : `已完成，释放 ${this.formatTokenCount(notice.savedTokens)} tokens`;
+        }
+        return detailText.length > 0 ? `已完成（${detailText}）` : '已完成';
+      }
+      if (notice.status === 'failed' || notice.status === 'timeout') {
+        return notice.errorMessage.trim().length > 0 ? notice.errorMessage : '失败';
+      }
+      if (notice.status === 'starting' || notice.status === 'running') {
+        return '进行中';
+      }
+    }
+    if (this.compacting) {
+      return '进行中';
+    }
+    if (this.compactError.trim().length > 0) {
+      return this.compactError;
+    }
+    if (detailText.length > 0) {
+      return `空闲（上次：${detailText}）`;
+    }
+    return '空闲';
+  }
+
+  private contextCircuitBreakerText(): string {
+    const failureCount = this.contextManagement.compactionFailureCount;
+    if (this.contextManagement.compactionCircuitOpen === true) {
+      if (typeof failureCount === 'number' && failureCount > 0) {
+        return `已熔断（失败 ${failureCount} 次）`;
+      }
+      return '已熔断';
+    }
+    if (typeof failureCount === 'number' && failureCount > 0) {
+      return `连续失败 ${failureCount} 次`;
+    }
+    return '正常';
+  }
+
+  private contextRecentArtifactRefsText(): string {
+    const refs = this.contextManagement.recentArtifactRefs;
+    if (refs === null || refs === undefined || refs.length === 0) {
+      return '暂无记录';
+    }
+    const normalizedRefs: string[] = refs
+      .map((item: string) => item.trim())
+      .filter((item: string) => item.length > 0);
+    if (normalizedRefs.length === 0) {
+      return '暂无记录';
+    }
+    const previewNames: string[] = normalizedRefs.slice(0, 2).map((item: string) => {
+      const shortName = this.fileNameFromTarget(item);
+      return shortName.length > 0 ? shortName : item;
+    });
+    if (normalizedRefs.length <= 2) {
+      return `${normalizedRefs.length} 项：${previewNames.join('、')}`;
+    }
+    return `${normalizedRefs.length} 项：${previewNames.join('、')} 等`;
+  }
+
+  @Builder contextManagementMetricRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .fontSize(11)
+        .fontColor('#A1A1AA')
+      Blank()
+      Text(value)
+        .fontSize(11)
+        .fontColor('#18181B')
+        .fontWeight(FontWeight.Medium)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .padding({ top: 6 })
+  }
+
   private readonly TREND_CHART_H: number = 52;
 
   private trendChartWidth(): number {
@@ -11557,6 +12011,20 @@ struct Index {
               }
               .width('100%')
               .padding({ top: 8, bottom: 10 })
+
+              Column() {
+                this.contextManagementMetricRow('微压缩', this.contextMicroCompactionText())
+                this.contextManagementMetricRow('Memory', this.contextMemoryModeText())
+                this.contextManagementMetricRow('记忆提炼', this.contextMemoryStage1Text())
+                this.contextManagementMetricRow('记忆引用', this.contextMemoryUsageText())
+                this.contextManagementMetricRow('Phase2', this.contextMemoryPhase2Text())
+                this.contextManagementMetricRow('记忆摘要', this.contextMemorySummaryText())
+                this.contextManagementMetricRow('完整压缩', this.contextFullCompactionText())
+                this.contextManagementMetricRow('最近引用', this.contextRecentArtifactRefsText())
+                this.contextManagementMetricRow('熔断器', this.contextCircuitBreakerText())
+              }
+              .width('100%')
+              .padding({ bottom: 10 })
 
               // 标题行
               Row() {
