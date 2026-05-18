@@ -473,6 +473,296 @@ ORDER BY so.source_updated_at DESC, so.thread_id DESC
         })
     }
 
+    /// Returns the current phase-2 selection counts under the configured
+    /// selection policy.
+    pub async fn get_phase2_input_selection_counts(
+        &self,
+        n: usize,
+        max_unused_days: i64,
+    ) -> anyhow::Result<(i64, i64, i64, i64)> {
+        let selection = self.get_phase2_input_selection(n, max_unused_days).await?;
+        let retained_count = selection.retained_thread_ids.len() as i64;
+        let selected_count = selection.selected.len() as i64;
+        let removed_count = selection.removed.len() as i64;
+        let added_count = selected_count.saturating_sub(retained_count);
+        Ok((selected_count, added_count, retained_count, removed_count))
+    }
+
+    /// Returns the best available timestamp for the last successful global
+    /// phase-2 consolidation.
+    ///
+    /// Preference order:
+    /// - `jobs.finished_at` when the singleton global job is currently `done`
+    /// - otherwise `jobs.last_success_watermark`, which survives later
+    ///   `pending/running/error` transitions and still reflects the last
+    ///   successful baseline watermark
+    pub async fn get_global_phase2_updated_at(&self) -> anyhow::Result<Option<i64>> {
+        let row = sqlx::query(
+            r#"
+SELECT status, finished_at, last_success_watermark
+FROM jobs
+WHERE kind = ? AND job_key = ?
+LIMIT 1
+            "#,
+        )
+        .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
+        .bind(MEMORY_CONSOLIDATION_JOB_KEY)
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let status = row.try_get::<String, _>("status")?;
+        let finished_at = row.try_get::<Option<i64>, _>("finished_at")?;
+        let last_success_watermark = row.try_get::<Option<i64>, _>("last_success_watermark")?;
+
+        let updated_at = if status == "done" {
+            finished_at.or(last_success_watermark)
+        } else {
+            last_success_watermark
+        };
+
+        Ok(updated_at.filter(|value| *value > 0))
+    }
+
+    /// Returns the selected phase-2 baseline source timestamp for a thread when
+    /// it is still part of the persisted baseline.
+    pub async fn get_thread_phase2_selected_at(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<i64>> {
+        let selected_at = sqlx::query_scalar::<_, Option<i64>>(
+            r#"
+SELECT selected_for_phase2_source_updated_at
+FROM stage1_outputs
+WHERE thread_id = ?
+  AND selected_for_phase2 != 0
+LIMIT 1
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?
+        .flatten();
+
+        Ok(selected_at.filter(|value| *value > 0))
+    }
+
+    /// Returns whether a polluted thread is still part of the persisted phase-2
+    /// baseline and therefore awaiting forgetting on the next consolidation.
+    pub async fn is_thread_memory_forgetting_pending(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<bool> {
+        let row = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT 1
+FROM threads AS t
+JOIN stage1_outputs AS so
+    ON so.thread_id = t.id
+WHERE t.id = ?
+  AND t.memory_mode = 'polluted'
+  AND so.selected_for_phase2 != 0
+LIMIT 1
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        Ok(row.is_some())
+    }
+
+    /// Returns the last successful global phase-2 completion time for a
+    /// polluted thread that used to belong to the persisted baseline but has
+    /// since been removed from it by forgetting.
+    pub async fn get_thread_memory_forgetting_completed_at(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<i64>> {
+        let row = sqlx::query(
+            r#"
+SELECT
+    so.selected_for_phase2_source_updated_at,
+    jobs.status,
+    jobs.finished_at,
+    jobs.last_success_watermark
+FROM threads AS t
+JOIN stage1_outputs AS so
+    ON so.thread_id = t.id
+LEFT JOIN jobs
+    ON jobs.kind = ?
+   AND jobs.job_key = ?
+WHERE t.id = ?
+  AND t.memory_mode = 'polluted'
+  AND so.selected_for_phase2 = 0
+  AND so.selected_for_phase2_source_updated_at IS NOT NULL
+LIMIT 1
+            "#,
+        )
+        .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
+        .bind(MEMORY_CONSOLIDATION_JOB_KEY)
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let selected_at = row
+            .try_get::<Option<i64>, _>("selected_for_phase2_source_updated_at")?
+            .filter(|value| *value > 0);
+        let status = row.try_get::<Option<String>, _>("status")?;
+        let finished_at = row.try_get::<Option<i64>, _>("finished_at")?;
+        let last_success_watermark = row.try_get::<Option<i64>, _>("last_success_watermark")?;
+        let completed_at = if status.as_deref() == Some("done") {
+            finished_at.or(last_success_watermark)
+        } else {
+            last_success_watermark
+        }
+        .filter(|value| *value > 0);
+
+        Ok(match (selected_at, completed_at) {
+            (Some(selected_at), Some(completed_at)) if completed_at >= selected_at => Some(completed_at),
+            _ => None,
+        })
+    }
+
+    /// Returns the number of times the current thread's persisted stage-1
+    /// memory output has been cited by later model responses.
+    pub async fn get_thread_memory_usage_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<i64>> {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COALESCE(usage_count, 0)
+FROM stage1_outputs
+WHERE thread_id = ?
+LIMIT 1
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Returns the last citation time for the current thread's persisted
+    /// stage-1 memory output.
+    pub async fn get_thread_memory_last_usage_at(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<i64>> {
+        let last_usage = sqlx::query_scalar::<_, Option<i64>>(
+            r#"
+SELECT last_usage
+FROM stage1_outputs
+WHERE thread_id = ?
+LIMIT 1
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?
+        .flatten();
+
+        Ok(last_usage.filter(|value| *value > 0))
+    }
+
+    /// Returns the last successful per-thread stage-1 generation time.
+    pub async fn get_thread_memory_stage1_generated_at(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<i64>> {
+        let generated_at = sqlx::query_scalar::<_, Option<i64>>(
+            r#"
+SELECT generated_at
+FROM stage1_outputs
+WHERE thread_id = ?
+LIMIT 1
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?
+        .flatten();
+
+        Ok(generated_at.filter(|value| *value > 0))
+    }
+
+    /// Returns whether the current thread's persisted stage-1 memory view is
+    /// already up to date with the thread watermark.
+    pub async fn get_thread_memory_stage1_up_to_date(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<bool>> {
+        let row = sqlx::query(
+            r#"
+SELECT
+    t.updated_at,
+    so.source_updated_at,
+    jobs.last_success_watermark
+FROM threads AS t
+LEFT JOIN stage1_outputs AS so
+    ON so.thread_id = t.id
+LEFT JOIN jobs
+    ON jobs.kind = ?
+   AND jobs.job_key = t.id
+WHERE t.id = ?
+LIMIT 1
+            "#,
+        )
+        .bind(JOB_KIND_MEMORY_STAGE1)
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let thread_updated_at = row.try_get::<i64, _>("updated_at")?;
+        let source_updated_at = row.try_get::<Option<i64>, _>("source_updated_at")?;
+        let last_success_watermark = row.try_get::<Option<i64>, _>("last_success_watermark")?;
+        let up_to_date = source_updated_at.is_some_and(|value| value >= thread_updated_at)
+            || last_success_watermark.is_some_and(|value| value >= thread_updated_at);
+        Ok(Some(up_to_date))
+    }
+
+    /// Returns the latest per-thread stage-1 job state, if any.
+    pub async fn get_thread_memory_stage1_job_state(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<(String, Option<i64>, i64)>> {
+        let row = sqlx::query(
+            r#"
+SELECT status, retry_at, retry_remaining
+FROM jobs
+WHERE kind = ? AND job_key = ?
+LIMIT 1
+            "#,
+        )
+        .bind(JOB_KIND_MEMORY_STAGE1)
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let status = row.try_get::<String, _>("status")?;
+        let retry_at = row
+            .try_get::<Option<i64>, _>("retry_at")?
+            .filter(|value| *value > 0);
+        let retry_remaining = row.try_get::<i64, _>("retry_remaining")?;
+        Ok(Some((status, retry_at, retry_remaining)))
+    }
+
     /// Marks a thread as polluted and enqueues phase-2 forgetting when the
     /// thread participated in the last successful phase-2 baseline.
     pub async fn mark_thread_memory_mode_polluted(
@@ -1113,9 +1403,8 @@ WHERE kind = ? AND job_key = ?
             r#"
 UPDATE stage1_outputs
 SET
-    selected_for_phase2 = 0,
-    selected_for_phase2_source_updated_at = NULL
-WHERE selected_for_phase2 != 0 OR selected_for_phase2_source_updated_at IS NOT NULL
+    selected_for_phase2 = 0
+WHERE selected_for_phase2 != 0
             "#,
         )
         .execute(&mut *tx)
@@ -2564,6 +2853,260 @@ WHERE kind = 'memory_stage1'
         assert!(
             matches!(claim_rerun, Phase2JobClaimOutcome::Claimed { .. }),
             "advanced watermark should be claimable"
+        );
+
+        let _ = tokio::fs::remove_dir_all(codex_home).await;
+    }
+
+    #[tokio::test]
+    async fn get_global_phase2_updated_at_prefers_finished_at_and_falls_back_to_last_success_watermark() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("initialize runtime");
+
+        let owner = ThreadId::from_string(&Uuid::new_v4().to_string()).expect("owner id");
+
+        runtime
+            .enqueue_global_consolidation(/*input_watermark*/ 100)
+            .await
+            .expect("enqueue global consolidation");
+
+        let claim = runtime
+            .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3600)
+            .await
+            .expect("claim phase2");
+        let (ownership_token, input_watermark) = match claim {
+            Phase2JobClaimOutcome::Claimed {
+                ownership_token,
+                input_watermark,
+            } => (ownership_token, input_watermark),
+            other => panic!("unexpected phase2 claim outcome: {other:?}"),
+        };
+
+        runtime
+            .mark_global_phase2_job_succeeded(ownership_token.as_str(), input_watermark, &[])
+            .await
+            .expect("mark phase2 succeeded");
+
+        let finished_at = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT finished_at FROM jobs WHERE kind = ? AND job_key = ?",
+        )
+        .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
+        .bind("global")
+        .fetch_one(runtime.pool.as_ref())
+        .await
+        .expect("load finished_at")
+        .expect("finished_at should be present after success");
+
+        assert_eq!(
+            runtime
+                .get_global_phase2_updated_at()
+                .await
+                .expect("load phase2 updated at after success"),
+            Some(finished_at)
+        );
+
+        runtime
+            .enqueue_global_consolidation(/*input_watermark*/ 101)
+            .await
+            .expect("enqueue global consolidation again");
+
+        let claim_rerun = runtime
+            .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3600)
+            .await
+            .expect("claim phase2 rerun");
+        assert!(
+            matches!(claim_rerun, Phase2JobClaimOutcome::Claimed { .. }),
+            "advanced watermark should be claimable"
+        );
+
+        assert_eq!(
+            runtime
+                .get_global_phase2_updated_at()
+                .await
+                .expect("load phase2 updated at after rerun claim"),
+            Some(100)
+        );
+
+        let _ = tokio::fs::remove_dir_all(codex_home).await;
+    }
+
+    #[tokio::test]
+    async fn get_thread_phase2_selected_at_returns_selected_source_timestamp() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("initialize runtime");
+
+        let thread_id = ThreadId::from_string(&Uuid::new_v4().to_string()).expect("thread id");
+        let owner = ThreadId::from_string(&Uuid::new_v4().to_string()).expect("owner id");
+        let metadata = test_thread_metadata(&codex_home, thread_id, codex_home.join("workspace-a"));
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("upsert thread");
+
+        let claim = runtime
+            .try_claim_stage1_job(thread_id, owner, 100, 3600, 64)
+            .await
+            .expect("claim stage1");
+        let ownership_token = match claim {
+            Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
+            other => panic!("unexpected stage1 claim outcome: {other:?}"),
+        };
+        runtime
+            .mark_stage1_job_succeeded(thread_id, ownership_token.as_str(), 100, "raw", "summary", None)
+            .await
+            .expect("mark stage1 succeeded");
+
+        let phase2_claim = runtime
+            .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3600)
+            .await
+            .expect("claim phase2");
+        let (phase2_token, input_watermark) = match phase2_claim {
+            Phase2JobClaimOutcome::Claimed {
+                ownership_token,
+                input_watermark,
+            } => (ownership_token, input_watermark),
+            other => panic!("unexpected phase2 claim outcome: {other:?}"),
+        };
+        let selected_outputs = runtime
+            .list_stage1_outputs_for_global(10)
+            .await
+            .expect("load selected outputs");
+        runtime
+            .mark_global_phase2_job_succeeded(phase2_token.as_str(), input_watermark, &selected_outputs)
+            .await
+            .expect("mark phase2 succeeded");
+
+        assert_eq!(
+            runtime
+                .get_thread_phase2_selected_at(thread_id)
+                .await
+                .expect("load thread phase2 selected at"),
+            Some(100)
+        );
+
+        let _ = tokio::fs::remove_dir_all(codex_home).await;
+    }
+
+    #[tokio::test]
+    async fn get_thread_memory_forgetting_completed_at_returns_phase2_completion_for_removed_polluted_thread() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("initialize runtime");
+
+        let thread_id = ThreadId::from_string(&Uuid::new_v4().to_string()).expect("thread id");
+        let owner = ThreadId::from_string(&Uuid::new_v4().to_string()).expect("owner id");
+        let metadata = test_thread_metadata(&codex_home, thread_id, codex_home.join("workspace-a"));
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("upsert thread");
+
+        let initial_claim = runtime
+            .try_claim_stage1_job(thread_id, owner, 100, 3600, 64)
+            .await
+            .expect("claim initial stage1");
+        let initial_token = match initial_claim {
+            Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
+            other => panic!("unexpected stage1 claim outcome: {other:?}"),
+        };
+        runtime
+            .mark_stage1_job_succeeded(thread_id, initial_token.as_str(), 100, "raw-100", "summary-100", None)
+            .await
+            .expect("mark initial stage1 succeeded");
+
+        let first_phase2_claim = runtime
+            .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3600)
+            .await
+            .expect("claim initial phase2");
+        let (first_phase2_token, first_input_watermark) = match first_phase2_claim {
+            Phase2JobClaimOutcome::Claimed {
+                ownership_token,
+                input_watermark,
+            } => (ownership_token, input_watermark),
+            other => panic!("unexpected initial phase2 claim outcome: {other:?}"),
+        };
+        let first_selected_outputs = runtime
+            .list_stage1_outputs_for_global(10)
+            .await
+            .expect("load initial selected outputs");
+        runtime
+            .mark_global_phase2_job_succeeded(
+                first_phase2_token.as_str(),
+                first_input_watermark,
+                &first_selected_outputs,
+            )
+            .await
+            .expect("mark initial phase2 succeeded");
+
+        assert!(
+            runtime
+                .mark_thread_memory_mode_polluted(thread_id)
+                .await
+                .expect("mark thread polluted"),
+            "thread should transition to polluted"
+        );
+
+        let refreshed_claim = runtime
+            .try_claim_stage1_job(thread_id, owner, 101, 3600, 64)
+            .await
+            .expect("claim refreshed stage1");
+        let refreshed_token = match refreshed_claim {
+            Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
+            other => panic!("unexpected refreshed stage1 claim outcome: {other:?}"),
+        };
+        runtime
+            .mark_stage1_job_succeeded(
+                thread_id,
+                refreshed_token.as_str(),
+                101,
+                "raw-101",
+                "summary-101",
+                None,
+            )
+            .await
+            .expect("mark refreshed stage1 succeeded");
+
+        let forgetting_phase2_claim = runtime
+            .try_claim_global_phase2_job(owner, /*lease_seconds*/ 3600)
+            .await
+            .expect("claim forgetting phase2");
+        let (forgetting_phase2_token, forgetting_input_watermark) = match forgetting_phase2_claim {
+            Phase2JobClaimOutcome::Claimed {
+                ownership_token,
+                input_watermark,
+            } => (ownership_token, input_watermark),
+            other => panic!("unexpected forgetting phase2 claim outcome: {other:?}"),
+        };
+        runtime
+            .mark_global_phase2_job_succeeded(
+                forgetting_phase2_token.as_str(),
+                forgetting_input_watermark,
+                &first_selected_outputs,
+            )
+            .await
+            .expect("mark forgetting phase2 succeeded");
+
+        let forgetting_completed_at = runtime
+            .get_thread_memory_forgetting_completed_at(thread_id)
+            .await
+            .expect("load forgetting completed at");
+        let phase2_updated_at = runtime
+            .get_global_phase2_updated_at()
+            .await
+            .expect("load phase2 updated at after forgetting");
+        assert!(forgetting_completed_at.is_some());
+        assert_eq!(forgetting_completed_at, phase2_updated_at);
+        assert_eq!(
+            runtime
+                .get_thread_phase2_selected_at(thread_id)
+                .await
+                .expect("load thread phase2 selected at after forgetting"),
+            None
         );
 
         let _ = tokio::fs::remove_dir_all(codex_home).await;

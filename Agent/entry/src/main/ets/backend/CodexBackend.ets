@@ -51,7 +51,8 @@ import {
   WorkspacePermissionState,
   TokenUsageBreakdown,
   TurnTokenUsage,
-  TokenUsageAggregate
+  TokenUsageAggregate,
+  CodexContextManagementSnapshot
 } from './ConsoleModels';
 import {
   ApiError,
@@ -941,8 +942,9 @@ export class CodexTurnResult {
   changedFiles: string;
   diffStat: string;
   tokenUsage: TurnTokenUsage | null;
+  contextManagement: CodexContextManagementSnapshot | null;
 
-  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string, tokenUsage?: TurnTokenUsage | null) {
+  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string, tokenUsage?: TurnTokenUsage | null, contextManagement?: CodexContextManagementSnapshot | null) {
     this.threadId = threadId;
     this.turnId = turnId;
     this.status = status;
@@ -953,6 +955,7 @@ export class CodexTurnResult {
     this.changedFiles = changedFiles;
     this.diffStat = diffStat;
     this.tokenUsage = tokenUsage ?? null;
+    this.contextManagement = contextManagement ?? null;
   }
 }
 
@@ -1067,6 +1070,7 @@ export class CodexBackendSnapshot {
   tokenUsage: TurnTokenUsage | null;
   activeThreadId: string;
   compaction: CodexCompactionSnapshot;
+  contextManagement: CodexContextManagementSnapshot;
 
   constructor(
     serverUrl: string,
@@ -1084,7 +1088,8 @@ export class CodexBackendSnapshot {
     collaborationModes?: CollaborationModeOption[],
     tokenUsage?: TurnTokenUsage | null,
     activeThreadId?: string,
-    compaction?: CodexCompactionSnapshot
+    compaction?: CodexCompactionSnapshot,
+    contextManagement?: CodexContextManagementSnapshot | null
   ) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
@@ -1102,6 +1107,7 @@ export class CodexBackendSnapshot {
     this.tokenUsage = tokenUsage ?? null;
     this.activeThreadId = activeThreadId ?? '';
     this.compaction = compaction ?? new CodexCompactionSnapshot('', 'idle');
+    this.contextManagement = contextManagement ?? new CodexContextManagementSnapshot();
   }
 }
 
@@ -1160,9 +1166,9 @@ class CodexThreadRecord {
   lastTurnStatus: CodexTurnStatus = 'inProgress';
   lastTurnId: string = '';
   tokenUsage: TurnTokenUsage | null = null;
+  contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
   lastCompactionAtMs: number = 0;
   lastCompactionTurnId: string = '';
-  backendAutoCompactEnabled: boolean = false;
   updatedAt: string = '';
 
   constructor(localKey: string, title: string) {
@@ -1251,8 +1257,10 @@ export class CodexBackend {
 
   snapshot(): CodexBackendSnapshot {
     const activeThread: CodexThreadRecord | null = this.activeThreadRecord();
-    this.syncThreadBackendAutoCompactFlag(activeThread);
     const activeTokenUsage: TurnTokenUsage | null = activeThread?.tokenUsage ?? null;
+    const activeContextManagement: CodexContextManagementSnapshot = activeThread !== null
+      ? this.cloneContextManagement(activeThread.contextManagement)
+      : new CodexContextManagementSnapshot();
     return new CodexBackendSnapshot(
       this.serverUrl,
       this.connectionState,
@@ -1269,7 +1277,8 @@ export class CodexBackend {
       this.collaborationModes.map((mode: CollaborationModeOption) => this.cloneCollaborationMode(mode)),
       activeTokenUsage,
       activeThread?.remoteThreadId ?? '',
-      this.compactionSnapshot()
+      this.compactionSnapshot(),
+      activeContextManagement
     );
   }
 
@@ -1726,11 +1735,13 @@ export class CodexBackend {
 
   setActiveThread(threadId: string): void {
     const normalizedThreadId: string = this.normalizeThreadId(threadId);
-    if (this.activeThreadId === normalizedThreadId) {
+    const changed: boolean = this.activeThreadId !== normalizedThreadId;
+    this.activeThreadId = normalizedThreadId;
+    if (!changed) {
       return;
     }
-    this.activeThreadId = normalizedThreadId;
     this.notifyListeners();
+    void this.refreshActiveThreadSnapshot(normalizedThreadId);
   }
 
   private lastCompactError: string = '';
@@ -1841,14 +1852,6 @@ export class CodexBackend {
     return false;
   }
 
-  private syncThreadBackendAutoCompactFlag(thread: CodexThreadRecord | null): boolean {
-    const enabled: boolean = this.resolveBackendAutoCompactEnabled();
-    if (thread !== null) {
-      thread.backendAutoCompactEnabled = enabled;
-    }
-    return enabled;
-  }
-
   shouldStartFallbackCompaction(threadId: string = ''): boolean {
     const normalizedThreadId: string = this.normalizeThreadId(threadId);
     const thread: CodexThreadRecord | null = normalizedThreadId.length > 0
@@ -1861,7 +1864,6 @@ export class CodexBackend {
         (this.compactionState.status === 'starting' || this.compactionState.status === 'running')) {
       return false;
     }
-    const backendAutoCompactEnabled: boolean = this.syncThreadBackendAutoCompactFlag(thread);
     const input: CompactionDecisionInput = {
       contextRemainingPercent: thread.tokenUsage?.contextRemainingPercent ?? -1,
       hasTokenUsage: thread.tokenUsage !== null,
@@ -1871,7 +1873,6 @@ export class CodexBackend {
       cooldownMs: AUTO_COMPACTION_COOLDOWN_MS,
       lastCompactionAtMs: thread.lastCompactionAtMs,
       nowMs: Date.now(),
-      backendAutoCompactEnabled,
     };
     return shouldStartCompaction(input);
   }
@@ -1993,6 +1994,29 @@ export class CodexBackend {
     return new ThreadReadSnapshotPayload(thread, lastTurnId, lastTurnStatus);
   }
 
+  private async refreshActiveThreadSnapshot(threadId: string): Promise<void> {
+    const trimmedThreadId: string = threadId.trim();
+    if (trimmedThreadId.length === 0) {
+      return;
+    }
+    try {
+      const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(trimmedThreadId);
+      if (this.activeThreadId !== trimmedThreadId) {
+        return;
+      }
+      if (snapshot.thread.tokenUsage === null) {
+        await this.hydrateThreadTokenUsage(snapshot.thread, snapshot.lastTurnId);
+      }
+      if (this.activeThreadId !== trimmedThreadId) {
+        return;
+      }
+      this.notifyListeners();
+    } catch (err) {
+      const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
+      this.logInfo(`refreshActiveThreadSnapshot failed thread=${trimmedThreadId} error=${errorText}`);
+    }
+  }
+
   private async hydrateThreadTokenUsage(thread: CodexThreadRecord, turnId: string): Promise<void> {
     const trimmedTurnId: string = turnId.trim();
     if (thread.remoteThreadId.trim().length === 0 || trimmedTurnId.length === 0) {
@@ -2004,6 +2028,7 @@ export class CodexBackend {
         new TurnPollResponsePayload() as Object
       ) as Record<string, Object>;
       this.applyTokenUsagePayload(thread, payload['tokenUsage']);
+      this.applyContextManagementPayload(thread, payload['contextManagement']);
     } catch (err) {
       const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
       this.logInfo(`hydrateThreadTokenUsage failed thread=${thread.remoteThreadId} turnId=${trimmedTurnId} error=${errorText}`);
@@ -2032,6 +2057,53 @@ export class CodexBackend {
     const ctxRemainingPct = typeof tu['contextRemainingPercent'] === 'number' ? (tu['contextRemainingPercent'] as number) : -1;
     thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow, ctxRemainingPct);
     this.updateCompactionTokenDelta(thread);
+  }
+
+  private applyContextManagementPayload(thread: CodexThreadRecord, contextManagementRaw: Object | undefined): void {
+    if (contextManagementRaw === undefined || contextManagementRaw === null) {
+      return;
+    }
+    const raw = contextManagementRaw as Record<string, Object>;
+    thread.contextManagement = new CodexContextManagementSnapshot(
+      typeof raw['memoryMode'] === 'string' ? (raw['memoryMode'] as string) : null,
+      Array.isArray(raw['recentArtifactRefs'])
+        ? (raw['recentArtifactRefs'] as Object[]).map(
+            (item: Object) => typeof item === 'string' ? (item as string) : JSON.stringify(item)
+          )
+        : null,
+      typeof raw['memoryUsageCount'] === 'number' ? (raw['memoryUsageCount'] as number) : null,
+      typeof raw['memoryLastUsageAt'] === 'number' ? (raw['memoryLastUsageAt'] as number) : null,
+      typeof raw['memoryStage1GeneratedAt'] === 'number' ? (raw['memoryStage1GeneratedAt'] as number) : null,
+      typeof raw['memoryStage1UpToDate'] === 'boolean' ? (raw['memoryStage1UpToDate'] as boolean) : null,
+      typeof raw['memoryStage1JobStatus'] === 'string' ? (raw['memoryStage1JobStatus'] as string) : null,
+      typeof raw['memoryStage1RetryAt'] === 'number' ? (raw['memoryStage1RetryAt'] as number) : null,
+      typeof raw['memoryStage1RetryRemaining'] === 'number' ? (raw['memoryStage1RetryRemaining'] as number) : null,
+      typeof raw['memoryForgettingPending'] === 'boolean' ? (raw['memoryForgettingPending'] as boolean) : null,
+      typeof raw['memoryForgettingCompletedAt'] === 'number' ? (raw['memoryForgettingCompletedAt'] as number) : null,
+      typeof raw['memoryPhase2SelectedAt'] === 'number' ? (raw['memoryPhase2SelectedAt'] as number) : null,
+      typeof raw['memoryPhase2UpdatedAt'] === 'number' ? (raw['memoryPhase2UpdatedAt'] as number) : null,
+      typeof raw['memoryPhase2SelectionCount'] === 'number' ? (raw['memoryPhase2SelectionCount'] as number) : null,
+      typeof raw['memoryPhase2AddedCount'] === 'number' ? (raw['memoryPhase2AddedCount'] as number) : null,
+      typeof raw['memoryPhase2RetainedCount'] === 'number' ? (raw['memoryPhase2RetainedCount'] as number) : null,
+      typeof raw['memoryPhase2RemovedCount'] === 'number' ? (raw['memoryPhase2RemovedCount'] as number) : null,
+      typeof raw['memorySummaryUpdatedAt'] === 'number' ? (raw['memorySummaryUpdatedAt'] as number) : null,
+      typeof raw['memorySummaryPreview'] === 'string' ? (raw['memorySummaryPreview'] as string) : null,
+      typeof raw['lastMicroCompactionAt'] === 'number' ? (raw['lastMicroCompactionAt'] as number) : null,
+      typeof raw['lastMicroCompactionItemCount'] === 'number' ? (raw['lastMicroCompactionItemCount'] as number) : null,
+      typeof raw['lastMicroCompactionSavedTokens'] === 'number' ? (raw['lastMicroCompactionSavedTokens'] as number) : null,
+      typeof raw['compactionFailureCount'] === 'number' ? (raw['compactionFailureCount'] as number) : null,
+      typeof raw['compactionCircuitOpen'] === 'boolean' ? (raw['compactionCircuitOpen'] as boolean) : null,
+      typeof raw['lastFullCompactionTrigger'] === 'string' ? (raw['lastFullCompactionTrigger'] as string) : null,
+      typeof raw['lastFullCompactionProviderMode'] === 'string'
+        ? (raw['lastFullCompactionProviderMode'] as string)
+        : null,
+      typeof raw['lastFullCompactionTrimmedItemCount'] === 'number'
+        ? (raw['lastFullCompactionTrimmedItemCount'] as number)
+        : null,
+      typeof raw['lastFullCompactionReferenceContextReestablished'] === 'boolean'
+        ? (raw['lastFullCompactionReferenceContextReestablished'] as boolean)
+        : null
+    );
   }
 
   private updateCompactionTokenDelta(thread: CodexThreadRecord): void {
@@ -2541,7 +2613,6 @@ export class CodexBackend {
       const preview: string = typeof payload['preview'] === 'string' ? (payload['preview'] as string) : '';
       thread.summaryPoints = [preview.trim().length > 0 ? preview : '会话元信息已从 app-server 恢复。'];
     }
-    this.syncThreadBackendAutoCompactFlag(thread);
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
   }
@@ -2602,10 +2673,10 @@ export class CodexBackend {
       typeof payload['lastTurnStatus'] === 'string' ? (payload['lastTurnStatus'] as string) : 'completed'
     );
     this.applyTokenUsagePayload(thread, payload['tokenUsage']);
+    this.applyContextManagementPayload(thread, payload['contextManagement']);
     if (thread.tokenUsage === null && previousTokenUsage !== null) {
       thread.tokenUsage = previousTokenUsage;
     }
-    this.syncThreadBackendAutoCompactFlag(thread);
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
     return thread;
@@ -2865,7 +2936,8 @@ export class CodexBackend {
       [...snapshot.thread.summaryPoints],
       snapshot.thread.changedFiles,
       snapshot.thread.diffStat,
-      snapshot.thread.tokenUsage
+      snapshot.thread.tokenUsage,
+      this.cloneContextManagement(snapshot.thread.contextManagement)
     );
   }
 
@@ -3033,7 +3105,8 @@ export class CodexBackend {
           recovered.summaryPoints,
           recovered.changedFiles,
           recovered.diffStat,
-          recovered.tokenUsage
+          recovered.tokenUsage,
+          recovered.contextManagement
         );
         this.logInfo(
           `threadRead diff recovery thread=${thread.remoteThreadId} attempt=${attempt + 1} diffStat=${currentSnapshot.diffStat}`
@@ -3171,6 +3244,7 @@ export class CodexBackend {
       : [status === 'completed' ? '本轮执行已结束。' : (status === 'failed' ? '未收到有效轮询结果。' : '等待更多轮询结果。')];
     thread.lastTurnId = turnId;
     this.applyTokenUsagePayload(thread, payload['tokenUsage']);
+    this.applyContextManagementPayload(thread, payload['contextManagement']);
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();
     return this.snapshotForThread(thread, status, turnId);
@@ -3476,7 +3550,19 @@ export class CodexBackend {
   }
 
   private snapshotForThread(thread: CodexThreadRecord, status: CodexTurnStatus, turnId: string = ''): CodexTurnResult {
-    return new CodexTurnResult(thread.remoteThreadId, turnId, status, thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)), thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)), thread.summaryTitle, [...thread.summaryPoints], thread.changedFiles, thread.diffStat, thread.tokenUsage);
+    return new CodexTurnResult(
+      thread.remoteThreadId,
+      turnId,
+      status,
+      thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)),
+      thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)),
+      thread.summaryTitle,
+      [...thread.summaryPoints],
+      thread.changedFiles,
+      thread.diffStat,
+      thread.tokenUsage,
+      this.cloneContextManagement(thread.contextManagement)
+    );
   }
 
   private emitTurnUpdate(thread: CodexThreadRecord, pendingTurn: PendingTurnState | null, result: CodexTurnResult): void {
@@ -3640,6 +3726,39 @@ export class CodexBackend {
 
   private cloneCollaborationMode(mode: CollaborationModeOption): CollaborationModeOption {
     return new CollaborationModeOption(mode.name, mode.mode, mode.model, mode.reasoningEffort);
+  }
+
+  private cloneContextManagement(snapshot: CodexContextManagementSnapshot): CodexContextManagementSnapshot {
+    return new CodexContextManagementSnapshot(
+      snapshot.memoryMode,
+      snapshot.recentArtifactRefs !== null ? snapshot.recentArtifactRefs.slice() : null,
+      snapshot.memoryUsageCount,
+      snapshot.memoryLastUsageAt,
+      snapshot.memoryStage1GeneratedAt,
+      snapshot.memoryStage1UpToDate,
+      snapshot.memoryStage1JobStatus,
+      snapshot.memoryStage1RetryAt,
+      snapshot.memoryStage1RetryRemaining,
+      snapshot.memoryForgettingPending,
+      snapshot.memoryForgettingCompletedAt,
+      snapshot.memoryPhase2SelectedAt,
+      snapshot.memoryPhase2UpdatedAt,
+      snapshot.memoryPhase2SelectionCount,
+      snapshot.memoryPhase2AddedCount,
+      snapshot.memoryPhase2RetainedCount,
+      snapshot.memoryPhase2RemovedCount,
+      snapshot.memorySummaryUpdatedAt,
+      snapshot.memorySummaryPreview,
+      snapshot.lastMicroCompactionAt,
+      snapshot.lastMicroCompactionItemCount,
+      snapshot.lastMicroCompactionSavedTokens,
+      snapshot.compactionFailureCount,
+      snapshot.compactionCircuitOpen,
+      snapshot.lastFullCompactionTrigger,
+      snapshot.lastFullCompactionProviderMode,
+      snapshot.lastFullCompactionTrimmedItemCount,
+      snapshot.lastFullCompactionReferenceContextReestablished
+    );
   }
 
   private cloneMessage(message: CodexChatMessage): CodexChatMessage {

@@ -842,11 +842,17 @@ impl ThreadHistoryBuilder {
         });
     }
 
-    fn handle_context_compacted(&mut self, _payload: &ContextCompactedEvent) {
+    fn handle_context_compacted(&mut self, payload: &ContextCompactedEvent) {
         let id = self.next_item_id();
-        self.ensure_turn()
-            .items
-            .push(ThreadItem::ContextCompaction { id });
+        self.ensure_turn().items.push(ThreadItem::ContextCompaction {
+            id,
+            trigger_source: None,
+            provider_mode: None,
+            micro_compaction_item_count: payload.micro_compaction_item_count,
+            micro_compaction_saved_tokens: payload.micro_compaction_saved_tokens,
+            trimmed_item_count: payload.trimmed_item_count,
+            reference_context_reestablished: payload.reference_context_reestablished,
+        });
     }
 
     fn handle_entered_review_mode(&mut self, payload: &codex_protocol::protocol::ReviewRequest) {
@@ -2434,6 +2440,7 @@ mod tests {
             RolloutItem::Compacted(CompactedItem {
                 message: String::new(),
                 replacement_history: None,
+                recent_artifact_refs: None,
             }),
             RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-compact".into(),

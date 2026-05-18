@@ -7,14 +7,10 @@ export interface CompactionDecisionInput {
   cooldownMs: number;
   lastCompactionAtMs: number;
   nowMs: number;
-  backendAutoCompactEnabled: boolean;
 }
 
 export function shouldStartCompaction(input: CompactionDecisionInput): boolean {
   if (!input.hasTokenUsage) {
-    return false;
-  }
-  if (input.backendAutoCompactEnabled) {
     return false;
   }
   if (input.contextRemainingPercent < 0 || input.contextRemainingPercent >= 20) {

@@ -171,6 +171,15 @@ pub enum CodexErrorInfo {
         #[ts(rename = "httpStatusCode")]
         http_status_code: Option<u16>,
     },
+    /// Returned when auto-compaction fails or is skipped because the circuit breaker is open.
+    AutoCompactFailed {
+        #[serde(rename = "failureCount")]
+        #[ts(rename = "failureCount")]
+        failure_count: i64,
+        #[serde(rename = "circuitOpen")]
+        #[ts(rename = "circuitOpen")]
+        circuit_open: bool,
+    },
     /// Returned when `turn/start` or `turn/steer` is submitted while the current active turn
     /// cannot accept same-turn steering, for example `/review` or manual `/compact`.
     ActiveTurnNotSteerable {
@@ -204,6 +213,13 @@ impl From<CoreCodexErrorInfo> for CodexErrorInfo {
             CoreCodexErrorInfo::ResponseTooManyFailedAttempts { http_status_code } => {
                 CodexErrorInfo::ResponseTooManyFailedAttempts { http_status_code }
             }
+            CoreCodexErrorInfo::AutoCompactFailed {
+                failure_count,
+                circuit_open,
+            } => CodexErrorInfo::AutoCompactFailed {
+                failure_count,
+                circuit_open,
+            },
             CoreCodexErrorInfo::ActiveTurnNotSteerable { turn_kind } => {
                 CodexErrorInfo::ActiveTurnNotSteerable {
                     turn_kind: turn_kind.into(),
@@ -4372,7 +4388,27 @@ pub enum ThreadItem {
     ExitedReviewMode { id: String, review: String },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    ContextCompaction { id: String },
+    ContextCompaction {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        trigger_source: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        provider_mode: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        micro_compaction_item_count: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        micro_compaction_saved_tokens: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        trimmed_item_count: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        reference_context_reestablished: Option<bool>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -4541,9 +4577,15 @@ impl From<CoreTurnItem> for ThreadItem {
                 result: image.result,
                 saved_path: image.saved_path,
             },
-            CoreTurnItem::ContextCompaction(compaction) => {
-                ThreadItem::ContextCompaction { id: compaction.id }
-            }
+            CoreTurnItem::ContextCompaction(compaction) => ThreadItem::ContextCompaction {
+                id: compaction.id,
+                trigger_source: compaction.trigger_source,
+                provider_mode: compaction.provider_mode,
+                micro_compaction_item_count: compaction.micro_compaction_item_count,
+                micro_compaction_saved_tokens: compaction.micro_compaction_saved_tokens,
+                trimmed_item_count: compaction.trimmed_item_count,
+                reference_context_reestablished: compaction.reference_context_reestablished,
+            },
         }
     }
 }

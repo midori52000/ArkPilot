@@ -18,6 +18,7 @@ use crate::apps::render_apps_section;
 use crate::auth_env_telemetry::collect_auth_env_telemetry;
 use crate::commit_attribution::commit_message_trailer_instruction;
 use crate::compact;
+use crate::compact::CompactionTriggerSource;
 use crate::compact::InitialContextInjection;
 use crate::compact::run_inline_auto_compact_task;
 use crate::compact::should_use_remote_compact_task;
@@ -2195,6 +2196,7 @@ impl Session {
                 // turn/start overrides can be merged before we write model-visible context.
                 self.set_previous_turn_settings(/*previous_turn_settings*/ None)
                     .await;
+                self.set_recent_artifact_refs(None).await;
             }
             InitialHistory::Resumed(resumed_history) => {
                 let rollout_items = resumed_history.history;
@@ -2271,6 +2273,7 @@ impl Session {
             .reconstruct_history_from_rollout(turn_context, rollout_items)
             .await;
         let previous_turn_settings = reconstructed_rollout.previous_turn_settings.clone();
+        let recent_artifact_refs = reconstructed_rollout.recent_artifact_refs.clone();
         self.replace_history(
             reconstructed_rollout.history,
             reconstructed_rollout.reference_context_item,
@@ -2278,6 +2281,7 @@ impl Session {
         .await;
         self.set_previous_turn_settings(previous_turn_settings.clone())
             .await;
+        self.set_recent_artifact_refs(recent_artifact_refs).await;
         previous_turn_settings
     }
 
@@ -2299,6 +2303,16 @@ impl Session {
     ) {
         let mut state = self.state.lock().await;
         state.set_previous_turn_settings(previous_turn_settings);
+    }
+
+    pub(crate) async fn recent_artifact_refs(&self) -> Option<Vec<String>> {
+        let state = self.state.lock().await;
+        state.recent_artifact_refs()
+    }
+
+    pub(crate) async fn set_recent_artifact_refs(&self, refs: Option<Vec<String>>) {
+        let mut state = self.state.lock().await;
+        state.set_recent_artifact_refs(refs);
     }
 
     fn maybe_refresh_shell_snapshot_for_cwd(
@@ -3430,6 +3444,8 @@ impl Session {
     ) {
         self.replace_history(items, reference_context_item.clone())
             .await;
+        self.set_recent_artifact_refs(compacted_item.recent_artifact_refs.clone())
+            .await;
 
         self.persist_rollout_items(&[RolloutItem::Compacted(compacted_item)])
             .await;
@@ -3804,6 +3820,21 @@ impl Session {
     pub(crate) async fn set_server_reasoning_included(&self, included: bool) {
         let mut state = self.state.lock().await;
         state.set_server_reasoning_included(included);
+    }
+
+    pub(crate) async fn auto_compact_failure_state(&self) -> (i64, bool) {
+        let state = self.state.lock().await;
+        state.auto_compact_failure_state()
+    }
+
+    pub(crate) async fn record_auto_compact_failure(&self) -> (i64, bool) {
+        let mut state = self.state.lock().await;
+        state.record_auto_compact_failure()
+    }
+
+    pub(crate) async fn clear_auto_compact_failure_state(&self) {
+        let mut state = self.state.lock().await;
+        state.clear_auto_compact_failure_state();
     }
 
     async fn send_token_count_event(&self, turn_context: &TurnContext) {
@@ -5613,11 +5644,8 @@ pub(crate) async fn run_turn(
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively
     // when they would push the thread over the compaction threshold.
-    if run_pre_sampling_compact(&sess, &turn_context)
-        .await
-        .is_err()
-    {
-        error!("Failed to run pre-sampling compact");
+    if let Err(err) = run_pre_sampling_compact(&sess, &turn_context).await {
+        error!("Failed to run pre-sampling compact: {err:#}");
         return None;
     }
 
@@ -5921,14 +5949,15 @@ pub(crate) async fn run_turn(
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
                 if token_limit_reached && needs_follow_up {
-                    if run_auto_compact(
+                    if let Err(err) = run_auto_compact(
                         &sess,
                         &turn_context,
                         InitialContextInjection::BeforeLastUserMessage,
+                        CompactionTriggerSource::MidTurn,
                     )
                     .await
-                    .is_err()
                     {
+                        info!("Follow-up auto-compact failed: {err:#}");
                         return None;
                     }
                     continue;
@@ -6077,10 +6106,20 @@ pub(crate) async fn run_turn(
             }
             Err(CodexErr::ContextWindowExceeded) => {
                 info!("ContextWindowExceeded received, attempting auto-compact recovery");
+                if matches!(
+                    &turn_context.session_source,
+                    SessionSource::SubAgent(SubAgentSource::Review)
+                        | SessionSource::SubAgent(SubAgentSource::Compact)
+                        | SessionSource::SubAgent(SubAgentSource::MemoryConsolidation)
+                ) || turn_context.realtime_active
+                {
+                    break;
+                }
                 match run_auto_compact(
                     &sess,
                     &turn_context,
                     InitialContextInjection::BeforeLastUserMessage,
+                    CompactionTriggerSource::MidTurn,
                 )
                 .await
                 {
@@ -6090,11 +6129,6 @@ pub(crate) async fn run_turn(
                     }
                     Err(compact_err) => {
                         info!("Auto-compact recovery failed: {compact_err:#}");
-                        let event = EventMsg::Error(ErrorEvent {
-                            message: "上下文已满，自动压缩失败，请手动压缩后重试".to_string(),
-                            codex_error_info: Some(CodexErrorInfo::Other),
-                        });
-                        sess.send_event(&turn_context, event).await;
                         break;
                     }
                 }
@@ -6116,6 +6150,16 @@ async fn run_pre_sampling_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
 ) -> CodexResult<()> {
+    if matches!(
+        &turn_context.session_source,
+        SessionSource::SubAgent(SubAgentSource::Review)
+            | SessionSource::SubAgent(SubAgentSource::Compact)
+            | SessionSource::SubAgent(SubAgentSource::MemoryConsolidation)
+    ) || turn_context.realtime_active
+    {
+        return Ok(());
+    }
+
     let total_usage_tokens_before_compaction = sess.get_total_token_usage().await;
     maybe_run_previous_model_inline_compact(
         sess,
@@ -6130,7 +6174,13 @@ async fn run_pre_sampling_compact(
         .unwrap_or(i64::MAX);
     // Compact if the total usage tokens are greater than the auto compact limit
     if total_usage_tokens >= auto_compact_limit {
-        run_auto_compact(sess, turn_context, InitialContextInjection::DoNotInject).await?;
+        run_auto_compact(
+            sess,
+            turn_context,
+            InitialContextInjection::DoNotInject,
+            CompactionTriggerSource::PreTurn,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -6173,6 +6223,7 @@ async fn maybe_run_previous_model_inline_compact(
             sess,
             &previous_model_turn_context,
             InitialContextInjection::DoNotInject,
+            CompactionTriggerSource::ModelSwitch,
         )
         .await?;
         return Ok(true);
@@ -6180,27 +6231,87 @@ async fn maybe_run_previous_model_inline_compact(
     Ok(false)
 }
 
+fn build_auto_compact_error_info(failure_count: i64, circuit_open: bool) -> CodexErrorInfo {
+    CodexErrorInfo::AutoCompactFailed {
+        failure_count,
+        circuit_open,
+    }
+}
+
+async fn send_auto_compact_error_event(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    message: &str,
+) {
+    let (failure_count, circuit_open) = sess.auto_compact_failure_state().await;
+    let event = EventMsg::Error(ErrorEvent {
+        message: message.to_string(),
+        codex_error_info: Some(build_auto_compact_error_info(failure_count, circuit_open)),
+    });
+    sess.send_event(turn_context, event).await;
+}
+
 async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
+    trigger_source: CompactionTriggerSource,
 ) -> CodexResult<()> {
-    if should_use_remote_compact_task(&turn_context.provider) {
+    let (_, circuit_open) = sess.auto_compact_failure_state().await;
+    if circuit_open {
+        send_auto_compact_error_event(
+            sess,
+            turn_context,
+            "自动压缩已暂停，请手动压缩后重试",
+        )
+        .await;
+        return Err(CodexErr::InvalidRequest(
+            "auto-compact circuit breaker open".to_string(),
+        ));
+    }
+
+    {
+        let mut state = sess.state.lock().await;
+        if state.should_skip_auto_compact(&turn_context.sub_id, trigger_source) {
+            return Ok(());
+        }
+        state.record_auto_compact_attempt(&turn_context.sub_id, trigger_source);
+    }
+
+    let result = if should_use_remote_compact_task(&turn_context.provider) {
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
             initial_context_injection,
+            trigger_source,
         )
-        .await?;
+        .await
     } else {
         run_inline_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
             initial_context_injection,
+            trigger_source,
         )
-        .await?;
+        .await
+    };
+
+    match result {
+        Ok(()) => {
+            sess.clear_auto_compact_failure_state().await;
+            Ok(())
+        }
+        Err(err) => {
+            let (_, circuit_open) = sess.record_auto_compact_failure().await;
+            let message = if circuit_open {
+                "自动压缩连续失败，已暂停自动重试，请手动压缩后重试"
+            } else {
+                "自动压缩失败，请手动压缩后重试"
+            };
+            send_auto_compact_error_event(sess, turn_context, message).await;
+            Err(err)
+        }
     }
-    Ok(())
 }
 
 fn collect_explicit_app_ids_from_skill_items(
