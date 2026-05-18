@@ -12015,10 +12015,7 @@ struct Index {
               Column() {
                 this.contextManagementMetricRow('微压缩', this.contextMicroCompactionText())
                 this.contextManagementMetricRow('Memory', this.contextMemoryModeText())
-                this.contextManagementMetricRow('记忆提炼', this.contextMemoryStage1Text())
                 this.contextManagementMetricRow('记忆引用', this.contextMemoryUsageText())
-                this.contextManagementMetricRow('Phase2', this.contextMemoryPhase2Text())
-                this.contextManagementMetricRow('记忆摘要', this.contextMemorySummaryText())
                 this.contextManagementMetricRow('完整压缩', this.contextFullCompactionText())
                 this.contextManagementMetricRow('最近引用', this.contextRecentArtifactRefsText())
                 this.contextManagementMetricRow('熔断器', this.contextCircuitBreakerText())

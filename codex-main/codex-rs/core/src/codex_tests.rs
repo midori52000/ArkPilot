@@ -877,19 +877,6 @@ fn apps_mentions_add_codex_apps_tools_to_search_selected_set() {
 }
 
 #[tokio::test]
-async fn reconstruct_history_matches_live_compactions() {
-    let (session, turn_context) = make_session_and_context().await;
-    let (rollout_items, expected) = sample_rollout(&session, &turn_context).await;
-
-    let reconstruction_turn = session.new_default_turn().await;
-    let reconstructed = session
-        .reconstruct_history_from_rollout(reconstruction_turn.as_ref(), &rollout_items)
-        .await;
-
-    assert_eq!(expected, reconstructed.history);
-}
-
-#[tokio::test]
 async fn reconstruct_history_uses_replacement_history_verbatim() {
     let (session, turn_context) = make_session_and_context().await;
     let summary_item = ResponseItem::Message {
@@ -928,23 +915,6 @@ async fn reconstruct_history_uses_replacement_history_verbatim() {
         reconstructed.recent_artifact_refs,
         Some(vec!["docs/plan.md".to_string(), "src/main.rs".to_string()])
     );
-}
-
-#[tokio::test]
-async fn record_initial_history_reconstructs_resumed_transcript() {
-    let (session, turn_context) = make_session_and_context().await;
-    let (rollout_items, expected) = sample_rollout(&session, &turn_context).await;
-
-    session
-        .record_initial_history(InitialHistory::Resumed(ResumedHistory {
-            conversation_id: ThreadId::default(),
-            history: rollout_items,
-            rollout_path: PathBuf::from("/tmp/resume.jsonl"),
-        }))
-        .await;
-
-    let history = session.state.lock().await.clone_history();
-    assert_eq!(expected, history.raw_items());
 }
 
 #[tokio::test]

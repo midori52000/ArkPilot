@@ -7,8 +7,6 @@ export interface CompactionDecisionInput {
   cooldownMs: number;
   lastCompactionAtMs: number;
   nowMs: number;
-  backendAutoCompactEnabled: boolean;
-  backendCompactionStateAvailable: boolean;
 }
 
 export function shouldStartCompaction(input: CompactionDecisionInput): boolean {

@@ -1169,8 +1169,6 @@ class CodexThreadRecord {
   contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
   lastCompactionAtMs: number = 0;
   lastCompactionTurnId: string = '';
-  backendAutoCompactEnabled: boolean = false;
-  backendCompactionStateAvailable: boolean = false;
   updatedAt: string = '';
 
   constructor(localKey: string, title: string) {
@@ -1259,7 +1257,6 @@ export class CodexBackend {
 
   snapshot(): CodexBackendSnapshot {
     const activeThread: CodexThreadRecord | null = this.activeThreadRecord();
-    this.syncThreadBackendAutoCompactFlag(activeThread);
     const activeTokenUsage: TurnTokenUsage | null = activeThread?.tokenUsage ?? null;
     const activeContextManagement: CodexContextManagementSnapshot = activeThread !== null
       ? this.cloneContextManagement(activeThread.contextManagement)
@@ -1855,14 +1852,6 @@ export class CodexBackend {
     return false;
   }
 
-  private syncThreadBackendAutoCompactFlag(thread: CodexThreadRecord | null): boolean {
-    const enabled: boolean = this.resolveBackendAutoCompactEnabled();
-    if (thread !== null) {
-      thread.backendAutoCompactEnabled = enabled;
-    }
-    return enabled;
-  }
-
   shouldStartFallbackCompaction(threadId: string = ''): boolean {
     const normalizedThreadId: string = this.normalizeThreadId(threadId);
     const thread: CodexThreadRecord | null = normalizedThreadId.length > 0
@@ -1875,7 +1864,6 @@ export class CodexBackend {
         (this.compactionState.status === 'starting' || this.compactionState.status === 'running')) {
       return false;
     }
-    const backendAutoCompactEnabled: boolean = this.syncThreadBackendAutoCompactFlag(thread);
     const input: CompactionDecisionInput = {
       contextRemainingPercent: thread.tokenUsage?.contextRemainingPercent ?? -1,
       hasTokenUsage: thread.tokenUsage !== null,
@@ -1885,8 +1873,6 @@ export class CodexBackend {
       cooldownMs: AUTO_COMPACTION_COOLDOWN_MS,
       lastCompactionAtMs: thread.lastCompactionAtMs,
       nowMs: Date.now(),
-      backendAutoCompactEnabled,
-      backendCompactionStateAvailable: thread.backendCompactionStateAvailable,
     };
     return shouldStartCompaction(input);
   }
@@ -2078,9 +2064,6 @@ export class CodexBackend {
       return;
     }
     const raw = contextManagementRaw as Record<string, Object>;
-    if (raw['compactionFailureCount'] !== undefined || raw['compactionCircuitOpen'] !== undefined) {
-      thread.backendCompactionStateAvailable = true;
-    }
     thread.contextManagement = new CodexContextManagementSnapshot(
       typeof raw['memoryMode'] === 'string' ? (raw['memoryMode'] as string) : null,
       Array.isArray(raw['recentArtifactRefs'])
@@ -2630,7 +2613,6 @@ export class CodexBackend {
       const preview: string = typeof payload['preview'] === 'string' ? (payload['preview'] as string) : '';
       thread.summaryPoints = [preview.trim().length > 0 ? preview : '会话元信息已从 app-server 恢复。'];
     }
-    this.syncThreadBackendAutoCompactFlag(thread);
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
   }
@@ -2695,7 +2677,6 @@ export class CodexBackend {
     if (thread.tokenUsage === null && previousTokenUsage !== null) {
       thread.tokenUsage = previousTokenUsage;
     }
-    this.syncThreadBackendAutoCompactFlag(thread);
     this.threads.set(remoteThreadId, thread);
     this.threadKeysByRemoteId.set(remoteThreadId, remoteThreadId);
     return thread;
