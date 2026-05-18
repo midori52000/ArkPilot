@@ -242,8 +242,6 @@ class HtmlTextRun {
   }
 }
 
-type RightPanelTab = 'diff' | 'browser';
-
 class CodeToken {
   id: string;
   kind: string;
@@ -1187,10 +1185,6 @@ struct Index {
   @State private diffStat: string = '+0 -0';
   @State private diffFiles: CodeDiffFile[] = [];
   @State private selectedDiffFilePath: string = '';
-  @State private rightPanelTab: RightPanelTab = 'diff';
-  @State private browserPreviewSrc: string = '';
-  @State private browserPreviewTitle: string = '';
-  @State private browserPreviewError: string = '';
   @State private isRunning: boolean = false;
   @State private showLeftDrawer: boolean = true;
   @State private showRightDrawer: boolean = true;
@@ -1198,7 +1192,6 @@ struct Index {
   @State private rightPanelWidth: number = 360;
   private leftScrollOffset: number = 0;
   private leftScrollController: Scroller = new Scroller();
-  private browserPreviewController: webview.WebviewController = new webview.WebviewController();
   private readonly leftDrawerMinWidth: number = 100;
   private readonly rightDrawerMinWidth: number = 120;
   private readonly motionFastDuration: number = 160;
@@ -4723,56 +4716,6 @@ struct Index {
     });
   }
 
-  private selectRightPanelTab(tab: RightPanelTab): void {
-    this.rightPanelTab = tab;
-  }
-
-  private hasBrowserPreview(): boolean {
-    return this.browserPreviewSrc.trim().length > 0;
-  }
-
-  private browserPreviewTitleText(): string {
-    const title: string = this.browserPreviewTitle.trim();
-    if (title.length > 0) {
-      return title;
-    }
-    if (this.browserPreviewSrc.trim().length > 0) {
-      return this.fileNameFromTarget(this.browserPreviewSrc);
-    }
-    return '网页预览';
-  }
-
-  private browserPreviewSubtitleText(): string {
-    const src: string = this.browserPreviewSrc.trim();
-    return src.length > 0 ? src : '点击对话中的 HTML 文件后会在这里预览';
-  }
-
-  private showHtmlPreviewInRightPanel(targetUri: string, title: string): void {
-    this.browserPreviewSrc = targetUri;
-    this.browserPreviewTitle = title.length > 0 ? title : this.fileNameFromTarget(targetUri);
-    this.browserPreviewError = '';
-    this.rightPanelTab = 'browser';
-    this.showRightDrawer = true;
-  }
-
-  private closeBrowserPreview(): void {
-    this.browserPreviewSrc = '';
-    this.browserPreviewTitle = '';
-    this.browserPreviewError = '';
-    this.rightPanelTab = 'diff';
-  }
-
-  private refreshBrowserPreview(): void {
-    if (!this.hasBrowserPreview()) {
-      return;
-    }
-    try {
-      this.browserPreviewController.refresh();
-    } catch (err) {
-      promptAction.showToast({ message: `刷新网页预览失败: ${this.describeError(err)}`, duration: 2200 });
-    }
-  }
-
   private applyResponsiveLayoutProfile(force: boolean = false): void {
     if (!force && this.lastAppliedBreakpoint === this.currentBreakpoint) {
       return;
@@ -5120,37 +5063,17 @@ struct Index {
       this.openHttpTarget(target, label);
       return;
     }
-    if (this.isHtmlFileTarget(target)) {
-      const htmlUri: string = this.htmlTargetToUri(target, sourceMessageId);
-      if (htmlUri.length > 0) {
-        this.showHtmlPreviewInRightPanel(htmlUri, label.length > 0 ? label : this.fileNameFromTarget(target));
-      }
+    const title: string = label.length > 0 ? label : this.fileNameFromTarget(target);
+    if (this.isFileUri(target)) {
+      this.openSystemFileUri(target, title);
       return;
     }
-    if (this.isMarkdownFileTarget(target)) {
-      const markdownUri: string = this.markdownTargetToUri(target, sourceMessageId);
-      if (markdownUri.length > 0) {
-        this.openViewDataTarget(markdownUri, 'text/markdown', label.length > 0 ? label : this.fileNameFromTarget(target), true);
-      }
+    const localUri: string = this.localTargetToSystemUri(target, sourceMessageId);
+    if (localUri.length > 0) {
+      this.openSystemFileUri(localUri, title);
       return;
     }
-    promptAction.showToast({ message: '当前仅支持打开 HTTP/HTTPS 链接、HTML 文件和 Markdown 文件', duration: 2200 });
-  }
-
-  private openHtmlPreviewTarget(targetUri: string, title: string): void {
-    try {
-      router.pushUrl({
-        url: 'pages/WebPreviewPage',
-        params: {
-          src: targetUri,
-          title: title.length > 0 ? title : this.fileNameFromTarget(targetUri)
-        }
-      }).catch((err: Object) => {
-        promptAction.showToast({ message: `打开网页预览失败: ${this.describeError(err)}`, duration: 2600 });
-      });
-    } catch (err) {
-      promptAction.showToast({ message: `打开网页预览失败: ${this.describeError(err)}`, duration: 2600 });
-    }
+    promptAction.showToast({ message: '无法定位链接或文件，已交由系统处理的目标需要是有效 URL 或本地路径', duration: 2400 });
   }
 
   private openHttpTarget(target: string, label: string): void {
@@ -5207,6 +5130,54 @@ struct Index {
     }
   }
 
+  private openDiffFileWithSystem(file: CodeDiffFile): void {
+    const rawPath: string = file.path.trim();
+    if (rawPath.length === 0 || rawPath === UNKNOWN_DIFF_FILE_TEXT) {
+      promptAction.showToast({ message: '无法定位文件，请确认工作目录或文件是否存在', duration: 2400 });
+      return;
+    }
+    const resolved: LocalPathResolution = this.resolveLocalFileTarget(rawPath);
+    if (resolved.path.length === 0) {
+      promptAction.showToast({ message: '无法定位文件，请确认工作目录', duration: 2400 });
+      return;
+    }
+    const targetUri: string = this.pathToFileUri(resolved.path);
+    if (targetUri.length === 0) {
+      promptAction.showToast({ message: '无法生成文件 URI，无法打开文件', duration: 2400 });
+      return;
+    }
+    this.openSystemFileUri(targetUri, file.label.length > 0 ? file.label : this.fileNameFromTarget(rawPath));
+  }
+
+  private openSystemFileUri(targetUri: string, title: string): void {
+    const context: common.UIAbilityContext | null = this.currentAbilityContext();
+    if (context === null) {
+      promptAction.showToast({ message: '当前页面上下文不可用，无法打开文件', duration: 2200 });
+      return;
+    }
+    const params: Record<string, Object> = {};
+    params[wantConstant.Params.CONTENT_TITLE_KEY] = title;
+    params[wantConstant.Params.PARAMS_STREAM] = [targetUri];
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      uri: targetUri,
+      type: this.mimeTypeForTarget(targetUri),
+      parameters: params,
+      flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION
+    };
+    try {
+      context.startAbility(want)
+        .then(() => {
+          promptAction.showToast({ message: '已尝试用系统默认应用打开', duration: 1400 });
+        })
+        .catch((err: Object) => {
+          promptAction.showToast({ message: `系统打开失败: ${this.describeError(err)}`, duration: 2600 });
+        });
+    } catch (err) {
+      promptAction.showToast({ message: `系统打开失败: ${this.describeError(err)}`, duration: 2600 });
+    }
+  }
+
   private currentAbilityContext(): common.UIAbilityContext | null {
     const hostContext = this.getUIContext().getHostContext();
     if (hostContext === undefined || hostContext === null) {
@@ -5226,7 +5197,10 @@ struct Index {
 
   private isOpenableWebTarget(target: string): boolean {
     const cleanTarget: string = this.cleanMarkdownLinkTarget(target);
-    return this.isHttpUrl(cleanTarget) || this.isHtmlFileTarget(cleanTarget) || this.isMarkdownFileTarget(cleanTarget);
+    return this.isHttpUrl(cleanTarget) ||
+      this.isFileUri(cleanTarget) ||
+      this.isAbsoluteLocalPath(this.localFileTargetPath(cleanTarget)) ||
+      this.hasOpenableFileExtension(cleanTarget);
   }
 
   private isHtmlFileTarget(target: string): boolean {
@@ -5234,9 +5208,28 @@ struct Index {
     return pathPart.endsWith('.html') || pathPart.endsWith('.htm');
   }
 
-  private isMarkdownFileTarget(target: string): boolean {
+  private hasOpenableFileExtension(target: string): boolean {
     const pathPart: string = this.localFilePathPart(target);
-    return pathPart.endsWith('.md') || pathPart.endsWith('.markdown');
+    const slashIndex: number = pathPart.lastIndexOf('/');
+    const dotIndex: number = pathPart.lastIndexOf('.');
+    if (dotIndex <= slashIndex || dotIndex >= pathPart.length - 1) {
+      return false;
+    }
+    const extension: string = pathPart.substring(dotIndex + 1);
+    if (extension.length > 16) {
+      return false;
+    }
+    let hasLetter: boolean = false;
+    for (let index: number = 0; index < extension.length; index += 1) {
+      const ch: string = extension[index];
+      if (ch >= 'a' && ch <= 'z') {
+        hasLetter = true;
+      }
+      if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))) {
+        return false;
+      }
+    }
+    return hasLetter;
   }
 
   private localFilePathPart(target: string): string {
@@ -5263,40 +5256,13 @@ struct Index {
     return cleanTarget.substring(pathPart.length);
   }
 
-  private htmlTargetToUri(target: string, sourceMessageId?: string): string {
+  private localTargetToSystemUri(target: string, sourceMessageId?: string): string {
     const cleanTarget: string = target.trim();
-    if (!this.isHtmlFileTarget(cleanTarget)) {
-      return '';
-    }
-    if (this.isHttpUrl(cleanTarget)) {
-      return cleanTarget;
-    }
     if (this.isFileUri(cleanTarget)) {
       return cleanTarget;
     }
     const resolved: LocalPathResolution = this.resolveLocalFileTarget(this.localFileTargetPath(cleanTarget), sourceMessageId);
     if (resolved.path.length === 0) {
-      promptAction.showToast({ message: '无法定位相对 HTML 文件，请先设置工作目录或让回复包含绝对路径', duration: 2600 });
-      return '';
-    }
-    const resolvedUri: string = this.pathToFileUri(resolved.path);
-    return resolvedUri.length > 0 ? `${resolvedUri}${this.localFileTargetSuffix(cleanTarget)}` : '';
-  }
-
-  private markdownTargetToUri(target: string, sourceMessageId?: string): string {
-    const cleanTarget: string = target.trim();
-    if (!this.isMarkdownFileTarget(cleanTarget)) {
-      return '';
-    }
-    if (this.isHttpUrl(cleanTarget)) {
-      return cleanTarget;
-    }
-    if (this.isFileUri(cleanTarget)) {
-      return cleanTarget;
-    }
-    const resolved: LocalPathResolution = this.resolveLocalFileTarget(this.localFileTargetPath(cleanTarget), sourceMessageId);
-    if (resolved.path.length === 0) {
-      promptAction.showToast({ message: '无法定位相对 Markdown 文件，请先设置工作目录或让回复包含绝对路径', duration: 2600 });
       return '';
     }
     const resolvedUri: string = this.pathToFileUri(resolved.path);
@@ -5523,6 +5489,82 @@ struct Index {
     return slashIndex >= 0 ? pathPart.substring(slashIndex + 1) : pathPart;
   }
 
+  private mimeTypeForTarget(target: string): string {
+    const extension: string = this.extensionFromTarget(target);
+    switch (extension) {
+      case 'html':
+      case 'htm':
+        return 'text/html';
+      case 'md':
+      case 'markdown':
+        return 'text/markdown';
+      case 'txt':
+      case 'log':
+      case 'ets':
+      case 'ts':
+      case 'tsx':
+      case 'js':
+      case 'jsx':
+      case 'json':
+      case 'json5':
+      case 'xml':
+      case 'yaml':
+      case 'yml':
+      case 'toml':
+      case 'rs':
+      case 'py':
+      case 'java':
+      case 'kt':
+      case 'c':
+      case 'cc':
+      case 'cpp':
+      case 'h':
+      case 'hpp':
+      case 'css':
+      case 'csv':
+        return 'text/plain';
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'svg':
+        return 'image/svg+xml';
+      case 'pdf':
+        return 'application/pdf';
+      case 'zip':
+        return 'application/zip';
+      case 'doc':
+        return 'application/msword';
+      case 'docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'xls':
+        return 'application/vnd.ms-excel';
+      case 'xlsx':
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      case 'ppt':
+        return 'application/vnd.ms-powerpoint';
+      case 'pptx':
+        return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
+  private extensionFromTarget(target: string): string {
+    const pathPart: string = target.split('?')[0].split('#')[0].replace(/\\/g, '/').toLowerCase();
+    const slashIndex: number = pathPart.lastIndexOf('/');
+    const dotIndex: number = pathPart.lastIndexOf('.');
+    if (dotIndex <= slashIndex || dotIndex >= pathPart.length - 1) {
+      return '';
+    }
+    return pathPart.substring(dotIndex + 1);
+  }
+
   private copyPlainText(text: string, successMessage: string): void {
     if (text.length === 0) {
       promptAction.showToast({ message: '没有可复制内容', duration: 1600 });
@@ -5654,6 +5696,15 @@ struct Index {
   private currentDiffFileStat(): string {
     const selectedFile: CodeDiffFile | null = this.selectedDiffFile();
     return selectedFile !== null ? selectedFile.diffStat : this.diffStat;
+  }
+
+  private openSelectedDiffFileWithSystem(): void {
+    const selectedFile: CodeDiffFile | null = this.selectedDiffFile();
+    if (selectedFile === null) {
+      promptAction.showToast({ message: '当前没有可打开的修改文件', duration: 1800 });
+      return;
+    }
+    this.openDiffFileWithSystem(selectedFile);
   }
 
   private isDiffFileSelected(file: CodeDiffFile): boolean {
@@ -8891,15 +8942,7 @@ struct Index {
   }
 
   private nextOpenableFileExtensionIndex(lowerText: string, cursor: number): number {
-    const extensions: string[] = ['.html', '.htm', '.markdown', '.md'];
-    let result: number = -1;
-    for (let index: number = 0; index < extensions.length; index += 1) {
-      const next: number = lowerText.indexOf(extensions[index], cursor);
-      if (next >= 0 && (result < 0 || next < result)) {
-        result = next;
-      }
-    }
-    return result;
+    return lowerText.indexOf('.', cursor);
   }
 
   private normalizeInlineLocalWebFileTarget(target: string): string {
@@ -8912,7 +8955,7 @@ struct Index {
         continue;
       }
       const candidate: string = cleanTarget.substring(index);
-      if (this.isHtmlFileTarget(candidate) || this.isMarkdownFileTarget(candidate)) {
+      if (this.hasOpenableFileExtension(candidate)) {
         return candidate;
       }
     }
@@ -8929,25 +8972,38 @@ struct Index {
   }
 
   private openableFileExtensionEnd(lowerText: string, extensionIndex: number): number {
-    if (lowerText.substring(extensionIndex, extensionIndex + 5) === '.html') {
-      return extensionIndex + 5;
+    if (extensionIndex < 0 || extensionIndex + 1 >= lowerText.length) {
+      return -1;
     }
-    if (lowerText.substring(extensionIndex, extensionIndex + 4) === '.htm') {
-      const next: string = extensionIndex + 4 < lowerText.length ? lowerText[extensionIndex + 4] : '';
-      if (next.length === 0 || next === '?' || next === '#' || this.isLocalFileTargetDelimiter(next)) {
-        return extensionIndex + 4;
+    let end: number = extensionIndex + 1;
+    while (end < lowerText.length) {
+      const ch: string = lowerText[end];
+      if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+        end += 1;
+        continue;
+      }
+      break;
+    }
+    const extensionLength: number = end - extensionIndex - 1;
+    if (extensionLength <= 0 || extensionLength > 16) {
+      return -1;
+    }
+    let hasLetter: boolean = false;
+    for (let index: number = extensionIndex + 1; index < end; index += 1) {
+      const ch: string = lowerText[index];
+      if (ch >= 'a' && ch <= 'z') {
+        hasLetter = true;
+        break;
       }
     }
-    if (lowerText.substring(extensionIndex, extensionIndex + 9) === '.markdown') {
-      return extensionIndex + 9;
+    if (!hasLetter) {
+      return -1;
     }
-    if (lowerText.substring(extensionIndex, extensionIndex + 3) === '.md') {
-      const next: string = extensionIndex + 3 < lowerText.length ? lowerText[extensionIndex + 3] : '';
-      if (next.length === 0 || next === '?' || next === '#' || this.isLocalFileTargetDelimiter(next)) {
-        return extensionIndex + 3;
-      }
+    if (end >= lowerText.length) {
+      return end;
     }
-    return -1;
+    const next: string = lowerText[end];
+    return next === '?' || next === '#' || this.isLocalFileTargetDelimiter(next) ? end : -1;
   }
 
   private isHttpTargetDelimiter(ch: string): boolean {
@@ -10030,14 +10086,49 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
         .fontColor(this.isDiffFileSelected(file) ? '#2563EB' : '#16A34A')
+        .margin({ left: 8 })
+
+      Text('↗')
+        .copyOption(CopyOptions.None)
+        .fontSize(12)
+        .fontColor('#475569')
+        .textAlign(TextAlign.Center)
+        .width(26)
+        .height(26)
+        .margin({ left: 8 })
+        .backgroundColor('#FFFFFF')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(7)
+        .onClick(() => {
+          this.selectDiffFile(file.path);
+          this.openDiffFileWithSystem(file);
+        })
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor(this.isDiffFileSelected(file) ? '#F4F4F5' : '#FFFFFF')
+    .backgroundColor(this.isDiffFileSelected(file) ? '#EFF6FF' : '#FFFFFF')
+    .border({ width: 0.5, color: this.isDiffFileSelected(file) ? '#93C5FD' : '#E4E4E7' })
     .borderRadius(8)
-    .onClick(() => {
-      this.selectDiffFile(file.path);
-    })
+    .gesture(
+      TapGesture({ count: 2 })
+        .onAction(() => {
+          this.selectDiffFile(file.path);
+          this.openDiffFileWithSystem(file);
+        })
+    )
+    .gesture(
+      TapGesture({ count: 1 })
+        .onAction(() => {
+          this.selectDiffFile(file.path);
+        })
+    )
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          this.selectDiffFile(file.path);
+          this.openDiffFileWithSystem(file);
+        })
+    )
   }
 
 
@@ -10846,35 +10937,38 @@ struct Index {
   private chatContextPanel() {
     Column() {
       Row() {
-        this.panelTitle('统一 diff', 'turn/diff/updated 会实时刷新这里')
+        this.panelTitle('修改文件', '当前 turn 的 diff 文件')
 
         Blank()
           .layoutWeight(1)
 
-        Text(this.diffFiles.length > 0 ? this.currentDiffFileStat() : this.diffStat)
+        Text(`${this.diffFiles.length.toString()} 个文件`)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#16A34A')
+          .fontColor('#1D4ED8')
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('#F0FDF4')
+          .backgroundColor('#EFF6FF')
           .borderRadius(6)
       }
       .width('100%')
 
-      Text(this.changedFiles)
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor('#71717A')
-        .margin({ top: 8 })
-        .maxLines(3)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
       if (this.diffFiles.length > 0) {
-        Text('\u53d8\u66f4\u6587\u4ef6')
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(10)
-          .fontColor('#A1A1AA')
-          .margin({ top: 10 })
+        Row() {
+          Text('文件列表')
+            .copyOption(CopyOptions.None)
+            .fontSize(10)
+            .fontColor('#71717A')
+
+          Blank()
+            .layoutWeight(1)
+
+          Text(this.diffStat)
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor('#16A34A')
+        }
+        .width('100%')
+        .margin({ top: 12 })
 
         List({ space: 6 }) {
           ForEach(this.diffFiles, (file: CodeDiffFile) => {
@@ -10884,12 +10978,12 @@ struct Index {
           }, (file: CodeDiffFile) => file.path)
         }
         .width('100%')
-        .height(Math.min(150, this.diffFiles.length * 54))
+        .height(Math.min(230, this.diffFiles.length * 58))
         .margin({ top: 8 })
         .scrollBar(BarState.Off)
 
         Row() {
-          Text('\u5f53\u524d')
+          Text('当前')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#A1A1AA')
@@ -10907,202 +11001,59 @@ struct Index {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
             .fontColor('#1D4ED8')
-        }
-        .width('100%')
-        .margin({ top: 10 })
-      }
 
-      List({ space: 6 }) {
-        ForEach(this.codeLines, (item: CodeDiffLine) => {
-          ListItem() {
-            this.diffRow(item)
-          }
-        }, (item: CodeDiffLine) => item.id)
-      }
-      .layoutWeight(1)
-      .width('100%')
-      .margin({ top: 10 })
-      .scrollBar(BarState.Off)
-    }
-    .height('100%')
-    .width('100%')
-  }
-
-  @Builder
-  private rightPanelTabButton(label: string, tab: RightPanelTab) {
-    Text(label)
-      .copyOption(CopyOptions.None)
-      .fontSize(11)
-      .fontWeight(this.rightPanelTab === tab ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(this.rightPanelTab === tab ? '#FFFFFF' : '#64748B')
-      .textAlign(TextAlign.Center)
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .backgroundColor(this.rightPanelTab === tab ? '#27272A' : 'transparent')
-      .borderRadius(7)
-      .onClick(() => {
-        this.selectRightPanelTab(tab);
-      })
-  }
-
-  @Builder
-  private rightPanelTabs() {
-    Row() {
-      this.rightPanelTabButton('Diff', 'diff')
-      this.rightPanelTabButton('浏览器', 'browser')
-    }
-    .padding(2)
-    .backgroundColor('#EEF2F7')
-    .borderRadius(9)
-  }
-
-  @Builder
-  private browserPreviewToolbar() {
-    Row() {
-      Column() {
-        Text(this.browserPreviewTitleText())
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#18181B')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(this.browserPreviewSubtitleText())
-          .copyOption(CopyOptions.LocalDevice)
-          .fontSize(9)
-          .fontColor('#94A3B8')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 3 })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      Text('↻')
-        .copyOption(CopyOptions.None)
-        .fontSize(13)
-        .fontColor(this.hasBrowserPreview() ? '#475569' : '#CBD5E1')
-        .textAlign(TextAlign.Center)
-        .width(28)
-        .height(28)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E2E8F0' })
-        .borderRadius(7)
-        .margin({ left: 8 })
-        .onClick(() => {
-          this.refreshBrowserPreview();
-        })
-
-      Text('↗')
-        .copyOption(CopyOptions.None)
-        .fontSize(13)
-        .fontColor(this.hasBrowserPreview() ? '#475569' : '#CBD5E1')
-        .textAlign(TextAlign.Center)
-        .width(28)
-        .height(28)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E2E8F0' })
-        .borderRadius(7)
-        .margin({ left: 6 })
-        .onClick(() => {
-          if (this.hasBrowserPreview()) {
-            this.openHtmlPreviewTarget(this.browserPreviewSrc, this.browserPreviewTitleText());
-          }
-        })
-
-      Text('×')
-        .copyOption(CopyOptions.None)
-        .fontSize(15)
-        .fontColor('#475569')
-        .textAlign(TextAlign.Center)
-        .width(28)
-        .height(28)
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E2E8F0' })
-        .borderRadius(7)
-        .margin({ left: 6 })
-        .onClick(() => {
-          this.closeBrowserPreview();
-        })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: 10, right: 10, top: 9, bottom: 9 })
-    .backgroundColor('#F8FAFC')
-    .border({ width: 0.5, color: '#E2E8F0' })
-    .borderRadius(10)
-  }
-
-  @Builder
-  private browserPreviewPanel() {
-    Column() {
-      this.browserPreviewToolbar()
-
-      if (!this.hasBrowserPreview()) {
-        Column() {
-          Text('点击对话中的 HTML 文件后会在这里打开')
+          Text('↗')
             .copyOption(CopyOptions.None)
             .fontSize(12)
-            .fontColor('#64748B')
-            .lineHeight(18)
+            .fontColor('#475569')
             .textAlign(TextAlign.Center)
-            .padding({ left: 18, right: 18 })
+            .width(26)
+            .height(26)
+            .margin({ left: 8 })
+            .backgroundColor('#FFFFFF')
+            .border({ width: 0.5, color: '#E2E8F0' })
+            .borderRadius(7)
+            .onClick(() => {
+              this.openSelectedDiffFileWithSystem();
+            })
         }
         .width('100%')
+        .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+        .margin({ top: 10 })
+        .backgroundColor('#F8FAFC')
+        .border({ width: 0.5, color: '#E2E8F0' })
+        .borderRadius(8)
+      } else {
+        Column() {
+          Text(NO_FILE_CHANGES_TEXT)
+            .copyOption(CopyOptions.None)
+            .fontSize(13)
+            .fontColor('#71717A')
+        }
         .layoutWeight(1)
+        .width('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-      } else {
-        Stack() {
-          Web({ src: this.browserPreviewSrc, controller: this.browserPreviewController })
-            .javaScriptAccess(true)
-            .domStorageAccess(true)
-            .fileAccess(true)
-            .onlineImageAccess(true)
-            .imageAccess(true)
-            .darkMode(WebDarkMode.Off)
-            .forceDarkAccess(false)
-            .zoomAccess(true)
-            .textZoomRatio(100)
-            .onPageBegin(() => {
-              this.browserPreviewError = '';
-            })
-            .onErrorReceive((event) => {
-              if (event !== undefined && event.error !== undefined && event.request !== undefined && event.request.isMainFrame()) {
-                this.browserPreviewError = event.error.getErrorInfo();
-              }
-            })
-            .width('100%')
-            .height('100%')
+      }
 
-          if (this.browserPreviewError.length > 0) {
-            Column() {
-              Text('网页加载失败')
-                .copyOption(CopyOptions.None)
-                .fontSize(13)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#B91C1C')
+      if (this.diffFiles.length > 0) {
+        Text('Diff')
+          .copyOption(CopyOptions.None)
+          .fontSize(10)
+          .fontColor('#71717A')
+          .margin({ top: 12 })
 
-              Text(this.browserPreviewError)
-                .copyOption(CopyOptions.LocalDevice)
-                .fontSize(11)
-                .fontColor('#7F1D1D')
-                .lineHeight(17)
-                .margin({ top: 7 })
+        List({ space: 6 }) {
+          ForEach(this.codeLines, (item: CodeDiffLine) => {
+            ListItem() {
+              this.diffRow(item)
             }
-            .width('88%')
-            .padding(12)
-            .backgroundColor('#FEF2F2')
-            .border({ width: 0.5, color: '#FECACA' })
-            .borderRadius(8)
-          }
+          }, (item: CodeDiffLine) => item.id)
         }
-        .width('100%')
         .layoutWeight(1)
+        .width('100%')
         .margin({ top: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E2E8F0' })
-        .borderRadius(10)
+        .scrollBar(BarState.Off)
       }
     }
     .height('100%')
@@ -11112,28 +11063,11 @@ struct Index {
   @Builder
   private rightPanel() {
     Column() {
-      if (this.hasBrowserPreview()) {
-        Row() {
-          this.rightPanelTabs()
-          Blank()
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: 10 })
-      }
-
       Column() {
-        if (this.hasBrowserPreview() && this.rightPanelTab === 'browser') {
-          this.browserPreviewPanel()
-        } else {
-          this.chatContextPanel()
-        }
+        this.chatContextPanel()
       }
       .layoutWeight(1)
       .width('100%')
-
-      this.tokenUsageCard()
     }
     .height('100%')
     .width(this.rightPanelWidth)
