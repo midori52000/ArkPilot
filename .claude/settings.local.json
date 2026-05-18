@@ -48,7 +48,8 @@
       "Bash(git *)",
       "PowerShell(Get-Command *)",
       "PowerShell(cargo fmt *)",
-      "PowerShell(cargo check *)"
+      "PowerShell(cargo check *)",
+      "Skill(brainstorming)"
     ]
   }
 }

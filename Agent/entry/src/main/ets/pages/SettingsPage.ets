@@ -1258,7 +1258,6 @@ struct SettingsPage {
     this.runMotion(() => {
       this.activeTab = tab;
     }, 220);
-    this.triggerFeedback(`已切换到 ${this.navLabel(tab)} 面板。`, 'info');
     if (tab === 'mcp' && this.mcpServers.length === 0 && !this.mcpLoading) {
       this.mcpLoading = true;
       codexBackend.refreshMcpServers()
