@@ -154,6 +154,80 @@ struct NativeThreadState {
     cwd: Option<PathBuf>,
     messages: Vec<NativeMessage>,
     latest_token_usage: Option<NativeTokenUsage>,
+    context_management: NativeContextManagementSnapshot,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeContextManagementSnapshot {
+    memory_mode: Option<String>,
+    recent_artifact_refs: Option<Vec<String>>,
+    memory_usage_count: Option<i64>,
+    memory_last_usage_at: Option<i64>,
+    memory_stage1_generated_at: Option<i64>,
+    memory_stage1_up_to_date: Option<bool>,
+    memory_stage1_job_status: Option<String>,
+    memory_stage1_retry_at: Option<i64>,
+    memory_stage1_retry_remaining: Option<i64>,
+    memory_forgetting_pending: Option<bool>,
+    memory_forgetting_completed_at: Option<i64>,
+    memory_phase2_selected_at: Option<i64>,
+    memory_phase2_updated_at: Option<i64>,
+    memory_phase2_selection_count: Option<i64>,
+    memory_phase2_added_count: Option<i64>,
+    memory_phase2_retained_count: Option<i64>,
+    memory_phase2_removed_count: Option<i64>,
+    memory_summary_updated_at: Option<i64>,
+    memory_summary_preview: Option<String>,
+    last_micro_compaction_at: Option<i64>,
+    last_micro_compaction_item_count: Option<i64>,
+    last_micro_compaction_saved_tokens: Option<i64>,
+    compaction_failure_count: Option<i64>,
+    compaction_circuit_open: Option<bool>,
+    last_full_compaction_trigger: Option<String>,
+    last_full_compaction_provider_mode: Option<String>,
+    last_full_compaction_trimmed_item_count: Option<i64>,
+    last_full_compaction_reference_context_reestablished: Option<bool>,
+}
+
+impl NativeContextManagementSnapshot {
+    fn merge_missing_from(&mut self, fallback: &Self) {
+        macro_rules! fill {
+            ($field:ident) => {
+                if self.$field.is_none() {
+                    self.$field = fallback.$field.clone();
+                }
+            };
+        }
+        fill!(memory_mode);
+        fill!(recent_artifact_refs);
+        fill!(memory_usage_count);
+        fill!(memory_last_usage_at);
+        fill!(memory_stage1_generated_at);
+        fill!(memory_stage1_up_to_date);
+        fill!(memory_stage1_job_status);
+        fill!(memory_stage1_retry_at);
+        fill!(memory_stage1_retry_remaining);
+        fill!(memory_forgetting_pending);
+        fill!(memory_forgetting_completed_at);
+        fill!(memory_phase2_selected_at);
+        fill!(memory_phase2_updated_at);
+        fill!(memory_phase2_selection_count);
+        fill!(memory_phase2_added_count);
+        fill!(memory_phase2_retained_count);
+        fill!(memory_phase2_removed_count);
+        fill!(memory_summary_updated_at);
+        fill!(memory_summary_preview);
+        fill!(last_micro_compaction_at);
+        fill!(last_micro_compaction_item_count);
+        fill!(last_micro_compaction_saved_tokens);
+        fill!(compaction_failure_count);
+        fill!(compaction_circuit_open);
+        fill!(last_full_compaction_trigger);
+        fill!(last_full_compaction_provider_mode);
+        fill!(last_full_compaction_trimmed_item_count);
+        fill!(last_full_compaction_reference_context_reestablished);
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -218,6 +292,8 @@ struct ThreadContextSnapshotFile {
 struct ThreadContextSnapshot {
     updated_at: i64,
     latest_token_usage: Option<NativeTokenUsage>,
+    #[serde(default)]
+    context_management: NativeContextManagementSnapshot,
 }
 
 fn thread_context_snapshot_path(codex_home: &Path) -> PathBuf {
@@ -279,13 +355,10 @@ fn store_thread_context_snapshot(
     usage: &NativeTokenUsage,
 ) -> Result<()> {
     let mut snapshots = load_thread_context_snapshots(codex_home).unwrap_or_default();
-    snapshots.threads.insert(
-        thread_id.to_string(),
-        ThreadContextSnapshot {
-            updated_at: chrono::Utc::now().timestamp_millis(),
-            latest_token_usage: Some(usage.clone()),
-        },
-    );
+    let mut snapshot = snapshots.threads.remove(thread_id).unwrap_or_default();
+    snapshot.updated_at = chrono::Utc::now().timestamp_millis();
+    snapshot.latest_token_usage = Some(usage.clone());
+    snapshots.threads.insert(thread_id.to_string(), snapshot);
     persist_thread_context_snapshots(codex_home, &snapshots)
 }
 
@@ -2004,6 +2077,7 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
                     cwd: Some(response.cwd.clone()),
                     messages: collect_thread_messages(&response.thread.turns, &[]),
                     latest_token_usage: latest_thread_token_usage_from_turns(&response.thread),
+                    context_management: NativeContextManagementSnapshot::default(),
                 },
             );
         });
@@ -2324,6 +2398,20 @@ pub extern "C" fn codex_ohos_host_thread_compact_start(
             })
             .await
             .map_err(anyhow::Error::from)?;
+
+        with_native_state(|state| {
+            let thread = state
+                .threads
+                .entry(request.thread_id.clone())
+                .or_insert_with(|| NativeThreadState {
+                    remote_thread_id: request.thread_id.clone(),
+                    cwd: None,
+                    messages: Vec::new(),
+                    latest_token_usage: None,
+                    context_management: NativeContextManagementSnapshot::default(),
+                });
+            thread.context_management.last_full_compaction_trigger = Some("manual".to_string());
+        });
 
         Ok::<(), anyhow::Error>(())
     });
@@ -3969,6 +4057,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                         cwd: None,
                         messages: Vec::new(),
                         latest_token_usage: None,
+                        context_management: NativeContextManagementSnapshot::default(),
                     });
                 thread.latest_token_usage = Some(usage.clone());
                 for (_, turn) in state.turns.iter_mut() {
@@ -4460,6 +4549,7 @@ fn append_assistant_delta(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
+                context_management: NativeContextManagementSnapshot::default(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4505,6 +4595,7 @@ fn append_reasoning_delta(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
+                context_management: NativeContextManagementSnapshot::default(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4556,6 +4647,7 @@ fn append_reasoning_part_separator(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
+                context_management: NativeContextManagementSnapshot::default(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4593,6 +4685,7 @@ fn sync_thread_from_completed_item(
                     cwd: None,
                     messages: Vec::new(),
                     latest_token_usage: None,
+                    context_management: NativeContextManagementSnapshot::default(),
                 });
             let message_id = format!("{turn_id}:{id}");
             if let Some(message) = thread
@@ -4900,6 +4993,29 @@ fn resolve_thread_token_usage(
     load_persisted_thread_token_usage(&resolve_codex_home(None), thread_id)
 }
 
+fn resolve_thread_context_management(
+    state: &NativeConversationState,
+    thread_id: &str,
+) -> NativeContextManagementSnapshot {
+    state
+        .threads
+        .get(thread_id)
+        .map(|thread| thread.context_management.clone())
+        .unwrap_or_default()
+}
+
+fn load_persisted_thread_context_management(thread_id: &str) -> NativeContextManagementSnapshot {
+    load_thread_context_snapshots(&resolve_codex_home(None))
+        .ok()
+        .and_then(|snapshots| snapshots.threads.get(thread_id).cloned())
+        .map(|snapshot| snapshot.context_management)
+        .unwrap_or_default()
+}
+
+fn build_context_management_payload(snapshot: &NativeContextManagementSnapshot) -> serde_json::Value {
+    serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::json!({}))
+}
+
 fn build_turn_poll_payload(
     state: &NativeConversationState,
     thread_id: &str,
@@ -4928,6 +5044,7 @@ fn build_turn_poll_payload(
     };
     let resolved_token_usage = resolve_thread_token_usage(state, &effective_thread_id)
         .or_else(|| turn.token_usage.clone());
+    let context_management = resolve_thread_context_management(state, &effective_thread_id);
 
     serde_json::json!({
         "threadId": effective_thread_id,
@@ -4938,6 +5055,7 @@ fn build_turn_poll_payload(
         "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
         "diff": turn.diff,
         "tokenUsage": build_token_usage_payload(resolved_token_usage.as_ref()),
+        "contextManagement": build_context_management_payload(&context_management),
     })
 }
 
@@ -4948,6 +5066,7 @@ fn upsert_thread_state_from_protocol(
 ) {
     let latest_token_usage = latest_thread_token_usage_from_turns(thread)
         .or_else(|| load_persisted_thread_token_usage(&resolve_codex_home(None), &thread.id));
+    let persisted_context_management = load_persisted_thread_context_management(&thread.id);
     prune_terminal_turn_states_for_thread(state, &thread.id);
     let entry = state
         .threads
@@ -4957,12 +5076,14 @@ fn upsert_thread_state_from_protocol(
             cwd: Some(thread.cwd.clone()),
             messages: Vec::new(),
             latest_token_usage: None,
+            context_management: NativeContextManagementSnapshot::default(),
         });
     entry.remote_thread_id = thread.id.clone();
     entry.cwd = Some(thread.cwd.clone());
     if let Some(token_usage) = latest_token_usage {
         entry.latest_token_usage = Some(token_usage);
     }
+    entry.context_management.merge_missing_from(&persisted_context_management);
     if refresh_messages {
         let message_timestamps = thread
             .path
@@ -5026,6 +5147,7 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
 
     let thread_token_usage = resolve_thread_token_usage(state, &thread.id)
         .or_else(|| latest_thread_token_usage_from_turns(thread));
+    let context_management = resolve_thread_context_management(state, &thread.id);
 
     serde_json::json!({
         "thread": build_thread_meta_payload(thread),
@@ -5039,6 +5161,7 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
         "lastTurnId": last_turn_id,
         "lastTurnStatus": last_turn_status,
         "tokenUsage": build_token_usage_payload(thread_token_usage.as_ref()),
+        "contextManagement": build_context_management_payload(&context_management),
     })
 }
 
@@ -5827,6 +5950,7 @@ fn upsert_item_started_message(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
+                context_management: NativeContextManagementSnapshot::default(),
             });
 
         if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
@@ -5869,6 +5993,7 @@ fn upsert_item_completed_message(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
+                context_management: NativeContextManagementSnapshot::default(),
             });
 
         let is_reasoning = matches!(
