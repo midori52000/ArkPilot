@@ -8,7 +8,6 @@ pub(super) struct RolloutReconstruction {
     pub(super) history: Vec<ResponseItem>,
     pub(super) previous_turn_settings: Option<PreviousTurnSettings>,
     pub(super) reference_context_item: Option<TurnContextItem>,
-    pub(super) recent_artifact_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -96,7 +95,6 @@ impl Session {
         // are both known; then replay only the buffered surviving tail forward to preserve exact
         // history semantics.
         let mut base_replacement_history: Option<&[ResponseItem]> = None;
-        let mut recent_artifact_refs = None;
         let mut previous_turn_settings = None;
         let mut reference_context_item = TurnReferenceContextItem::NeverSet;
         // Rollback is "drop the newest N user turns". While scanning in reverse, that becomes
@@ -126,7 +124,6 @@ impl Session {
                         && let Some(replacement_history) = &compacted.replacement_history
                     {
                         active_segment.base_replacement_history = Some(replacement_history);
-                        recent_artifact_refs = compacted.recent_artifact_refs.clone();
                         rollout_suffix = &rollout_items[index + 1..];
                     }
                 }
@@ -299,7 +296,6 @@ impl Session {
             history: history.raw_items().to_vec(),
             previous_turn_settings,
             reference_context_item,
-            recent_artifact_refs,
         }
     }
 }

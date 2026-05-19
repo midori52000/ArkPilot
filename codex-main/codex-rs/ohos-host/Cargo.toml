@@ -29,6 +29,3 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 toml_edit = { workspace = true }
-
-[dev-dependencies]
-codex-state = { workspace = true }

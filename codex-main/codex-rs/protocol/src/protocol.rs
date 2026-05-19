@@ -1655,11 +1655,6 @@ pub enum CodexErrorInfo {
     ResponseTooManyFailedAttempts {
         http_status_code: Option<u16>,
     },
-    /// Returned when auto-compaction fails or is skipped because the circuit breaker is open.
-    AutoCompactFailed {
-        failure_count: i64,
-        circuit_open: bool,
-    },
     /// Returned when `turn/start` or `turn/steer` is submitted while the current active turn
     /// cannot accept same-turn steering, for example `/review` or manual `/compact`.
     ActiveTurnNotSteerable {
@@ -1685,7 +1680,6 @@ impl CodexErrorInfo {
             | Self::SandboxError
             | Self::ResponseStreamDisconnected { .. }
             | Self::ResponseTooManyFailedAttempts { .. }
-            | Self::AutoCompactFailed { .. }
             | Self::Other => true,
         }
     }
@@ -1862,22 +1856,7 @@ pub struct ModelRerouteEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(rename_all = "camelCase")]
-pub struct ContextCompactedEvent {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub micro_compaction_item_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub micro_compaction_saved_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub trimmed_item_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reference_context_reestablished: Option<bool>,
-}
+pub struct ContextCompactedEvent;
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct TurnCompleteEvent {
@@ -2598,9 +2577,6 @@ pub struct CompactedItem {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_history: Option<Vec<ResponseItem>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub recent_artifact_refs: Option<Vec<String>>,
 }
 
 impl From<CompactedItem> for ResponseItem {

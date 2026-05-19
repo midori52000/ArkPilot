@@ -5,9 +5,7 @@ use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::built_tools;
-use crate::compact::CompactionTriggerSource;
 use crate::compact::InitialContextInjection;
-use crate::compact::collect_recent_artifact_refs;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
@@ -31,16 +29,8 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
-    trigger_source: CompactionTriggerSource,
 ) -> CodexResult<()> {
-    run_remote_compact_task_inner(
-        &sess,
-        &turn_context,
-        initial_context_injection,
-        trigger_source,
-        /*emit_error_event*/ false,
-    )
-    .await?;
+    run_remote_compact_task_inner(&sess, &turn_context, initial_context_injection).await?;
     Ok(())
 }
 
@@ -55,37 +45,21 @@ pub(crate) async fn run_remote_compact_task(
     });
     sess.send_event(&turn_context, start_event).await;
 
-    run_remote_compact_task_inner(
-        &sess,
-        &turn_context,
-        InitialContextInjection::DoNotInject,
-        CompactionTriggerSource::Manual,
-        /*emit_error_event*/ true,
-    )
-    .await
+    run_remote_compact_task_inner(&sess, &turn_context, InitialContextInjection::DoNotInject).await
 }
 
 async fn run_remote_compact_task_inner(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
-    trigger_source: CompactionTriggerSource,
-    emit_error_event: bool,
 ) -> CodexResult<()> {
-    if let Err(err) = run_remote_compact_task_inner_impl(
-        sess,
-        turn_context,
-        initial_context_injection,
-        trigger_source,
-    )
-    .await
+    if let Err(err) =
+        run_remote_compact_task_inner_impl(sess, turn_context, initial_context_injection).await
     {
-        if emit_error_event {
-            let event = EventMsg::Error(
-                err.to_error_event(Some("Error running remote compact task".to_string())),
-            );
-            sess.send_event(turn_context, event).await;
-        }
+        let event = EventMsg::Error(
+            err.to_error_event(Some("Error running remote compact task".to_string())),
+        );
+        sess.send_event(turn_context, event).await;
         return Err(err);
     }
     Ok(())
@@ -95,21 +69,11 @@ async fn run_remote_compact_task_inner_impl(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
-    trigger_source: CompactionTriggerSource,
 ) -> CodexResult<()> {
-    let mut compaction = ContextCompactionItem::new();
-    compaction.trigger_source = Some(trigger_source.as_str().to_string());
-    compaction.provider_mode = Some("remote".to_string());
-    compaction.reference_context_reestablished = Some(matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
-    ));
-    let mut compaction_item = TurnItem::ContextCompaction(compaction);
+    let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context, &compaction_item)
         .await;
     let mut history = sess.clone_history().await;
-    let recent_artifact_refs =
-        collect_recent_artifact_refs(history.raw_items(), sess.recent_artifact_refs().await);
     let base_instructions = sess.get_base_instructions().await;
     let deleted_items = trim_function_call_history_to_fit_context_window(
         &mut history,
@@ -117,9 +81,6 @@ async fn run_remote_compact_task_inner_impl(
         &base_instructions,
     );
     if deleted_items > 0 {
-        if let TurnItem::ContextCompaction(compaction) = &mut compaction_item {
-            compaction.trimmed_item_count = Some(deleted_items as i64);
-        }
         info!(
             turn_id = %turn_context.sub_id,
             deleted_items,
@@ -194,7 +155,6 @@ async fn run_remote_compact_task_inner_impl(
     let compacted_item = CompactedItem {
         message: String::new(),
         replacement_history: Some(new_history.clone()),
-        recent_artifact_refs,
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
         .await;
@@ -202,7 +162,6 @@ async fn run_remote_compact_task_inner_impl(
 
     sess.emit_turn_item_completed(turn_context, compaction_item)
         .await;
-    sess.clear_auto_compact_failure_state().await;
     Ok(())
 }
 

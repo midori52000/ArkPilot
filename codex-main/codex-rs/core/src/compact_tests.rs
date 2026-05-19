@@ -1,5 +1,4 @@
 use super::*;
-use codex_protocol::models::FunctionCallOutputPayload;
 use pretty_assertions::assert_eq;
 
 async fn process_compacted_history_with_test_session(
@@ -162,77 +161,6 @@ fn build_token_limited_compacted_history_truncates_overlong_user_messages() {
         other => panic!("unexpected item in history: {other:?}"),
     };
     assert_eq!(summary_text, "SUMMARY");
-}
-
-#[test]
-fn pre_compress_tool_outputs_returns_compacted_item_stats() {
-    let long_output = "tool output that is very long\n".repeat(2_500);
-    let short_output = "short output".to_string();
-    let tool_search_tools = (0..24)
-        .map(|index| {
-            serde_json::json!({
-                "type": "function",
-                "name": format!("tool_{index}"),
-                "description": "tool description ".repeat(60),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "field description ".repeat(30)}
-                    }
-                }
-            })
-        })
-        .collect::<Vec<serde_json::Value>>();
-    let mut items = vec![
-        ResponseItem::FunctionCallOutput {
-            call_id: "call-1".to_string(),
-            output: FunctionCallOutputPayload::from_text(long_output.clone()),
-        },
-        ResponseItem::CustomToolCallOutput {
-            call_id: "call-2".to_string(),
-            name: Some("grep".to_string()),
-            output: FunctionCallOutputPayload::from_text(long_output.clone()),
-        },
-        ResponseItem::ToolSearchOutput {
-            call_id: Some("search-1".to_string()),
-            status: "completed".to_string(),
-            execution: "client".to_string(),
-            tools: tool_search_tools.clone(),
-        },
-        ResponseItem::FunctionCallOutput {
-            call_id: "call-3".to_string(),
-            output: FunctionCallOutputPayload::from_text(short_output.clone()),
-        },
-    ];
-
-    let compacted = pre_compress_tool_outputs(&mut items, 1_000);
-
-    assert_eq!(compacted.item_count, 3);
-    assert!(compacted.saved_tokens > 0);
-    let first = match &items[0] {
-        ResponseItem::FunctionCallOutput { output, .. } => output,
-        other => panic!("unexpected first item: {other:?}"),
-    };
-    let second = match &items[1] {
-        ResponseItem::CustomToolCallOutput { output, .. } => output,
-        other => panic!("unexpected second item: {other:?}"),
-    };
-    let third = match &items[2] {
-        ResponseItem::ToolSearchOutput { tools, .. } => tools,
-        other => panic!("unexpected third item: {other:?}"),
-    };
-    let fourth = match &items[3] {
-        ResponseItem::FunctionCallOutput { output, .. } => output,
-        other => panic!("unexpected fourth item: {other:?}"),
-    };
-    assert_ne!(first.text_content().unwrap_or_default(), long_output);
-    assert_ne!(second.text_content().unwrap_or_default(), long_output);
-    assert_ne!(third, &tool_search_tools);
-    assert_eq!(
-        third.first().and_then(serde_json::Value::as_object).and_then(|summary| summary.get("tool_count")),
-        Some(&serde_json::json!(24))
-    );
-    assert_eq!(fourth.text_content().unwrap_or_default(), short_output);
 }
 
 #[test]

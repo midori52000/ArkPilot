@@ -1,8 +1,3 @@
-use crate::client_common::LocalShellOutputCompactionContext;
-use crate::client_common::compact_apply_patch_output;
-use crate::client_common::compact_json_output;
-use crate::client_common::compact_local_shell_output;
-use crate::client_common::compact_web_search_action;
 use crate::codex::TurnContext;
 use crate::context_manager::normalize;
 use crate::event_mapping::has_non_contextual_dev_message_content;
@@ -16,7 +11,6 @@ use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ImageDetail;
-use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -370,75 +364,30 @@ impl ContextManager {
         let policy_with_serialization_budget = policy * 1.2;
         match item {
             ResponseItem::FunctionCallOutput { call_id, output } => {
-                let tool_name = self.find_function_output_tool_name(call_id);
-                let output = self
-                    .truncate_local_shell_output_payload(
-                        call_id,
-                        output,
-                        policy_with_serialization_budget,
-                    )
-                    .unwrap_or_else(|| {
-                        truncate_function_output_payload(
-                            output,
-                            call_id,
-                            tool_name.as_deref(),
-                            policy_with_serialization_budget,
-                        )
-                    });
                 ResponseItem::FunctionCallOutput {
                     call_id: call_id.clone(),
-                    output,
+                    output: truncate_function_output_payload(
+                        output,
+                        policy_with_serialization_budget,
+                    ),
                 }
             }
             ResponseItem::CustomToolCallOutput {
                 call_id,
                 name,
                 output,
-            } => {
-                let tool_name = name
-                    .clone()
-                    .or_else(|| self.find_custom_tool_output_name(call_id));
-                ResponseItem::CustomToolCallOutput {
-                    call_id: call_id.clone(),
-                    name: tool_name.clone(),
-                    output: truncate_function_output_payload(
-                        output,
-                        call_id,
-                        tool_name.as_deref(),
-                        policy_with_serialization_budget,
-                    ),
-                }
-            }
-            ResponseItem::ToolSearchOutput {
-                call_id,
-                status,
-                execution,
-                tools,
-            } => ResponseItem::ToolSearchOutput {
+            } => ResponseItem::CustomToolCallOutput {
                 call_id: call_id.clone(),
-                status: status.clone(),
-                execution: execution.clone(),
-                tools: truncate_tool_search_tools(
-                    tools,
-                    call_id.as_deref(),
-                    policy_with_serialization_budget,
-                ),
-            },
-            ResponseItem::WebSearchCall { id, status, action } => ResponseItem::WebSearchCall {
-                id: id.clone(),
-                status: status.clone(),
-                action: action
-                    .as_ref()
-                    .and_then(|value| {
-                        compact_web_search_action(value, policy_with_serialization_budget)
-                    })
-                    .or_else(|| action.clone()),
+                name: name.clone(),
+                output: truncate_function_output_payload(output, policy_with_serialization_budget),
             },
             ResponseItem::Message { .. }
             | ResponseItem::Reasoning { .. }
             | ResponseItem::LocalShellCall { .. }
             | ResponseItem::FunctionCall { .. }
             | ResponseItem::ToolSearchCall { .. }
+            | ResponseItem::ToolSearchOutput { .. }
+            | ResponseItem::WebSearchCall { .. }
             | ResponseItem::ImageGenerationCall { .. }
             | ResponseItem::CustomToolCall { .. }
             | ResponseItem::Compaction { .. }
@@ -493,214 +442,25 @@ impl ContextManager {
         }
         cut_idx
     }
-
-    fn truncate_local_shell_output_payload(
-        &self,
-        call_id: &str,
-        output: &FunctionCallOutputPayload,
-        policy: TruncationPolicy,
-    ) -> Option<FunctionCallOutputPayload> {
-        let context = self.find_local_shell_output_context(call_id)?;
-        let text = output.text_content()?;
-        let compacted = compact_local_shell_output(
-            text,
-            LocalShellOutputCompactionContext {
-                call_id,
-                command: &context.command,
-                working_directory: context.working_directory.as_deref(),
-            },
-            policy,
-        )?;
-        Some(FunctionCallOutputPayload {
-            body: FunctionCallOutputBody::Text(compacted),
-            success: output.success,
-        })
-    }
-
-    fn find_local_shell_output_context(&self, call_id: &str) -> Option<LocalShellOutputContext> {
-        self.items.iter().rev().find_map(|item| match item {
-            ResponseItem::LocalShellCall {
-                call_id: Some(existing_call_id),
-                action: LocalShellAction::Exec(exec),
-                ..
-            } if existing_call_id == call_id => Some(LocalShellOutputContext {
-                command: exec.command.clone(),
-                working_directory: exec.working_directory.clone(),
-            }),
-            _ => None,
-        })
-    }
-
-    fn find_function_output_tool_name(&self, call_id: &str) -> Option<String> {
-        self.items.iter().rev().find_map(|item| match item {
-            ResponseItem::FunctionCall {
-                call_id: existing_call_id,
-                name,
-                ..
-            } if existing_call_id == call_id => Some(name.clone()),
-            _ => None,
-        })
-    }
-
-    fn find_custom_tool_output_name(&self, call_id: &str) -> Option<String> {
-        self.items.iter().rev().find_map(|item| match item {
-            ResponseItem::CustomToolCall {
-                call_id: existing_call_id,
-                name,
-                ..
-            } if existing_call_id == call_id => Some(name.clone()),
-            _ => None,
-        })
-    }
-}
-
-struct LocalShellOutputContext {
-    command: Vec<String>,
-    working_directory: Option<String>,
-}
-
-fn compact_function_output_text(
-    content: &str,
-    tool_name: Option<&str>,
-    policy: TruncationPolicy,
-) -> Option<String> {
-    match tool_name {
-        Some("apply_patch") => compact_apply_patch_output(content, policy),
-        _ => None,
-    }
-    .or_else(|| compact_json_output(content, policy))
 }
 
 fn truncate_function_output_payload(
     output: &FunctionCallOutputPayload,
-    call_id: &str,
-    tool_name: Option<&str>,
     policy: TruncationPolicy,
 ) -> FunctionCallOutputPayload {
     let body = match &output.body {
-        FunctionCallOutputBody::Text(content) => compact_function_output_text(
-            content,
-            tool_name,
-            policy,
-        )
-        .map(FunctionCallOutputBody::Text)
-        .unwrap_or_else(|| FunctionCallOutputBody::Text(truncate_text(content, policy))),
+        FunctionCallOutputBody::Text(content) => {
+            FunctionCallOutputBody::Text(truncate_text(content, policy))
+        }
         FunctionCallOutputBody::ContentItems(items) => FunctionCallOutputBody::ContentItems(
             truncate_function_output_items_with_policy(items, policy),
         ),
-    };
-
-    let body = if body == output.body {
-        body
-    } else {
-        attach_compaction_replay_note(body, call_id, tool_name)
     };
 
     FunctionCallOutputPayload {
         body,
         success: output.success,
     }
-}
-
-fn attach_compaction_replay_note(
-    body: FunctionCallOutputBody,
-    call_id: &str,
-    tool_name: Option<&str>,
-) -> FunctionCallOutputBody {
-    let replay_note = build_compaction_replay_note(call_id, tool_name);
-    match body {
-        FunctionCallOutputBody::Text(mut content) => {
-            if !content.is_empty() {
-                content.push_str("\n\n");
-            }
-            content.push_str(&replay_note);
-            FunctionCallOutputBody::Text(content)
-        }
-        FunctionCallOutputBody::ContentItems(mut items) => {
-            items.push(FunctionCallOutputContentItem::InputText { text: replay_note });
-            FunctionCallOutputBody::ContentItems(items)
-        }
-    }
-}
-
-fn build_compaction_replay_note(call_id: &str, tool_name: Option<&str>) -> String {
-    match tool_name.filter(|name| !name.trim().is_empty()) {
-        Some(name) => {
-            format!("[output compacted; replay locator: call_id={call_id}; tool_name={name}]")
-        }
-        None => format!("[output compacted; replay locator: call_id={call_id}]")
-    }
-}
-
-fn truncate_tool_search_tools(
-    tools: &[serde_json::Value],
-    call_id: Option<&str>,
-    policy: TruncationPolicy,
-) -> Vec<serde_json::Value> {
-    let serialized = match serde_json::to_string(tools) {
-        Ok(serialized) => serialized,
-        Err(_) => return tools.to_vec(),
-    };
-    let truncated = truncate_text(&serialized, policy);
-    if truncated.len() >= serialized.len() {
-        return tools.to_vec();
-    }
-    vec![build_tool_search_compaction_summary(tools, call_id)]
-}
-
-fn build_tool_search_compaction_summary(
-    tools: &[serde_json::Value],
-    call_id: Option<&str>,
-) -> serde_json::Value {
-    let preview_names = collect_tool_search_preview_names(tools, 3);
-    let replay_note = call_id
-        .filter(|id| !id.trim().is_empty())
-        .map(|id| build_compaction_replay_note(id, None))
-        .unwrap_or_else(|| "[output compacted; replay locator unavailable]".to_string());
-    serde_json::json!({
-        "type": "tool_search_compacted",
-        "compacted": true,
-        "tool_count": tools.len(),
-        "preview_names": preview_names,
-        "replay_note": replay_note,
-    })
-}
-
-fn collect_tool_search_preview_names(tools: &[serde_json::Value], limit: usize) -> Vec<String> {
-    let mut preview_names: Vec<String> = Vec::new();
-    for tool in tools {
-        if preview_names.len() >= limit {
-            break;
-        }
-        let Some(name) = tool_search_preview_name(tool) else {
-            continue;
-        };
-        if name.trim().is_empty() {
-            continue;
-        }
-        preview_names.push(name);
-    }
-    preview_names
-}
-
-fn tool_search_preview_name(tool: &serde_json::Value) -> Option<String> {
-    let object = tool.as_object()?;
-    for key in ["name", "title", "id"] {
-        if let Some(value) = object.get(key).and_then(serde_json::Value::as_str) {
-            if !value.trim().is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    let function = object.get("function")?.as_object()?;
-    for key in ["name", "title", "id"] {
-        if let Some(value) = function.get(key).and_then(serde_json::Value::as_str) {
-            if !value.trim().is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
 }
 
 /// API messages include every non-system item (user/assistant messages, reasoning,

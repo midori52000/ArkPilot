@@ -1805,7 +1805,6 @@ dependencies = [
  "codex-arg0",
  "codex-core",
  "codex-protocol",
- "codex-state",
  "codex-utils-absolute-path",
  "codex-utils-cli",
  "hex",

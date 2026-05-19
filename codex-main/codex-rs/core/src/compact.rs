@@ -1,17 +1,9 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::ModelProviderInfo;
 use crate::Prompt;
 use crate::client::ModelClientSession;
-use crate::client_common::LocalShellOutputCompactionContext;
 use crate::client_common::ResponseEvent;
-use crate::client_common::compact_apply_patch_output;
-use crate::client_common::compact_json_output;
-use crate::client_common::compact_local_shell_output;
-use crate::client_common::compact_web_search_action;
 #[cfg(test)]
 use crate::codex::PreviousTurnSettings;
 use crate::codex::Session;
@@ -27,14 +19,10 @@ use crate::util::backoff;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::models::WebSearchAction;
 use codex_protocol::user_input::UserInput;
+use codex_protocol::models::FunctionCallOutputBody;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_function_output_items_with_policy;
@@ -46,12 +34,6 @@ pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = usize::MAX;
 const COMPACT_TOOL_OUTPUT_MAX_TOKENS: usize = 500;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct PreCompressedToolOutputStats {
-    item_count: usize,
-    saved_tokens: i64,
-}
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -68,25 +50,6 @@ pub(crate) enum InitialContextInjection {
     DoNotInject,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CompactionTriggerSource {
-    Manual,
-    PreTurn,
-    MidTurn,
-    ModelSwitch,
-}
-
-impl CompactionTriggerSource {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Manual => "manual",
-            Self::PreTurn => "pre_turn",
-            Self::MidTurn => "mid_turn",
-            Self::ModelSwitch => "model_switch",
-        }
-    }
-}
-
 pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
     provider.is_openai()
 }
@@ -95,7 +58,6 @@ pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
-    trigger_source: CompactionTriggerSource,
 ) -> CodexResult<()> {
     let prompt = turn_context.compact_prompt().to_string();
     let input = vec![UserInput::Text {
@@ -104,15 +66,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         text_elements: Vec::new(),
     }];
 
-    run_compact_task_inner(
-        sess,
-        turn_context,
-        input,
-        initial_context_injection,
-        trigger_source,
-        /*emit_error_event*/ false,
-    )
-    .await?;
+    run_compact_task_inner(sess, turn_context, input, initial_context_injection).await?;
     Ok(())
 }
 
@@ -132,8 +86,6 @@ pub(crate) async fn run_compact_task(
         turn_context,
         input,
         InitialContextInjection::DoNotInject,
-        CompactionTriggerSource::Manual,
-        /*emit_error_event*/ true,
     )
     .await
 }
@@ -143,21 +95,10 @@ async fn run_compact_task_inner(
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
-    trigger_source: CompactionTriggerSource,
-    emit_error_event: bool,
 ) -> CodexResult<()> {
-    let mut compaction_item = ContextCompactionItem::new();
-    compaction_item.trigger_source = Some(trigger_source.as_str().to_string());
-    compaction_item.provider_mode = Some("local".to_string());
-    compaction_item.reference_context_reestablished = Some(matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
-    ));
-    sess.emit_turn_item_started(
-        &turn_context,
-        &TurnItem::ContextCompaction(compaction_item.clone()),
-    )
-    .await;
+    let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
+    sess.emit_turn_item_started(&turn_context, &compaction_item)
+        .await;
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
@@ -180,10 +121,7 @@ async fn run_compact_task_inner(
         let mut turn_input = history
             .clone()
             .for_prompt(&turn_context.model_info.input_modalities);
-        let pre_compressed_tool_output_stats = pre_compress_tool_outputs(
-            &mut turn_input,
-            COMPACT_TOOL_OUTPUT_MAX_TOKENS,
-        );
+        pre_compress_tool_outputs(&mut turn_input, COMPACT_TOOL_OUTPUT_MAX_TOKENS);
         let turn_input_len = turn_input.len();
         let prompt = Prompt {
             input: turn_input,
@@ -203,16 +141,7 @@ async fn run_compact_task_inner(
 
         match attempt_result {
             Ok(()) => {
-                if pre_compressed_tool_output_stats.item_count > 0 {
-                    compaction_item.micro_compaction_item_count =
-                        Some(pre_compressed_tool_output_stats.item_count as i64);
-                }
-                if pre_compressed_tool_output_stats.saved_tokens > 0 {
-                    compaction_item.micro_compaction_saved_tokens =
-                        Some(pre_compressed_tool_output_stats.saved_tokens);
-                }
                 if truncated_count > 0 {
-                    compaction_item.trimmed_item_count = Some(truncated_count as i64);
                     sess.notify_background_event(
                         turn_context.as_ref(),
                         format!(
@@ -238,10 +167,8 @@ async fn run_compact_task_inner(
                     continue;
                 }
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
-                if emit_error_event {
-                    let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
-                    sess.send_event(&turn_context, event).await;
-                }
+                let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+                sess.send_event(&turn_context, event).await;
                 return Err(e);
             }
             Err(e) => {
@@ -257,10 +184,8 @@ async fn run_compact_task_inner(
                     tokio::time::sleep(delay).await;
                     continue;
                 } else {
-                    if emit_error_event {
-                        let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
-                        sess.send_event(&turn_context, event).await;
-                    }
+                    let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+                    sess.send_event(&turn_context, event).await;
                     return Err(e);
                 }
             }
@@ -272,7 +197,6 @@ async fn run_compact_task_inner(
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let user_messages = collect_user_messages(history_items);
-    let recent_artifact_refs = collect_recent_artifact_refs(history_items, sess.recent_artifact_refs().await);
 
     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
 
@@ -297,18 +221,13 @@ async fn run_compact_task_inner(
     let compacted_item = CompactedItem {
         message: summary_text.clone(),
         replacement_history: Some(new_history.clone()),
-        recent_artifact_refs,
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
         .await;
     sess.recompute_token_usage(&turn_context).await;
 
-    sess.emit_turn_item_completed(
-        &turn_context,
-        TurnItem::ContextCompaction(compaction_item),
-    )
-    .await;
-    sess.clear_auto_compact_failure_state().await;
+    sess.emit_turn_item_completed(&turn_context, compaction_item)
+        .await;
     let warning = EventMsg::Warning(WarningEvent {
         message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),
     });
@@ -345,327 +264,38 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn collect_recent_artifact_refs(
-    items: &[ResponseItem],
-    previous_refs: Option<Vec<String>>,
-) -> Option<Vec<String>> {
-    const MAX_RECENT_ARTIFACT_REFS: usize = 5;
-
-    let mut refs = Vec::new();
-    let mut seen = HashSet::new();
-
-    for item in items.iter().rev() {
-        collect_artifact_refs_from_response_item(item, &mut refs, &mut seen, MAX_RECENT_ARTIFACT_REFS);
-        if refs.len() >= MAX_RECENT_ARTIFACT_REFS {
-            break;
-        }
-    }
-
-    if refs.len() < MAX_RECENT_ARTIFACT_REFS
-        && let Some(previous_refs) = previous_refs
-    {
-        for reference in previous_refs.into_iter().rev() {
-            push_recent_artifact_ref(&reference, &mut refs, &mut seen, MAX_RECENT_ARTIFACT_REFS);
-            if refs.len() >= MAX_RECENT_ARTIFACT_REFS {
-                break;
-            }
-        }
-    }
-
-    refs.reverse();
-    (!refs.is_empty()).then_some(refs)
-}
-
-fn collect_artifact_refs_from_response_item(
-    item: &ResponseItem,
-    refs: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-    limit: usize,
-) {
-    match item {
-        ResponseItem::FunctionCall {
-            name, arguments, ..
-        } => {
-            collect_artifact_refs_from_function_call(name, arguments, refs, seen, limit);
-        }
-        _ => {}
-    }
-}
-
-fn collect_artifact_refs_from_function_call(
-    _name: &str,
-    arguments: &str,
-    refs: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-    limit: usize,
-) {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) {
-        for key in ["file_path", "notebook_path", "path"] {
-            if let Some(path) = value.get(key).and_then(serde_json::Value::as_str) {
-                push_recent_artifact_ref(path, refs, seen, limit);
-                if refs.len() >= limit {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-fn push_recent_artifact_ref(
-    value: impl AsRef<str>,
-    refs: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-    limit: usize,
-) {
-    if refs.len() >= limit {
-        return;
-    }
-    let normalized = normalize_recent_artifact_ref(value.as_ref());
-    if let Some(normalized) = normalized
-        && seen.insert(normalized.clone())
-    {
-        refs.push(normalized);
-    }
-}
-
-fn normalize_recent_artifact_ref(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let path = Path::new(trimmed);
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
 pub(crate) fn is_summary_message(message: &str) -> bool {
     message.starts_with(format!("{SUMMARY_PREFIX}\n").as_str())
 }
 
-fn approx_content_item_token_count(items: &[FunctionCallOutputContentItem]) -> usize {
-    items.iter().fold(0usize, |acc, item| match item {
-        FunctionCallOutputContentItem::InputText { text } => {
-            acc.saturating_add(approx_token_count(text))
-        }
-        FunctionCallOutputContentItem::InputImage { .. } => acc,
-    })
-}
-
-fn compact_function_output_text(
-    text: &str,
-    tool_name: Option<&str>,
-    policy: TruncationPolicy,
-) -> Option<String> {
-    match tool_name {
-        Some("apply_patch") => compact_apply_patch_output(text, policy),
-        _ => None,
-    }
-    .or_else(|| compact_json_output(text, policy))
-}
-
-fn truncate_payload(
-    body: &mut FunctionCallOutputBody,
-    policy: &TruncationPolicy,
-    tool_name: Option<&str>,
-) -> i64 {
+fn truncate_payload(body: &mut FunctionCallOutputBody, policy: &TruncationPolicy) {
     match body {
         FunctionCallOutputBody::Text(text) => {
-            let original_tokens = approx_token_count(text);
-            let truncated = compact_function_output_text(text, tool_name, *policy)
-                .unwrap_or_else(|| truncate_text(text, *policy));
+            let truncated = truncate_text(text, *policy);
             if truncated.len() < text.len() {
-                let truncated_tokens = approx_token_count(&truncated);
                 *text = truncated;
-                original_tokens.saturating_sub(truncated_tokens) as i64
-            } else {
-                0
             }
         }
         FunctionCallOutputBody::ContentItems(items) => {
-            let original_tokens = approx_content_item_token_count(items);
             let truncated = truncate_function_output_items_with_policy(items, *policy);
-            if truncated != *items {
-                let truncated_tokens = approx_content_item_token_count(&truncated);
-                *items = truncated;
-                original_tokens.saturating_sub(truncated_tokens) as i64
-            } else {
-                0
-            }
+            *items = truncated;
         }
     }
 }
 
-fn truncate_tool_search_tools(
-    tools: &mut Vec<serde_json::Value>,
-    policy: &TruncationPolicy,
-) -> i64 {
-    let original = match serde_json::to_string(tools) {
-        Ok(serialized) => serialized,
-        Err(_) => return 0,
-    };
-    let truncated = truncate_text(&original, *policy);
-    if truncated.len() >= original.len() {
-        return 0;
-    }
-    let original_tokens = approx_token_count(&original);
-    let compacted_tools = vec![build_tool_search_compaction_summary(tools)];
-    let compacted = serde_json::to_string(&compacted_tools).unwrap_or_default();
-    *tools = compacted_tools;
-    original_tokens.saturating_sub(approx_token_count(&compacted)) as i64
-}
-
-fn build_tool_search_compaction_summary(tools: &[serde_json::Value]) -> serde_json::Value {
-    let preview_names = tools
-        .iter()
-        .filter_map(tool_search_preview_name)
-        .take(3)
-        .collect::<Vec<String>>();
-    serde_json::json!({
-        "type": "tool_search_compacted",
-        "compacted": true,
-        "tool_count": tools.len(),
-        "preview_names": preview_names,
-    })
-}
-
-struct LocalShellOutputContext {
-    command: Vec<String>,
-    working_directory: Option<String>,
-}
-
-fn truncate_local_shell_output_payload(
-    output: &mut FunctionCallOutputPayload,
-    call_id: &str,
-    context: &LocalShellOutputContext,
-    policy: &TruncationPolicy,
-) -> i64 {
-    let Some(raw) = output.text_content() else {
-        return truncate_payload(&mut output.body, policy, Some("local_shell"));
-    };
-    let Some(compacted) = compact_local_shell_output(
-        raw,
-        LocalShellOutputCompactionContext {
-            call_id,
-            command: &context.command,
-            working_directory: context.working_directory.as_deref(),
-        },
-        *policy,
-    ) else {
-        return truncate_payload(&mut output.body, policy, Some("local_shell"));
-    };
-
-    let original_tokens = approx_token_count(raw);
-    let compacted_tokens = approx_token_count(&compacted);
-    output.body = FunctionCallOutputBody::Text(compacted);
-    original_tokens.saturating_sub(compacted_tokens) as i64
-}
-
-fn truncate_web_search_call_action(action: &mut WebSearchAction, policy: &TruncationPolicy) -> i64 {
-    let original = match serde_json::to_string(action) {
-        Ok(serialized) => serialized,
-        Err(_) => return 0,
-    };
-    let Some(compacted) = compact_web_search_action(action, *policy) else {
-        return 0;
-    };
-    let compacted_serialized = match serde_json::to_string(&compacted) {
-        Ok(serialized) => serialized,
-        Err(_) => return 0,
-    };
-    let original_tokens = approx_token_count(&original);
-    *action = compacted;
-    original_tokens.saturating_sub(approx_token_count(&compacted_serialized)) as i64
-}
-
-fn tool_search_preview_name(tool: &serde_json::Value) -> Option<String> {
-    let object = tool.as_object()?;
-    for key in ["name", "title", "id"] {
-        if let Some(value) = object.get(key).and_then(serde_json::Value::as_str) {
-            if !value.trim().is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    let function = object.get("function")?.as_object()?;
-    for key in ["name", "title", "id"] {
-        if let Some(value) = function.get(key).and_then(serde_json::Value::as_str) {
-            if !value.trim().is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn pre_compress_tool_outputs(
-    items: &mut [ResponseItem],
-    max_tokens: usize,
-) -> PreCompressedToolOutputStats {
+fn pre_compress_tool_outputs(items: &mut [ResponseItem], max_tokens: usize) {
     let policy = TruncationPolicy::Tokens(max_tokens);
-    let mut stats = PreCompressedToolOutputStats::default();
-    let mut local_shell_calls: HashMap<String, LocalShellOutputContext> = HashMap::new();
-    let mut function_tool_names: HashMap<String, String> = HashMap::new();
-    let mut custom_tool_names: HashMap<String, String> = HashMap::new();
     for item in items.iter_mut() {
-        let saved_tokens = match item {
-            ResponseItem::LocalShellCall {
-                call_id: Some(call_id),
-                action: LocalShellAction::Exec(exec),
-                ..
-            } => {
-                local_shell_calls.insert(
-                    call_id.clone(),
-                    LocalShellOutputContext {
-                        command: exec.command.clone(),
-                        working_directory: exec.working_directory.clone(),
-                    },
-                );
-                0
+        match item {
+            ResponseItem::FunctionCallOutput { output, .. } => {
+                truncate_payload(&mut output.body, &policy);
             }
-            ResponseItem::FunctionCall {
-                call_id, name, ..
-            } => {
-                function_tool_names.insert(call_id.clone(), name.clone());
-                0
+            ResponseItem::CustomToolCallOutput { output, .. } => {
+                truncate_payload(&mut output.body, &policy);
             }
-            ResponseItem::CustomToolCall { call_id, name, .. } => {
-                custom_tool_names.insert(call_id.clone(), name.clone());
-                0
-            }
-            ResponseItem::FunctionCallOutput { call_id, output } => {
-                if let Some(context) = local_shell_calls.remove(call_id) {
-                    truncate_local_shell_output_payload(output, call_id, &context, &policy)
-                } else {
-                    let tool_name = function_tool_names.remove(call_id);
-                    truncate_payload(&mut output.body, &policy, tool_name.as_deref())
-                }
-            }
-            ResponseItem::CustomToolCallOutput {
-                call_id,
-                name,
-                output,
-            } => {
-                let tool_name = name.clone().or_else(|| custom_tool_names.remove(call_id));
-                truncate_payload(&mut output.body, &policy, tool_name.as_deref())
-            }
-            ResponseItem::ToolSearchOutput { tools, .. } => {
-                truncate_tool_search_tools(tools, &policy)
-            }
-            ResponseItem::WebSearchCall {
-                action: Some(action), ..
-            } => truncate_web_search_call_action(action, &policy),
-            _ => 0,
-        };
-        if saved_tokens > 0 {
-            stats.item_count += 1;
-            stats.saved_tokens = stats.saved_tokens.saturating_add(saved_tokens);
+            _ => {}
         }
     }
-    stats
 }
 
 /// Inserts canonical initial context into compacted replacement history at the

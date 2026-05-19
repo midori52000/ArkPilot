@@ -127,50 +127,19 @@ pub struct ImageGenerationItem {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-#[ts(rename_all = "camelCase")]
 pub struct ContextCompactionItem {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub trigger_source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub provider_mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub micro_compaction_item_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub micro_compaction_saved_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub trimmed_item_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reference_context_reestablished: Option<bool>,
 }
 
 impl ContextCompactionItem {
     pub fn new() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            trigger_source: None,
-            provider_mode: None,
-            micro_compaction_item_count: None,
-            micro_compaction_saved_tokens: None,
-            trimmed_item_count: None,
-            reference_context_reestablished: None,
         }
     }
 
     pub fn as_legacy_event(&self) -> EventMsg {
-        EventMsg::ContextCompacted(ContextCompactedEvent {
-            micro_compaction_item_count: self.micro_compaction_item_count,
-            micro_compaction_saved_tokens: self.micro_compaction_saved_tokens,
-            trimmed_item_count: self.trimmed_item_count,
-            reference_context_reestablished: self.reference_context_reestablished,
-        })
+        EventMsg::ContextCompacted(ContextCompactedEvent {})
     }
 }
 

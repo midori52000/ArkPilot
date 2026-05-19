@@ -73,10 +73,8 @@ use codex_app_server_protocol::UserInput;
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::config::types::McpServerConfig;
-use codex_core::config::types::MemoriesConfig;
 use codex_core::config_loader::LoaderOverrides;
 use codex_core::turn_diff_tracker::TurnDiffTracker;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -84,7 +82,6 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Settings;
-use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
@@ -157,68 +154,6 @@ struct NativeThreadState {
     cwd: Option<PathBuf>,
     messages: Vec<NativeMessage>,
     latest_token_usage: Option<NativeTokenUsage>,
-    context_management: NativeContextManagementSnapshot,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeContextManagementSnapshot {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    recent_artifact_refs: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_usage_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_last_usage_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_stage1_generated_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_stage1_up_to_date: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_stage1_job_status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_stage1_retry_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_stage1_retry_remaining: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_forgetting_pending: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_forgetting_completed_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_phase2_selected_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_phase2_updated_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_phase2_selection_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_phase2_added_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_phase2_retained_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_phase2_removed_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_summary_updated_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    memory_summary_preview: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_micro_compaction_at: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_micro_compaction_item_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_micro_compaction_saved_tokens: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    compaction_failure_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    compaction_circuit_open: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_full_compaction_trigger: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_full_compaction_provider_mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_full_compaction_trimmed_item_count: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_full_compaction_reference_context_reestablished: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -280,12 +215,9 @@ struct ThreadContextSnapshotFile {
 }
 
 #[derive(Default, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 struct ThreadContextSnapshot {
     updated_at: i64,
     latest_token_usage: Option<NativeTokenUsage>,
-    #[serde(default)]
-    context_management: NativeContextManagementSnapshot,
 }
 
 fn thread_context_snapshot_path(codex_home: &Path) -> PathBuf {
@@ -334,214 +266,11 @@ fn persist_thread_context_snapshots(
     Ok(())
 }
 
-fn load_persisted_thread_context_snapshot(
-    codex_home: &Path,
-    thread_id: &str,
-) -> Option<ThreadContextSnapshot> {
+fn load_persisted_thread_token_usage(codex_home: &Path, thread_id: &str) -> Option<NativeTokenUsage> {
     load_thread_context_snapshots(codex_home)
         .ok()
         .and_then(|snapshots| snapshots.threads.get(thread_id).cloned())
-}
-
-fn load_persisted_thread_token_usage(codex_home: &Path, thread_id: &str) -> Option<NativeTokenUsage> {
-    load_persisted_thread_context_snapshot(codex_home, thread_id)
         .and_then(|snapshot| snapshot.latest_token_usage)
-}
-
-fn load_thread_memory_mode_from_state_db(codex_home: &Path, thread_id: &str) -> Option<String> {
-    let thread_id = ThreadId::from_string(thread_id).ok()?;
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok(None);
-        };
-        state_db.get_thread_memory_mode(thread_id).await
-    })
-    .ok()
-    .flatten()
-}
-
-fn load_thread_memory_usage_from_state_db(
-    codex_home: &Path,
-    thread_id: &str,
-) -> (Option<i64>, Option<i64>) {
-    let thread_id = match ThreadId::from_string(thread_id) {
-        Ok(thread_id) => thread_id,
-        Err(_) => return (None, None),
-    };
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok((None, None));
-        };
-        let usage_count = state_db.get_thread_memory_usage_count(thread_id.clone()).await?;
-        let last_usage_at = state_db.get_thread_memory_last_usage_at(thread_id).await?;
-        Ok((usage_count, last_usage_at))
-    })
-    .unwrap_or((None, None))
-}
-
-fn load_thread_memory_stage1_status_from_state_db(
-    codex_home: &Path,
-    thread_id: &str,
-) -> (Option<i64>, Option<bool>) {
-    let thread_id = match ThreadId::from_string(thread_id) {
-        Ok(thread_id) => thread_id,
-        Err(_) => return (None, None),
-    };
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok((None, None));
-        };
-        let generated_at = state_db.get_thread_memory_stage1_generated_at(thread_id.clone()).await?;
-        let up_to_date = state_db.get_thread_memory_stage1_up_to_date(thread_id).await?;
-        Ok((generated_at, up_to_date))
-    })
-    .unwrap_or((None, None))
-}
-
-fn load_thread_memory_stage1_job_state_from_state_db(
-    codex_home: &Path,
-    thread_id: &str,
-) -> (Option<String>, Option<i64>, Option<i64>) {
-    let thread_id = match ThreadId::from_string(thread_id) {
-        Ok(thread_id) => thread_id,
-        Err(_) => return (None, None, None),
-    };
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok((None, None, None));
-        };
-        let Some((status, retry_at, retry_remaining)) =
-            state_db.get_thread_memory_stage1_job_state(thread_id).await?
-        else {
-            return Ok((None, None, None));
-        };
-        Ok((Some(status), retry_at, Some(retry_remaining)))
-    })
-    .unwrap_or((None, None, None))
-}
-
-fn load_thread_memory_forgetting_pending_from_state_db(
-    codex_home: &Path,
-    thread_id: &str,
-) -> Option<bool> {
-    let thread_id = ThreadId::from_string(thread_id).ok()?;
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok(None);
-        };
-        state_db
-            .is_thread_memory_forgetting_pending(thread_id)
-            .await
-            .map(Some)
-    })
-    .ok()
-    .flatten()
-}
-
-fn load_thread_memory_phase2_selected_at_from_state_db(
-    codex_home: &Path,
-    thread_id: &str,
-) -> Option<i64> {
-    let thread_id = ThreadId::from_string(thread_id).ok()?;
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok(None);
-        };
-        state_db.get_thread_phase2_selected_at(thread_id).await
-    })
-    .ok()
-    .flatten()
-}
-
-fn load_thread_memory_forgetting_completed_at_from_state_db(
-    codex_home: &Path,
-    thread_id: &str,
-) -> Option<i64> {
-    let thread_id = ThreadId::from_string(thread_id).ok()?;
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok(None);
-        };
-        state_db
-            .get_thread_memory_forgetting_completed_at(thread_id)
-            .await
-    })
-    .ok()
-    .flatten()
-}
-
-fn load_memory_phase2_updated_at_from_state_db(codex_home: &Path) -> Option<i64> {
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok(None);
-        };
-        state_db.get_global_phase2_updated_at().await
-    })
-    .ok()
-    .flatten()
-}
-
-fn load_memory_phase2_selection_counts_from_state_db(
-    codex_home: &Path,
-) -> (Option<i64>, Option<i64>, Option<i64>, Option<i64>) {
-    with_runtime_result(async {
-        let Some(state_db) = codex_core::state_db_bridge::open_if_present(codex_home, "").await else {
-            return Ok((None, None, None, None));
-        };
-        let memories_config = if let Ok(cwd) =
-            AbsolutePathBuf::try_from(codex_home.to_path_buf()).or_else(|_| AbsolutePathBuf::current_dir())
-        {
-            load_config_as_toml_with_cli_overrides(codex_home, &cwd, Vec::new())
-                .await
-                .ok()
-                .and_then(|config_toml| config_toml.memories.map(MemoriesConfig::from))
-                .unwrap_or_default()
-        } else {
-            MemoriesConfig::default()
-        };
-        let (selection_count, added_count, retained_count, removed_count) = state_db
-            .get_phase2_input_selection_counts(
-                memories_config.max_raw_memories_for_consolidation,
-                memories_config.max_unused_days,
-            )
-            .await?;
-        Ok((
-            Some(selection_count),
-            Some(added_count),
-            Some(retained_count),
-            Some(removed_count),
-        ))
-    })
-    .unwrap_or((None, None, None, None))
-}
-
-fn load_memory_summary_preview(codex_home: &Path) -> (Option<i64>, Option<String>) {
-    const MEMORY_SUMMARY_PREVIEW_CHAR_LIMIT: usize = 120;
-
-    let path = codex_home.join("memories").join("memory_summary.md");
-    let summary = match std::fs::read_to_string(&path) {
-        Ok(summary) => summary,
-        Err(_) => return (None, None),
-    };
-    let collapsed = summary.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        return (None, None);
-    }
-
-    let mut chars = collapsed.chars();
-    let preview: String = chars.by_ref().take(MEMORY_SUMMARY_PREVIEW_CHAR_LIMIT).collect();
-    let preview = if chars.next().is_some() {
-        format!("{preview}…")
-    } else {
-        preview
-    };
-    let updated_at = std::fs::metadata(&path)
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(|modified| modified.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64);
-
-    (updated_at, Some(preview))
 }
 
 fn store_thread_context_snapshot(
@@ -550,31 +279,11 @@ fn store_thread_context_snapshot(
     usage: &NativeTokenUsage,
 ) -> Result<()> {
     let mut snapshots = load_thread_context_snapshots(codex_home).unwrap_or_default();
-    let existing = snapshots.threads.get(thread_id).cloned().unwrap_or_default();
     snapshots.threads.insert(
         thread_id.to_string(),
         ThreadContextSnapshot {
             updated_at: chrono::Utc::now().timestamp_millis(),
             latest_token_usage: Some(usage.clone()),
-            context_management: existing.context_management,
-        },
-    );
-    persist_thread_context_snapshots(codex_home, &snapshots)
-}
-
-fn store_thread_context_management_snapshot(
-    codex_home: &Path,
-    thread_id: &str,
-    context_management: &NativeContextManagementSnapshot,
-) -> Result<()> {
-    let mut snapshots = load_thread_context_snapshots(codex_home).unwrap_or_default();
-    let existing = snapshots.threads.get(thread_id).cloned().unwrap_or_default();
-    snapshots.threads.insert(
-        thread_id.to_string(),
-        ThreadContextSnapshot {
-            updated_at: chrono::Utc::now().timestamp_millis(),
-            latest_token_usage: existing.latest_token_usage,
-            context_management: context_management.clone(),
         },
     );
     persist_thread_context_snapshots(codex_home, &snapshots)
@@ -2295,7 +2004,6 @@ pub extern "C" fn codex_ohos_host_thread_start(params_json: *const c_char) -> *c
                     cwd: Some(response.cwd.clone()),
                     messages: collect_thread_messages(&response.thread.turns, &[]),
                     latest_token_usage: latest_thread_token_usage_from_turns(&response.thread),
-                    context_management: NativeContextManagementSnapshot::default(),
                 },
             );
         });
@@ -4136,7 +3844,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             });
         }
         ServerNotification::ItemCompleted(payload) => {
-            let persisted_context_management = with_native_state(|state| {
+            with_native_state(|state| {
                 sync_thread_from_completed_item(
                     state,
                     &payload.thread_id,
@@ -4164,41 +3872,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     &payload.turn_id,
                     &payload.item,
                 );
-                match &payload.item {
-                    codex_app_server_protocol::ThreadItem::ContextCompaction {
-                        trigger_source,
-                        provider_mode,
-                        micro_compaction_item_count,
-                        micro_compaction_saved_tokens,
-                        trimmed_item_count,
-                        reference_context_reestablished,
-                        ..
-                    } => Some(update_thread_compaction_success_context(
-                        state,
-                        &payload.thread_id,
-                        trigger_source.as_deref(),
-                        provider_mode.as_deref(),
-                        *micro_compaction_item_count,
-                        *micro_compaction_saved_tokens,
-                        *trimmed_item_count,
-                        *reference_context_reestablished,
-                    )),
-                    _ => None,
-                }
             });
-            if let Some(context_management) = persisted_context_management {
-                let codex_home = resolve_codex_home(None);
-                if let Err(err) = store_thread_context_management_snapshot(
-                    &codex_home,
-                    &payload.thread_id,
-                    &context_management,
-                ) {
-                    eprintln!(
-                        "failed to persist thread context management snapshot thread_id={} error={err}",
-                        payload.thread_id
-                    );
-                }
-            }
         }
         ServerNotification::TurnCompleted(payload) => {
             with_native_state(|state| {
@@ -4249,7 +3923,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             });
         }
         ServerNotification::Error(payload) => {
-            let persisted_context_management = with_native_state(|state| {
+            with_native_state(|state| {
                 let entry = state
                     .turns
                     .entry(payload.turn_id.clone())
@@ -4265,32 +3939,7 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     line: payload.error.message.clone(),
                 });
                 push_turn_status_event(entry);
-                match payload.error.codex_error_info.as_ref() {
-                    Some(codex_app_server_protocol::CodexErrorInfo::AutoCompactFailed {
-                        failure_count,
-                        circuit_open,
-                    }) => Some(update_thread_compaction_failure_context(
-                        state,
-                        &payload.thread_id,
-                        *failure_count,
-                        *circuit_open,
-                    )),
-                    _ => None,
-                }
             });
-            if let Some(context_management) = persisted_context_management {
-                let codex_home = resolve_codex_home(None);
-                if let Err(err) = store_thread_context_management_snapshot(
-                    &codex_home,
-                    &payload.thread_id,
-                    &context_management,
-                ) {
-                    eprintln!(
-                        "failed to persist thread context management snapshot thread_id={} error={err}",
-                        payload.thread_id
-                    );
-                }
-            }
         }
         ServerNotification::ThreadTokenUsageUpdated(payload) => {
             let usage = NativeTokenUsage {
@@ -4320,7 +3969,6 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                         cwd: None,
                         messages: Vec::new(),
                         latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
                     });
                 thread.latest_token_usage = Some(usage.clone());
                 for (_, turn) in state.turns.iter_mut() {
@@ -4600,74 +4248,6 @@ fn push_turn_summary(turn: &mut NativeTurnState, line: String) {
     }
 }
 
-fn update_thread_compaction_success_context(
-    state: &mut NativeConversationState,
-    thread_id: &str,
-    trigger_source: Option<&str>,
-    provider_mode: Option<&str>,
-    item_count: Option<i64>,
-    saved_tokens: Option<i64>,
-    trimmed_item_count: Option<i64>,
-    reference_context_reestablished: Option<bool>,
-) -> NativeContextManagementSnapshot {
-    let thread = state
-        .threads
-        .entry(thread_id.to_string())
-        .or_insert_with(|| NativeThreadState {
-            remote_thread_id: thread_id.to_string(),
-            cwd: None,
-            messages: Vec::new(),
-            latest_token_usage: None,
-            context_management: NativeContextManagementSnapshot::default(),
-        });
-    if let Some(item_count) = item_count {
-        thread.context_management.last_micro_compaction_at =
-            Some(chrono::Utc::now().timestamp_millis());
-        thread.context_management.last_micro_compaction_item_count = Some(item_count);
-        thread.context_management.last_micro_compaction_saved_tokens =
-            saved_tokens.filter(|value| *value > 0);
-    }
-    if let Some(trigger_source) = trigger_source.filter(|value| !value.trim().is_empty()) {
-        thread.context_management.last_full_compaction_trigger = Some(trigger_source.to_string());
-    }
-    if let Some(provider_mode) = provider_mode.filter(|value| !value.trim().is_empty()) {
-        thread.context_management.last_full_compaction_provider_mode =
-            Some(provider_mode.to_string());
-    }
-    thread.context_management.last_full_compaction_trimmed_item_count =
-        trimmed_item_count.filter(|value| *value > 0);
-    if let Some(reference_context_reestablished) = reference_context_reestablished {
-        thread
-            .context_management
-            .last_full_compaction_reference_context_reestablished =
-            Some(reference_context_reestablished);
-    }
-    thread.context_management.compaction_failure_count = Some(0);
-    thread.context_management.compaction_circuit_open = Some(false);
-    thread.context_management.clone()
-}
-
-fn update_thread_compaction_failure_context(
-    state: &mut NativeConversationState,
-    thread_id: &str,
-    failure_count: i64,
-    circuit_open: bool,
-) -> NativeContextManagementSnapshot {
-    let thread = state
-        .threads
-        .entry(thread_id.to_string())
-        .or_insert_with(|| NativeThreadState {
-            remote_thread_id: thread_id.to_string(),
-            cwd: None,
-            messages: Vec::new(),
-            latest_token_usage: None,
-            context_management: NativeContextManagementSnapshot::default(),
-        });
-    thread.context_management.compaction_failure_count = Some(failure_count);
-    thread.context_management.compaction_circuit_open = Some(circuit_open);
-    thread.context_management.clone()
-}
-
 fn compact_text(value: &str, limit: usize) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.chars().count() <= limit {
@@ -4880,7 +4460,6 @@ fn append_assistant_delta(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4926,7 +4505,6 @@ fn append_reasoning_delta(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -4978,7 +4556,6 @@ fn append_reasoning_part_separator(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
             });
         let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
@@ -5016,7 +4593,6 @@ fn sync_thread_from_completed_item(
                     cwd: None,
                     messages: Vec::new(),
                     latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
                 });
             let message_id = format!("{turn_id}:{id}");
             if let Some(message) = thread
@@ -5324,179 +4900,6 @@ fn resolve_thread_token_usage(
     load_persisted_thread_token_usage(&resolve_codex_home(None), thread_id)
 }
 
-fn resolve_thread_context_management(
-    state: &NativeConversationState,
-    thread_id: &str,
-) -> NativeContextManagementSnapshot {
-    let codex_home = resolve_codex_home(None);
-    let persisted_snapshot = load_persisted_thread_context_snapshot(&codex_home, thread_id)
-        .map(|snapshot| snapshot.context_management)
-        .unwrap_or_default();
-    let mut snapshot = state
-        .threads
-        .get(thread_id)
-        .map(|thread| thread.context_management.clone())
-        .unwrap_or_default();
-
-    if snapshot.memory_mode.is_none() {
-        snapshot.memory_mode = persisted_snapshot.memory_mode;
-    }
-    if snapshot.recent_artifact_refs.is_none() {
-        snapshot.recent_artifact_refs = persisted_snapshot.recent_artifact_refs;
-    }
-    if snapshot.memory_usage_count.is_none() {
-        snapshot.memory_usage_count = persisted_snapshot.memory_usage_count;
-    }
-    if snapshot.memory_last_usage_at.is_none() {
-        snapshot.memory_last_usage_at = persisted_snapshot.memory_last_usage_at;
-    }
-    if snapshot.memory_stage1_generated_at.is_none() {
-        snapshot.memory_stage1_generated_at = persisted_snapshot.memory_stage1_generated_at;
-    }
-    if snapshot.memory_stage1_up_to_date.is_none() {
-        snapshot.memory_stage1_up_to_date = persisted_snapshot.memory_stage1_up_to_date;
-    }
-    if snapshot.memory_stage1_job_status.is_none() {
-        snapshot.memory_stage1_job_status = persisted_snapshot.memory_stage1_job_status;
-    }
-    if snapshot.memory_stage1_retry_at.is_none() {
-        snapshot.memory_stage1_retry_at = persisted_snapshot.memory_stage1_retry_at;
-    }
-    if snapshot.memory_stage1_retry_remaining.is_none() {
-        snapshot.memory_stage1_retry_remaining = persisted_snapshot.memory_stage1_retry_remaining;
-    }
-    if snapshot.memory_forgetting_pending.is_none() {
-        snapshot.memory_forgetting_pending = persisted_snapshot.memory_forgetting_pending;
-    }
-    if snapshot.memory_forgetting_completed_at.is_none() {
-        snapshot.memory_forgetting_completed_at = persisted_snapshot.memory_forgetting_completed_at;
-    }
-    if snapshot.memory_phase2_selected_at.is_none() {
-        snapshot.memory_phase2_selected_at = persisted_snapshot.memory_phase2_selected_at;
-    }
-    if snapshot.memory_phase2_updated_at.is_none() {
-        snapshot.memory_phase2_updated_at = persisted_snapshot.memory_phase2_updated_at;
-    }
-    if snapshot.memory_phase2_selection_count.is_none() {
-        snapshot.memory_phase2_selection_count = persisted_snapshot.memory_phase2_selection_count;
-    }
-    if snapshot.memory_phase2_added_count.is_none() {
-        snapshot.memory_phase2_added_count = persisted_snapshot.memory_phase2_added_count;
-    }
-    if snapshot.memory_phase2_retained_count.is_none() {
-        snapshot.memory_phase2_retained_count = persisted_snapshot.memory_phase2_retained_count;
-    }
-    if snapshot.memory_phase2_removed_count.is_none() {
-        snapshot.memory_phase2_removed_count = persisted_snapshot.memory_phase2_removed_count;
-    }
-    if snapshot.memory_summary_updated_at.is_none() {
-        snapshot.memory_summary_updated_at = persisted_snapshot.memory_summary_updated_at;
-    }
-    if snapshot.memory_summary_preview.is_none() {
-        snapshot.memory_summary_preview = persisted_snapshot.memory_summary_preview;
-    }
-    if snapshot.last_micro_compaction_at.is_none() {
-        snapshot.last_micro_compaction_at = persisted_snapshot.last_micro_compaction_at;
-    }
-    if snapshot.last_micro_compaction_item_count.is_none() {
-        snapshot.last_micro_compaction_item_count = persisted_snapshot.last_micro_compaction_item_count;
-    }
-    if snapshot.last_micro_compaction_saved_tokens.is_none() {
-        snapshot.last_micro_compaction_saved_tokens = persisted_snapshot.last_micro_compaction_saved_tokens;
-    }
-    if snapshot.compaction_failure_count.is_none() {
-        snapshot.compaction_failure_count = persisted_snapshot.compaction_failure_count;
-    }
-    if snapshot.compaction_circuit_open.is_none() {
-        snapshot.compaction_circuit_open = persisted_snapshot.compaction_circuit_open;
-    }
-    if snapshot.last_full_compaction_trigger.is_none() {
-        snapshot.last_full_compaction_trigger = persisted_snapshot.last_full_compaction_trigger;
-    }
-    if snapshot.last_full_compaction_provider_mode.is_none() {
-        snapshot.last_full_compaction_provider_mode =
-            persisted_snapshot.last_full_compaction_provider_mode;
-    }
-    if snapshot.last_full_compaction_trimmed_item_count.is_none() {
-        snapshot.last_full_compaction_trimmed_item_count =
-            persisted_snapshot.last_full_compaction_trimmed_item_count;
-    }
-    if snapshot
-        .last_full_compaction_reference_context_reestablished
-        .is_none()
-    {
-        snapshot.last_full_compaction_reference_context_reestablished =
-            persisted_snapshot.last_full_compaction_reference_context_reestablished;
-    }
-    if snapshot.memory_mode.is_none() {
-        snapshot.memory_mode = load_thread_memory_mode_from_state_db(&codex_home, thread_id);
-    }
-    if snapshot.memory_usage_count.is_none() || snapshot.memory_last_usage_at.is_none() {
-        let (usage_count, last_usage_at) = load_thread_memory_usage_from_state_db(&codex_home, thread_id);
-        if snapshot.memory_usage_count.is_none() {
-            snapshot.memory_usage_count = usage_count;
-        }
-        if snapshot.memory_last_usage_at.is_none() {
-            snapshot.memory_last_usage_at = last_usage_at;
-        }
-    }
-    if snapshot.memory_stage1_generated_at.is_none() || snapshot.memory_stage1_up_to_date.is_none() {
-        let (generated_at, up_to_date) = load_thread_memory_stage1_status_from_state_db(&codex_home, thread_id);
-        if snapshot.memory_stage1_generated_at.is_none() {
-            snapshot.memory_stage1_generated_at = generated_at;
-        }
-        if snapshot.memory_stage1_up_to_date.is_none() {
-            snapshot.memory_stage1_up_to_date = up_to_date;
-        }
-    }
-    let (stage1_job_status, stage1_retry_at, stage1_retry_remaining) =
-        load_thread_memory_stage1_job_state_from_state_db(&codex_home, thread_id);
-    if stage1_job_status.is_some() {
-        snapshot.memory_stage1_job_status = stage1_job_status;
-        snapshot.memory_stage1_retry_at = stage1_retry_at;
-        snapshot.memory_stage1_retry_remaining = stage1_retry_remaining;
-    }
-    if snapshot.memory_forgetting_pending.is_none() {
-        snapshot.memory_forgetting_pending =
-            load_thread_memory_forgetting_pending_from_state_db(&codex_home, thread_id);
-    }
-    if snapshot.memory_forgetting_completed_at.is_none() {
-        snapshot.memory_forgetting_completed_at =
-            load_thread_memory_forgetting_completed_at_from_state_db(&codex_home, thread_id);
-    }
-    if snapshot.memory_phase2_selected_at.is_none() {
-        snapshot.memory_phase2_selected_at =
-            load_thread_memory_phase2_selected_at_from_state_db(&codex_home, thread_id);
-    }
-    if snapshot.memory_phase2_updated_at.is_none() {
-        snapshot.memory_phase2_updated_at = load_memory_phase2_updated_at_from_state_db(&codex_home);
-    }
-    let (phase2_selection_count, phase2_added_count, phase2_retained_count, phase2_removed_count) =
-        load_memory_phase2_selection_counts_from_state_db(&codex_home);
-    if phase2_selection_count.is_some() {
-        snapshot.memory_phase2_selection_count = phase2_selection_count;
-        snapshot.memory_phase2_added_count = phase2_added_count;
-        snapshot.memory_phase2_retained_count = phase2_retained_count;
-        snapshot.memory_phase2_removed_count = phase2_removed_count;
-    }
-    if snapshot.memory_summary_updated_at.is_none() || snapshot.memory_summary_preview.is_none() {
-        let (updated_at, preview) = load_memory_summary_preview(&codex_home);
-        if snapshot.memory_summary_updated_at.is_none() {
-            snapshot.memory_summary_updated_at = updated_at;
-        }
-        if snapshot.memory_summary_preview.is_none() {
-            snapshot.memory_summary_preview = preview;
-        }
-    }
-    snapshot
-}
-
-fn build_context_management_payload(
-    snapshot: &NativeContextManagementSnapshot,
-) -> serde_json::Value {
-    serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::json!({}))
-}
-
 fn build_turn_poll_payload(
     state: &NativeConversationState,
     thread_id: &str,
@@ -5525,7 +4928,6 @@ fn build_turn_poll_payload(
     };
     let resolved_token_usage = resolve_thread_token_usage(state, &effective_thread_id)
         .or_else(|| turn.token_usage.clone());
-    let context_management = resolve_thread_context_management(state, &effective_thread_id);
 
     serde_json::json!({
         "threadId": effective_thread_id,
@@ -5536,7 +4938,6 @@ fn build_turn_poll_payload(
         "summary": if turn.summary.is_empty() { vec!["等待更多事件。".to_string()] } else { turn.summary },
         "diff": turn.diff,
         "tokenUsage": build_token_usage_payload(resolved_token_usage.as_ref()),
-        "contextManagement": build_context_management_payload(&context_management),
     })
 }
 
@@ -5556,12 +4957,9 @@ fn upsert_thread_state_from_protocol(
             cwd: Some(thread.cwd.clone()),
             messages: Vec::new(),
             latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
         });
     entry.remote_thread_id = thread.id.clone();
     entry.cwd = Some(thread.cwd.clone());
-    entry.context_management.recent_artifact_refs =
-        thread.path.as_deref().and_then(read_recent_artifact_refs_from_rollout);
     if let Some(token_usage) = latest_token_usage {
         entry.latest_token_usage = Some(token_usage);
     }
@@ -5628,11 +5026,6 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
 
     let thread_token_usage = resolve_thread_token_usage(state, &thread.id)
         .or_else(|| latest_thread_token_usage_from_turns(thread));
-    let mut context_management = resolve_thread_context_management(state, &thread.id);
-    if context_management.recent_artifact_refs.is_none() {
-        context_management.recent_artifact_refs =
-            thread.path.as_deref().and_then(read_recent_artifact_refs_from_rollout);
-    }
 
     serde_json::json!({
         "thread": build_thread_meta_payload(thread),
@@ -5646,7 +5039,6 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
         "lastTurnId": last_turn_id,
         "lastTurnStatus": last_turn_status,
         "tokenUsage": build_token_usage_payload(thread_token_usage.as_ref()),
-        "contextManagement": build_context_management_payload(&context_management),
     })
 }
 
@@ -5793,27 +5185,6 @@ fn read_visible_message_timestamps_from_rollout(path: &Path) -> Option<Vec<Strin
     }
 
     Some(timestamps)
-}
-
-fn read_recent_artifact_refs_from_rollout(path: &Path) -> Option<Vec<String>> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    for line in raw.lines().rev() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let rollout_line: codex_protocol::protocol::RolloutLine =
-            match serde_json::from_str(trimmed) {
-                Ok(line) => line,
-                Err(_) => continue,
-            };
-        if let codex_protocol::protocol::RolloutItem::Compacted(compacted) = rollout_line.item
-            && compacted.recent_artifact_refs.is_some()
-        {
-            return compacted.recent_artifact_refs;
-        }
-    }
-    None
 }
 
 fn rollout_item_creates_visible_message(
@@ -6394,7 +5765,7 @@ fn thread_item_to_message_with_timestamp(
                 })),
             })
         }
-        codex_app_server_protocol::ThreadItem::ContextCompaction { id, .. } => {
+        codex_app_server_protocol::ThreadItem::ContextCompaction { id } => {
             Some(NativeMessage {
                 message_id: id.clone(),
                 author: "上下文压缩".to_string(),
@@ -6456,7 +5827,6 @@ fn upsert_item_started_message(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
             });
 
         if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
@@ -6499,7 +5869,6 @@ fn upsert_item_completed_message(
                 cwd: None,
                 messages: Vec::new(),
                 latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
             });
 
         let is_reasoning = matches!(
@@ -6766,7 +6135,6 @@ fn can_write_to_directory(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::ErrorNotification;
     use codex_app_server_protocol::FileUpdateChange;
     use codex_app_server_protocol::ItemCompletedNotification;
     use codex_app_server_protocol::ItemStartedNotification;
@@ -6775,7 +6143,6 @@ mod tests {
     use codex_app_server_protocol::ReasoningTextDeltaNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::ThreadItem;
-    use codex_app_server_protocol::TurnError;
     use std::fs;
     use std::time::SystemTime;
 
@@ -6837,192 +6204,6 @@ mod tests {
                 .expect("turn state should exist after notification")
         });
         assert_eq!(stored.diff, diff);
-    }
-
-    #[test]
-    fn item_completed_updates_micro_compaction_context() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-micro-compaction-{unique}"));
-        update_host_state(true, None, Some(dir.clone()), String::new());
-        with_native_state(|state| {
-            *state = NativeConversationState::default();
-            state.threads.insert(
-                "thread".to_string(),
-                NativeThreadState {
-                    remote_thread_id: "thread".to_string(),
-                    cwd: None,
-                    messages: Vec::new(),
-                    latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
-                },
-            );
-            state.turns.insert(
-                "turn".to_string(),
-                NativeTurnState {
-                    thread_id: "thread".to_string(),
-                    status: "inProgress".to_string(),
-                    ..Default::default()
-                },
-            );
-        });
-
-        apply_server_notification(
-            &ServerNotification::ItemCompleted(ItemCompletedNotification {
-                thread_id: "thread".to_string(),
-                turn_id: "turn".to_string(),
-                item: ThreadItem::ContextCompaction {
-                    id: "compact-1".to_string(),
-                    trigger_source: Some("pre_turn".to_string()),
-                    provider_mode: Some("remote".to_string()),
-                    micro_compaction_item_count: Some(2),
-                    micro_compaction_saved_tokens: Some(7),
-                    trimmed_item_count: Some(3),
-                    reference_context_reestablished: Some(true),
-                },
-            }),
-            Some("turn"),
-        );
-
-        let stored = with_native_state(|state| {
-            state
-                .threads
-                .get("thread")
-                .cloned()
-                .expect("thread state should exist after item completion")
-        });
-        assert_eq!(
-            stored.context_management.last_micro_compaction_item_count,
-            Some(2)
-        );
-        assert!(stored.context_management.last_micro_compaction_at.is_some());
-        assert_eq!(
-            stored.context_management.last_micro_compaction_saved_tokens,
-            Some(7)
-        );
-        assert_eq!(stored.context_management.compaction_failure_count, Some(0));
-        assert_eq!(stored.context_management.compaction_circuit_open, Some(false));
-        assert_eq!(
-            stored.context_management.last_full_compaction_trigger,
-            Some("pre_turn".to_string())
-        );
-        assert_eq!(
-            stored.context_management.last_full_compaction_provider_mode,
-            Some("remote".to_string())
-        );
-        assert_eq!(
-            stored.context_management.last_full_compaction_trimmed_item_count,
-            Some(3)
-        );
-        assert_eq!(
-            stored
-                .context_management
-                .last_full_compaction_reference_context_reestablished,
-            Some(true)
-        );
-
-        let persisted = load_persisted_thread_context_snapshot(&dir, "thread")
-            .expect("persisted context snapshot should exist after item completion");
-        assert_eq!(
-            persisted.context_management.last_micro_compaction_item_count,
-            Some(2)
-        );
-        assert!(persisted.context_management.last_micro_compaction_at.is_some());
-        assert_eq!(
-            persisted.context_management.last_micro_compaction_saved_tokens,
-            Some(7)
-        );
-        assert_eq!(persisted.context_management.compaction_failure_count, Some(0));
-        assert_eq!(persisted.context_management.compaction_circuit_open, Some(false));
-        assert_eq!(
-            persisted.context_management.last_full_compaction_trigger,
-            Some("pre_turn".to_string())
-        );
-        assert_eq!(
-            persisted.context_management.last_full_compaction_provider_mode,
-            Some("remote".to_string())
-        );
-        assert_eq!(
-            persisted.context_management.last_full_compaction_trimmed_item_count,
-            Some(3)
-        );
-        assert_eq!(
-            persisted
-                .context_management
-                .last_full_compaction_reference_context_reestablished,
-            Some(true)
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-        update_host_state(false, None, Some(PathBuf::new()), String::new());
-    }
-
-    #[test]
-    fn error_notification_updates_compaction_failure_context() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-compaction-failure-{unique}"));
-        update_host_state(true, None, Some(dir.clone()), String::new());
-        with_native_state(|state| {
-            *state = NativeConversationState::default();
-            state.threads.insert(
-                "thread".to_string(),
-                NativeThreadState {
-                    remote_thread_id: "thread".to_string(),
-                    cwd: None,
-                    messages: Vec::new(),
-                    latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
-                },
-            );
-            state.turns.insert(
-                "turn".to_string(),
-                NativeTurnState {
-                    thread_id: "thread".to_string(),
-                    status: "inProgress".to_string(),
-                    ..Default::default()
-                },
-            );
-        });
-
-        apply_server_notification(
-            &ServerNotification::Error(ErrorNotification {
-                error: TurnError {
-                    message: "自动压缩失败，请手动压缩后重试".to_string(),
-                    codex_error_info: Some(codex_app_server_protocol::CodexErrorInfo::AutoCompactFailed {
-                        failure_count: 2,
-                        circuit_open: false,
-                    }),
-                    additional_details: None,
-                },
-                will_retry: false,
-                thread_id: "thread".to_string(),
-                turn_id: "turn".to_string(),
-            }),
-            Some("turn"),
-        );
-
-        let stored = with_native_state(|state| {
-            state
-                .threads
-                .get("thread")
-                .cloned()
-                .expect("thread state should exist after error notification")
-        });
-        assert_eq!(stored.context_management.compaction_failure_count, Some(2));
-        assert_eq!(stored.context_management.compaction_circuit_open, Some(false));
-
-        let persisted = load_persisted_thread_context_snapshot(&dir, "thread")
-            .expect("persisted context snapshot should exist after error notification");
-        assert_eq!(persisted.context_management.compaction_failure_count, Some(2));
-        assert_eq!(persisted.context_management.compaction_circuit_open, Some(false));
-
-        let _ = fs::remove_dir_all(&dir);
-        update_host_state(false, None, Some(PathBuf::new()), String::new());
     }
 
     #[test]
@@ -7207,896 +6388,5 @@ mod tests {
         assert!(!stored.diff_authoritative);
 
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_persisted_thread_context_snapshot_defaults_context_management_when_missing() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-context-{unique}"));
-        let runtime_dir = dir.join("runtime");
-        fs::create_dir_all(&runtime_dir).expect("runtime dir should create");
-        fs::write(
-            runtime_dir.join("thread-context.json"),
-            r#"{
-  "threads": {
-    "thread-1": {
-      "updatedAt": 123,
-      "latestTokenUsage": null
-    }
-  }
-}"#,
-        )
-        .expect("snapshot file should write");
-
-        let snapshot = load_persisted_thread_context_snapshot(&dir, "thread-1")
-            .expect("legacy snapshot should deserialize");
-
-        assert_eq!(snapshot.updated_at, 123);
-        assert!(snapshot.latest_token_usage.is_none());
-        assert_eq!(
-            snapshot.context_management,
-            NativeContextManagementSnapshot::default()
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_thread_memory_mode_from_state_db_reads_state_runtime_value() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-memory-mode-{unique}"));
-        let thread_id_str = "00000000-0000-0000-0000-000000000789";
-        let thread_id = ThreadId::from_string(thread_id_str).expect("valid thread id");
-        let runtime = with_runtime_result(codex_state::StateRuntime::init(
-            dir.clone(),
-            "test-provider".to_string(),
-        ))
-        .expect("state db should initialize");
-
-        let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
-            thread_id,
-            dir.join(format!("rollout-{thread_id}.jsonl")),
-            chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0)
-                .expect("timestamp should be valid"),
-            codex_protocol::protocol::SessionSource::Cli,
-        );
-        metadata_builder.cwd = dir.clone();
-        metadata_builder.cli_version = Some("test".to_string());
-        let metadata = metadata_builder.build("test-provider");
-
-        with_runtime_result(async {
-            runtime
-                .mark_backfill_complete(None)
-                .await
-                .expect("backfill should be marked complete");
-            runtime
-                .upsert_thread(&metadata)
-                .await
-                .expect("thread metadata should persist");
-            runtime
-                .set_thread_memory_mode(thread_id, "polluted")
-                .await
-                .expect("memory mode should persist");
-            Ok(())
-        })
-        .expect("state db should be ready for memory mode lookup");
-
-        assert_eq!(
-            load_thread_memory_mode_from_state_db(&dir, thread_id_str).as_deref(),
-            Some("polluted")
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_memory_summary_preview_reads_preview_and_updated_at() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-memory-summary-{unique}"));
-        let memories_dir = dir.join("memories");
-        fs::create_dir_all(&memories_dir).expect("memories dir should create");
-        fs::write(
-            memories_dir.join("memory_summary.md"),
-            "  第一行摘要\n\n第二行摘要  ",
-        )
-        .expect("memory summary should write");
-
-        let (updated_at, preview) = load_memory_summary_preview(&dir);
-
-        assert!(updated_at.is_some());
-        assert_eq!(preview.as_deref(), Some("第一行摘要 第二行摘要"));
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_thread_memory_forgetting_pending_from_state_db_reads_selected_polluted_thread() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-forgetting-{unique}"));
-        let thread_id_str = "00000000-0000-0000-0000-000000000790";
-        let owner_id = ThreadId::from_string("00000000-0000-0000-0000-000000000791")
-            .expect("valid owner id");
-        let thread_id = ThreadId::from_string(thread_id_str).expect("valid thread id");
-        let runtime = with_runtime_result(codex_state::StateRuntime::init(
-            dir.clone(),
-            "test-provider".to_string(),
-        ))
-        .expect("state db should initialize");
-
-        let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
-            thread_id,
-            dir.join(format!("rollout-{thread_id}.jsonl")),
-            chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0)
-                .expect("timestamp should be valid"),
-            codex_protocol::protocol::SessionSource::Cli,
-        );
-        metadata_builder.cwd = dir.clone();
-        metadata_builder.cli_version = Some("test".to_string());
-        let metadata = metadata_builder.build("test-provider");
-
-        with_runtime_result(async {
-            runtime
-                .mark_backfill_complete(None)
-                .await
-                .expect("backfill should be marked complete");
-            runtime
-                .upsert_thread(&metadata)
-                .await
-                .expect("thread metadata should persist");
-            let claim = runtime
-                .try_claim_stage1_job(thread_id, owner_id, 100, 3600, 64)
-                .await
-                .expect("stage1 claim should succeed");
-            let ownership_token = match claim {
-                codex_state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
-                other => panic!("unexpected stage1 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_stage1_job_succeeded(
-                    thread_id,
-                    ownership_token.as_str(),
-                    100,
-                    "raw",
-                    "summary",
-                    None,
-                )
-                .await
-                .expect("stage1 success should persist output");
-            let phase2_claim = runtime
-                .try_claim_global_phase2_job(owner_id, 3600)
-                .await
-                .expect("phase2 claim should succeed");
-            let (phase2_token, input_watermark) = match phase2_claim {
-                codex_state::Phase2JobClaimOutcome::Claimed {
-                    ownership_token,
-                    input_watermark,
-                } => (ownership_token, input_watermark),
-                other => panic!("unexpected phase2 claim outcome: {other:?}"),
-            };
-            let selected_outputs = runtime
-                .list_stage1_outputs_for_global(10)
-                .await
-                .expect("stage1 outputs should load");
-            runtime
-                .mark_global_phase2_job_succeeded(
-                    phase2_token.as_str(),
-                    input_watermark,
-                    &selected_outputs,
-                )
-                .await
-                .expect("phase2 success should persist baseline");
-            runtime
-                .mark_thread_memory_mode_polluted(thread_id)
-                .await
-                .expect("thread should become polluted");
-            Ok(())
-        })
-        .expect("state db should be ready for forgetting lookup");
-
-        assert_eq!(
-            load_thread_memory_forgetting_pending_from_state_db(&dir, thread_id_str),
-            Some(true)
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_thread_memory_forgetting_completed_at_from_state_db_reads_removed_polluted_thread() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-forgetting-completed-{unique}"));
-        let thread_id_str = "00000000-0000-0000-0000-0000000007a0";
-        let owner_id = ThreadId::from_string("00000000-0000-0000-0000-0000000007a1")
-            .expect("valid owner id");
-        let thread_id = ThreadId::from_string(thread_id_str).expect("valid thread id");
-        let runtime = with_runtime_result(codex_state::StateRuntime::init(
-            dir.clone(),
-            "test-provider".to_string(),
-        ))
-        .expect("state db should initialize");
-
-        let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
-            thread_id,
-            dir.join(format!("rollout-{thread_id}.jsonl")),
-            chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0)
-                .expect("timestamp should be valid"),
-            codex_protocol::protocol::SessionSource::Cli,
-        );
-        metadata_builder.cwd = dir.clone();
-        metadata_builder.cli_version = Some("test".to_string());
-        let metadata = metadata_builder.build("test-provider");
-
-        let expected_updated_at = with_runtime_result(async {
-            runtime
-                .mark_backfill_complete(None)
-                .await
-                .expect("backfill should be marked complete");
-            runtime
-                .upsert_thread(&metadata)
-                .await
-                .expect("thread metadata should persist");
-            let initial_claim = runtime
-                .try_claim_stage1_job(thread_id, owner_id, 100, 3600, 64)
-                .await
-                .expect("initial stage1 claim should succeed");
-            let initial_token = match initial_claim {
-                codex_state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
-                other => panic!("unexpected initial stage1 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_stage1_job_succeeded(
-                    thread_id,
-                    initial_token.as_str(),
-                    100,
-                    "raw-100",
-                    "summary-100",
-                    None,
-                )
-                .await
-                .expect("initial stage1 success should persist output");
-            let first_phase2_claim = runtime
-                .try_claim_global_phase2_job(owner_id, 3600)
-                .await
-                .expect("first phase2 claim should succeed");
-            let (first_phase2_token, first_input_watermark) = match first_phase2_claim {
-                codex_state::Phase2JobClaimOutcome::Claimed {
-                    ownership_token,
-                    input_watermark,
-                } => (ownership_token, input_watermark),
-                other => panic!("unexpected first phase2 claim outcome: {other:?}"),
-            };
-            let first_selected_outputs = runtime
-                .list_stage1_outputs_for_global(10)
-                .await
-                .expect("initial stage1 outputs should load");
-            runtime
-                .mark_global_phase2_job_succeeded(
-                    first_phase2_token.as_str(),
-                    first_input_watermark,
-                    &first_selected_outputs,
-                )
-                .await
-                .expect("first phase2 success should persist baseline");
-            runtime
-                .mark_thread_memory_mode_polluted(thread_id)
-                .await
-                .expect("thread should become polluted");
-            let refreshed_claim = runtime
-                .try_claim_stage1_job(thread_id, owner_id, 101, 3600, 64)
-                .await
-                .expect("refreshed stage1 claim should succeed");
-            let refreshed_token = match refreshed_claim {
-                codex_state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
-                other => panic!("unexpected refreshed stage1 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_stage1_job_succeeded(
-                    thread_id,
-                    refreshed_token.as_str(),
-                    101,
-                    "raw-101",
-                    "summary-101",
-                    None,
-                )
-                .await
-                .expect("refreshed stage1 success should persist output");
-            let forgetting_phase2_claim = runtime
-                .try_claim_global_phase2_job(owner_id, 3600)
-                .await
-                .expect("forgetting phase2 claim should succeed");
-            let (forgetting_phase2_token, forgetting_input_watermark) = match forgetting_phase2_claim {
-                codex_state::Phase2JobClaimOutcome::Claimed {
-                    ownership_token,
-                    input_watermark,
-                } => (ownership_token, input_watermark),
-                other => panic!("unexpected forgetting phase2 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_global_phase2_job_succeeded(
-                    forgetting_phase2_token.as_str(),
-                    forgetting_input_watermark,
-                    &[],
-                )
-                .await
-                .expect("forgetting phase2 success should persist baseline");
-            Ok(
-                runtime
-                    .get_global_phase2_updated_at()
-                    .await
-                    .expect("global phase2 updated at should load"),
-            )
-        })
-        .expect("state db should be ready for forgetting-completed lookup");
-
-        let completed_at =
-            load_thread_memory_forgetting_completed_at_from_state_db(&dir, thread_id_str);
-        assert!(completed_at.is_some());
-        assert_eq!(completed_at, expected_updated_at);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_memory_phase2_updated_at_from_state_db_reads_last_success_watermark_during_rerun() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-phase2-{unique}"));
-        let owner_id = ThreadId::from_string("00000000-0000-0000-0000-0000000007a0")
-            .expect("valid owner id");
-        let runtime = with_runtime_result(codex_state::StateRuntime::init(
-            dir.clone(),
-            "test-provider".to_string(),
-        ))
-        .expect("state db should initialize");
-
-        with_runtime_result(async {
-            runtime
-                .mark_backfill_complete(None)
-                .await
-                .expect("backfill should be marked complete");
-            runtime
-                .enqueue_global_consolidation(/*input_watermark*/ 100)
-                .await
-                .expect("enqueue global consolidation");
-            let claim = runtime
-                .try_claim_global_phase2_job(owner_id, /*lease_seconds*/ 3600)
-                .await
-                .expect("claim phase2");
-            let (ownership_token, input_watermark) = match claim {
-                codex_state::Phase2JobClaimOutcome::Claimed {
-                    ownership_token,
-                    input_watermark,
-                } => (ownership_token, input_watermark),
-                other => panic!("unexpected phase2 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_global_phase2_job_succeeded(ownership_token.as_str(), input_watermark, &[])
-                .await
-                .expect("phase2 success should persist");
-            runtime
-                .enqueue_global_consolidation(/*input_watermark*/ 101)
-                .await
-                .expect("enqueue global consolidation again");
-            let rerun_claim = runtime
-                .try_claim_global_phase2_job(owner_id, /*lease_seconds*/ 3600)
-                .await
-                .expect("claim phase2 rerun");
-            assert!(
-                matches!(rerun_claim, codex_state::Phase2JobClaimOutcome::Claimed { .. }),
-                "advanced watermark should be claimable"
-            );
-            Ok(())
-        })
-        .expect("state db should be ready for phase2 updated-at lookup");
-
-        assert_eq!(load_memory_phase2_updated_at_from_state_db(&dir), Some(100));
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_thread_memory_phase2_selected_at_from_state_db_reads_selected_thread() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-phase2-thread-{unique}"));
-        let thread_id_str = "00000000-0000-0000-0000-0000000007b0";
-        let owner_id = ThreadId::from_string("00000000-0000-0000-0000-0000000007b1")
-            .expect("valid owner id");
-        let thread_id = ThreadId::from_string(thread_id_str).expect("valid thread id");
-        let runtime = with_runtime_result(codex_state::StateRuntime::init(
-            dir.clone(),
-            "test-provider".to_string(),
-        ))
-        .expect("state db should initialize");
-
-        let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
-            thread_id,
-            dir.join(format!("rollout-{thread_id}.jsonl")),
-            chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0)
-                .expect("timestamp should be valid"),
-            codex_protocol::protocol::SessionSource::Cli,
-        );
-        metadata_builder.cwd = dir.clone();
-        metadata_builder.cli_version = Some("test".to_string());
-        let metadata = metadata_builder.build("test-provider");
-
-        with_runtime_result(async {
-            runtime
-                .mark_backfill_complete(None)
-                .await
-                .expect("backfill should be marked complete");
-            runtime
-                .upsert_thread(&metadata)
-                .await
-                .expect("thread metadata should persist");
-            let claim = runtime
-                .try_claim_stage1_job(thread_id, owner_id, 100, 3600, 64)
-                .await
-                .expect("stage1 claim should succeed");
-            let ownership_token = match claim {
-                codex_state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
-                other => panic!("unexpected stage1 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_stage1_job_succeeded(
-                    thread_id,
-                    ownership_token.as_str(),
-                    100,
-                    "raw",
-                    "summary",
-                    None,
-                )
-                .await
-                .expect("stage1 success should persist output");
-            let phase2_claim = runtime
-                .try_claim_global_phase2_job(owner_id, 3600)
-                .await
-                .expect("phase2 claim should succeed");
-            let (phase2_token, input_watermark) = match phase2_claim {
-                codex_state::Phase2JobClaimOutcome::Claimed {
-                    ownership_token,
-                    input_watermark,
-                } => (ownership_token, input_watermark),
-                other => panic!("unexpected phase2 claim outcome: {other:?}"),
-            };
-            let selected_outputs = runtime
-                .list_stage1_outputs_for_global(10)
-                .await
-                .expect("stage1 outputs should load");
-            runtime
-                .mark_global_phase2_job_succeeded(
-                    phase2_token.as_str(),
-                    input_watermark,
-                    &selected_outputs,
-                )
-                .await
-                .expect("phase2 success should persist baseline");
-            Ok(())
-        })
-        .expect("state db should be ready for thread phase2 selected-at lookup");
-
-        assert_eq!(
-            load_thread_memory_phase2_selected_at_from_state_db(&dir, thread_id_str),
-            Some(100)
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn load_memory_phase2_selection_counts_from_state_db_reads_current_selection_counts() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("codex-ohos-host-phase2-counts-{unique}"));
-        let thread_id = ThreadId::from_string("00000000-0000-0000-0000-0000000007c0")
-            .expect("valid thread id");
-        let owner_id = ThreadId::from_string("00000000-0000-0000-0000-0000000007c1")
-            .expect("valid owner id");
-        let runtime = with_runtime_result(codex_state::StateRuntime::init(
-            dir.clone(),
-            "test-provider".to_string(),
-        ))
-        .expect("state db should initialize");
-
-        let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
-            thread_id,
-            dir.join(format!("rollout-{thread_id}.jsonl")),
-            chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0)
-                .expect("timestamp should be valid"),
-            codex_protocol::protocol::SessionSource::Cli,
-        );
-        metadata_builder.cwd = dir.clone();
-        metadata_builder.cli_version = Some("test".to_string());
-        let metadata = metadata_builder.build("test-provider");
-
-        with_runtime_result(async {
-            runtime
-                .mark_backfill_complete(None)
-                .await
-                .expect("backfill should be marked complete");
-            runtime
-                .upsert_thread(&metadata)
-                .await
-                .expect("thread metadata should persist");
-            let claim = runtime
-                .try_claim_stage1_job(thread_id, owner_id, 100, 3600, 64)
-                .await
-                .expect("stage1 claim should succeed");
-            let ownership_token = match claim {
-                codex_state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
-                other => panic!("unexpected stage1 claim outcome: {other:?}"),
-            };
-            runtime
-                .mark_stage1_job_succeeded(
-                    thread_id,
-                    ownership_token.as_str(),
-                    100,
-                    "raw",
-                    "summary",
-                    None,
-                )
-                .await
-                .expect("stage1 success should persist output");
-            let phase2_claim = runtime
-                .try_claim_global_phase2_job(owner_id, 3600)
-                .await
-                .expect("phase2 claim should succeed");
-            let (phase2_token, input_watermark) = match phase2_claim {
-                codex_state::Phase2JobClaimOutcome::Claimed {
-                    ownership_token,
-                    input_watermark,
-                } => (ownership_token, input_watermark),
-                other => panic!("unexpected phase2 claim outcome: {other:?}"),
-            };
-            let selected_outputs = runtime
-                .list_stage1_outputs_for_global(10)
-                .await
-                .expect("stage1 outputs should load");
-            runtime
-                .mark_global_phase2_job_succeeded(
-                    phase2_token.as_str(),
-                    input_watermark,
-                    &selected_outputs,
-                )
-                .await
-                .expect("phase2 success should persist baseline");
-            Ok(())
-        })
-        .expect("state db should be ready for phase2 selection-count lookup");
-
-        assert_eq!(
-            load_memory_phase2_selection_counts_from_state_db(&dir),
-            (Some(1), Some(0), Some(1), Some(0))
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn build_turn_poll_payload_includes_context_management() {
-        let mut state = NativeConversationState::default();
-        state.threads.insert(
-            "thread".to_string(),
-            NativeThreadState {
-                remote_thread_id: "thread".to_string(),
-                cwd: Some(std::path::PathBuf::from("D:/code/harmony/ArkPilot")),
-                messages: Vec::new(),
-                latest_token_usage: None,
-                context_management: NativeContextManagementSnapshot {
-                    memory_mode: Some("polluted".to_string()),
-                    recent_artifact_refs: Some(vec!["docs/plan.md".to_string(), "src/main.rs".to_string()]),
-                    memory_usage_count: Some(3),
-                    memory_last_usage_at: Some(654),
-                    memory_stage1_generated_at: Some(321),
-                    memory_stage1_up_to_date: Some(false),
-                    memory_stage1_job_status: Some("error".to_string()),
-                    memory_stage1_retry_at: Some(987),
-                    memory_stage1_retry_remaining: Some(2),
-                    memory_forgetting_pending: Some(true),
-                    memory_forgetting_completed_at: Some(333),
-                    memory_phase2_selected_at: Some(111),
-                    memory_phase2_updated_at: Some(456),
-                    memory_phase2_selection_count: Some(7),
-                    memory_phase2_added_count: Some(2),
-                    memory_phase2_retained_count: Some(5),
-                    memory_phase2_removed_count: Some(1),
-                    memory_summary_updated_at: Some(123),
-                    memory_summary_preview: Some("memory summary preview".to_string()),
-                    last_micro_compaction_saved_tokens: Some(42),
-                    compaction_circuit_open: Some(true),
-                    last_full_compaction_trigger: Some("mid_turn".to_string()),
-                    last_full_compaction_provider_mode: Some("remote".to_string()),
-                    last_full_compaction_trimmed_item_count: Some(5),
-                    last_full_compaction_reference_context_reestablished: Some(true),
-                    ..Default::default()
-                },
-            },
-        );
-        state.turns.insert(
-            "turn".to_string(),
-            NativeTurnState {
-                thread_id: "thread".to_string(),
-                status: "completed".to_string(),
-                ..Default::default()
-            },
-        );
-
-        let payload = build_turn_poll_payload(&state, "thread", "turn");
-
-        assert_eq!(
-            payload["contextManagement"]["memoryMode"],
-            serde_json::json!("polluted")
-        );
-        assert_eq!(
-            payload["contextManagement"]["recentArtifactRefs"],
-            serde_json::json!(["docs/plan.md", "src/main.rs"])
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryUsageCount"],
-            serde_json::json!(3)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryLastUsageAt"],
-            serde_json::json!(654)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1GeneratedAt"],
-            serde_json::json!(321)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1UpToDate"],
-            serde_json::json!(false)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1JobStatus"],
-            serde_json::json!("error")
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1RetryAt"],
-            serde_json::json!(987)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1RetryRemaining"],
-            serde_json::json!(2)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryForgettingPending"],
-            serde_json::json!(true)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryForgettingCompletedAt"],
-            serde_json::json!(333)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2SelectedAt"],
-            serde_json::json!(111)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2UpdatedAt"],
-            serde_json::json!(456)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2SelectionCount"],
-            serde_json::json!(7)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2AddedCount"],
-            serde_json::json!(2)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2RetainedCount"],
-            serde_json::json!(5)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2RemovedCount"],
-            serde_json::json!(1)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memorySummaryUpdatedAt"],
-            serde_json::json!(123)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memorySummaryPreview"],
-            serde_json::json!("memory summary preview")
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastMicroCompactionSavedTokens"],
-            serde_json::json!(42)
-        );
-        assert_eq!(
-            payload["contextManagement"]["compactionCircuitOpen"],
-            serde_json::json!(true)
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionTrigger"],
-            serde_json::json!("mid_turn")
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionProviderMode"],
-            serde_json::json!("remote")
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionTrimmedItemCount"],
-            serde_json::json!(5)
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionReferenceContextReestablished"],
-            serde_json::json!(true)
-        );
-    }
-
-    #[test]
-    fn build_thread_read_payload_includes_context_management() {
-        let mut state = NativeConversationState::default();
-        state.threads.insert(
-            "thread".to_string(),
-            NativeThreadState {
-                remote_thread_id: "thread".to_string(),
-                cwd: Some(std::path::PathBuf::from("D:/code/harmony/ArkPilot")),
-                messages: Vec::new(),
-                latest_token_usage: None,
-                context_management: NativeContextManagementSnapshot {
-                    memory_mode: Some("enabled".to_string()),
-                    recent_artifact_refs: Some(vec!["docs/plan.md".to_string()]),
-                    memory_usage_count: Some(1),
-                    memory_last_usage_at: Some(987),
-                    memory_stage1_generated_at: Some(555),
-                    memory_stage1_up_to_date: Some(true),
-                    memory_stage1_job_status: Some("running".to_string()),
-                    memory_stage1_retry_remaining: Some(3),
-                    memory_forgetting_pending: Some(false),
-                    memory_forgetting_completed_at: Some(444),
-                    memory_phase2_selected_at: Some(222),
-                    memory_phase2_updated_at: Some(789),
-                    memory_phase2_selection_count: Some(4),
-                    memory_phase2_added_count: Some(1),
-                    memory_phase2_retained_count: Some(3),
-                    memory_phase2_removed_count: Some(2),
-                    memory_summary_preview: Some("thread summary preview".to_string()),
-                    last_micro_compaction_item_count: Some(3),
-                    compaction_failure_count: Some(1),
-                    last_full_compaction_trigger: Some("manual".to_string()),
-                    last_full_compaction_provider_mode: Some("local".to_string()),
-                    last_full_compaction_trimmed_item_count: Some(2),
-                    last_full_compaction_reference_context_reestablished: Some(false),
-                    ..Default::default()
-                },
-            },
-        );
-
-        let thread = codex_app_server_protocol::Thread {
-            id: "thread".to_string(),
-            preview: String::new(),
-            ephemeral: false,
-            model_provider: "openai".to_string(),
-            created_at: 0,
-            updated_at: 0,
-            status: codex_app_server_protocol::ThreadStatus::Idle,
-            path: None,
-            cwd: std::path::PathBuf::from("D:/code/harmony/ArkPilot"),
-            cli_version: "test".to_string(),
-            source: codex_app_server_protocol::SessionSource::AppServer,
-            agent_nickname: None,
-            agent_role: None,
-            git_info: None,
-            name: None,
-            turns: Vec::new(),
-        };
-
-        let payload = build_thread_read_payload(&state, &thread);
-
-        assert_eq!(
-            payload["contextManagement"]["memoryMode"],
-            serde_json::json!("enabled")
-        );
-        assert_eq!(
-            payload["contextManagement"]["recentArtifactRefs"],
-            serde_json::json!(["docs/plan.md"])
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryUsageCount"],
-            serde_json::json!(1)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryLastUsageAt"],
-            serde_json::json!(987)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1GeneratedAt"],
-            serde_json::json!(555)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1UpToDate"],
-            serde_json::json!(true)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1JobStatus"],
-            serde_json::json!("running")
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryStage1RetryRemaining"],
-            serde_json::json!(3)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryForgettingPending"],
-            serde_json::json!(false)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryForgettingCompletedAt"],
-            serde_json::json!(444)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2SelectedAt"],
-            serde_json::json!(222)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2UpdatedAt"],
-            serde_json::json!(789)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2SelectionCount"],
-            serde_json::json!(4)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2AddedCount"],
-            serde_json::json!(1)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2RetainedCount"],
-            serde_json::json!(3)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memoryPhase2RemovedCount"],
-            serde_json::json!(2)
-        );
-        assert_eq!(
-            payload["contextManagement"]["memorySummaryPreview"],
-            serde_json::json!("thread summary preview")
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastMicroCompactionItemCount"],
-            serde_json::json!(3)
-        );
-        assert_eq!(
-            payload["contextManagement"]["compactionFailureCount"],
-            serde_json::json!(1)
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionTrigger"],
-            serde_json::json!("manual")
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionProviderMode"],
-            serde_json::json!("local")
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionTrimmedItemCount"],
-            serde_json::json!(2)
-        );
-        assert_eq!(
-            payload["contextManagement"]["lastFullCompactionReferenceContextReestablished"],
-            serde_json::json!(false)
-        );
     }
 }
