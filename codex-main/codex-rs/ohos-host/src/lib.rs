@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::net::SocketAddr;
@@ -3936,21 +3937,19 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
             });
         }
         ServerNotification::ItemCompleted(payload) => {
-            with_native_state(|state| {
-                if matches!(payload.item, codex_app_server_protocol::ThreadItem::ContextCompaction { .. }) {
-                    let thread = state
-                        .threads
-                        .entry(payload.thread_id.clone())
-                        .or_insert_with(|| NativeThreadState {
-                            remote_thread_id: payload.thread_id.clone(),
-                            cwd: None,
-                            messages: Vec::new(),
-                            latest_token_usage: None,
-                            context_management: NativeContextManagementSnapshot::default(),
-                        });
-                    thread.context_management.last_context_compaction_at =
-                        Some(chrono::Utc::now().timestamp_millis());
-                }
+            let context_management = with_native_state(|state| {
+                let thread = state
+                    .threads
+                    .entry(payload.thread_id.clone())
+                    .or_insert_with(|| NativeThreadState {
+                        remote_thread_id: payload.thread_id.clone(),
+                        cwd: None,
+                        messages: Vec::new(),
+                        latest_token_usage: None,
+                        context_management: NativeContextManagementSnapshot::default(),
+                    });
+                let context_management_changed = update_thread_context_from_item(thread, &payload.item);
+                let context_management = context_management_changed.then(|| thread.context_management.clone());
                 sync_thread_from_completed_item(
                     state,
                     &payload.thread_id,
@@ -3978,7 +3977,22 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     &payload.turn_id,
                     &payload.item,
                 );
+                context_management
             });
+            if let Some(context_management) = context_management {
+                let codex_home = resolve_codex_home(None);
+                if let Err(err) = store_thread_context_snapshot(
+                    &codex_home,
+                    &payload.thread_id,
+                    None,
+                    Some(&context_management),
+                ) {
+                    eprintln!(
+                        "failed to persist thread context management thread_id={} error={err}",
+                        payload.thread_id
+                    );
+                }
+            }
         }
         ServerNotification::TurnCompleted(payload) => {
             with_native_state(|state| {
@@ -5041,6 +5055,100 @@ fn build_context_management_payload(snapshot: &NativeContextManagementSnapshot) 
     serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::json!({}))
 }
 
+fn context_management_from_thread_items(
+    turns: &[codex_app_server_protocol::Turn],
+) -> NativeContextManagementSnapshot {
+    let mut snapshot = NativeContextManagementSnapshot::default();
+    let mut recent_refs: VecDeque<String> = VecDeque::new();
+    let mut seen_refs: HashSet<String> = HashSet::new();
+    let mut usage_count: i64 = 0;
+    let mut last_usage_at: Option<i64> = None;
+    let mut saw_context_compaction = false;
+
+    for turn in turns {
+        for item in &turn.items {
+            match item {
+                codex_app_server_protocol::ThreadItem::AgentMessage {
+                    memory_citation: Some(citation),
+                    ..
+                } => {
+                    usage_count += 1;
+                    last_usage_at = Some(chrono::Utc::now().timestamp_millis());
+                    for entry in &citation.entries {
+                        let item_ref = format!("{}:{}-{}", entry.path, entry.line_start, entry.line_end);
+                        if seen_refs.insert(item_ref.clone()) {
+                            recent_refs.push_back(item_ref);
+                            while recent_refs.len() > 5 {
+                                recent_refs.pop_front();
+                            }
+                        }
+                    }
+                }
+                codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => {
+                    saw_context_compaction = true;
+                    snapshot.last_context_compaction_at = Some(chrono::Utc::now().timestamp_millis());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if usage_count > 0 {
+        snapshot.memory_mode = Some("active".to_string());
+        snapshot.memory_usage_count = Some(usage_count);
+        snapshot.memory_last_usage_at = last_usage_at;
+        snapshot.recent_artifact_refs = Some(recent_refs.into_iter().collect());
+    }
+    if saw_context_compaction {
+        snapshot.last_full_compaction_trigger = Some("threadHistory".to_string());
+        snapshot.last_full_compaction_provider_mode = Some("appServer".to_string());
+        snapshot.last_full_compaction_reference_context_reestablished = Some(true);
+    }
+    snapshot
+}
+
+fn update_thread_context_from_item(
+    thread: &mut NativeThreadState,
+    item: &codex_app_server_protocol::ThreadItem,
+) -> bool {
+    match item {
+        codex_app_server_protocol::ThreadItem::AgentMessage {
+            memory_citation: Some(citation),
+            ..
+        } => {
+            thread.context_management.memory_mode = Some("active".to_string());
+            thread.context_management.memory_usage_count = Some(
+                thread.context_management.memory_usage_count.unwrap_or(0) + 1,
+            );
+            thread.context_management.memory_last_usage_at = Some(chrono::Utc::now().timestamp_millis());
+            let mut refs = thread
+                .context_management
+                .recent_artifact_refs
+                .clone()
+                .unwrap_or_default();
+            for entry in &citation.entries {
+                let item_ref = format!("{}:{}-{}", entry.path, entry.line_start, entry.line_end);
+                if !refs.iter().any(|existing| existing == &item_ref) {
+                    refs.push(item_ref);
+                }
+            }
+            if refs.len() > 5 {
+                refs = refs[refs.len() - 5..].to_vec();
+            }
+            thread.context_management.recent_artifact_refs = Some(refs);
+            true
+        }
+        codex_app_server_protocol::ThreadItem::ContextCompaction { .. } => {
+            thread.context_management.last_context_compaction_at = Some(chrono::Utc::now().timestamp_millis());
+            thread.context_management.last_full_compaction_trigger = Some("manual".to_string());
+            thread.context_management.last_full_compaction_provider_mode = Some("appServer".to_string());
+            thread.context_management.last_full_compaction_reference_context_reestablished = Some(true);
+            true
+        }
+        _ => false,
+    }
+}
+
 async fn refresh_thread_session_before_turn_start(
     thread_id: &str,
     cwd: Option<String>,
@@ -5263,6 +5371,7 @@ fn upsert_thread_state_from_protocol(
     let latest_token_usage = latest_thread_token_usage_from_turns(thread)
         .or_else(|| load_persisted_thread_token_usage(&resolve_codex_home(None), &thread.id));
     let persisted_context_management = load_persisted_thread_context_management(&thread.id);
+    let item_context_management = context_management_from_thread_items(&thread.turns);
     prune_terminal_turn_states_for_thread(state, &thread.id);
     let entry = state
         .threads
@@ -5279,9 +5388,9 @@ fn upsert_thread_state_from_protocol(
     if let Some(token_usage) = latest_token_usage {
         entry.latest_token_usage = Some(token_usage);
     }
-    let mut effective_context_management = persisted_context_management;
-    entry.context_management.merge_missing_from(&effective_context_management);
+    let mut effective_context_management = item_context_management;
     effective_context_management.merge_missing_from(&entry.context_management);
+    effective_context_management.merge_missing_from(&persisted_context_management);
     entry.context_management = effective_context_management;
     if refresh_messages {
         let message_timestamps = thread

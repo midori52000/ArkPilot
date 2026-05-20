@@ -11377,14 +11377,7 @@ struct Index {
     if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
       return '未启用';
     }
-    const thresholdText = `阈值 ${this.formatTokenCount(limit)}`;
-    if (this.remainingToAutoCompact === null || this.remainingToAutoCompact === undefined) {
-      return thresholdText;
-    }
-    if (this.remainingToAutoCompact <= 0) {
-      return `${thresholdText}（已到达）`;
-    }
-    return `${thresholdText}（还差 ${this.formatTokenCount(this.remainingToAutoCompact)}）`;
+    return `阈值 ${this.formatTokenCount(limit)}`;
   }
 
   private currentThreadCompactionNotice(): CompactionNotice | null {
@@ -11823,13 +11816,15 @@ struct Index {
       Text(label)
         .fontSize(11)
         .fontColor('#A1A1AA')
-      Blank()
+        .flexShrink(0)
       Text(value)
         .fontSize(11)
         .fontColor('#18181B')
         .fontWeight(FontWeight.Medium)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .textAlign(TextAlign.End)
     }
     .width('100%')
     .padding({ top: 6 })
