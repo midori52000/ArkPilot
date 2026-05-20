@@ -1070,6 +1070,10 @@ export class CodexBackendSnapshot {
   compaction: CodexCompactionSnapshot;
   contextManagement: CodexContextManagementSnapshot;
   modelAutoCompactTokenLimit: number | null;
+  effectiveAutoCompactTokenLimit: number | null;
+  autoCompactCurrentTotalTokens: number | null;
+  autoCompactWillCheckBeforeNextTurn: boolean;
+  autoCompactWouldWaitForFollowUp: boolean;
   autoCompactEnabled: boolean;
   remainingToAutoCompact: number | null;
   autoCompactNearThreshold: boolean;
@@ -1093,6 +1097,10 @@ export class CodexBackendSnapshot {
     compaction?: CodexCompactionSnapshot,
     contextManagement?: CodexContextManagementSnapshot | null,
     modelAutoCompactTokenLimit?: number | null,
+    effectiveAutoCompactTokenLimit?: number | null,
+    autoCompactCurrentTotalTokens?: number | null,
+    autoCompactWillCheckBeforeNextTurn?: boolean,
+    autoCompactWouldWaitForFollowUp?: boolean,
     autoCompactEnabled?: boolean,
     remainingToAutoCompact?: number | null,
     autoCompactNearThreshold?: boolean
@@ -1115,6 +1123,10 @@ export class CodexBackendSnapshot {
     this.compaction = compaction ?? new CodexCompactionSnapshot('', 'idle');
     this.contextManagement = contextManagement ?? new CodexContextManagementSnapshot();
     this.modelAutoCompactTokenLimit = modelAutoCompactTokenLimit ?? null;
+    this.effectiveAutoCompactTokenLimit = effectiveAutoCompactTokenLimit ?? null;
+    this.autoCompactCurrentTotalTokens = autoCompactCurrentTotalTokens ?? null;
+    this.autoCompactWillCheckBeforeNextTurn = autoCompactWillCheckBeforeNextTurn ?? false;
+    this.autoCompactWouldWaitForFollowUp = autoCompactWouldWaitForFollowUp ?? false;
     this.autoCompactEnabled = autoCompactEnabled ?? false;
     this.remainingToAutoCompact = remainingToAutoCompact ?? null;
     this.autoCompactNearThreshold = autoCompactNearThreshold ?? false;
@@ -1178,6 +1190,10 @@ class CodexThreadRecord {
   tokenUsage: TurnTokenUsage | null = null;
   contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
   modelAutoCompactTokenLimit: number | null = null;
+  effectiveAutoCompactTokenLimit: number | null = null;
+  autoCompactCurrentTotalTokens: number | null = null;
+  autoCompactWillCheckBeforeNextTurn: boolean = false;
+  autoCompactWouldWaitForFollowUp: boolean = false;
   autoCompactEnabled: boolean = false;
   remainingToAutoCompact: number | null = null;
   autoCompactNearThreshold: boolean = false;
@@ -1294,6 +1310,10 @@ export class CodexBackend {
       this.compactionSnapshot(),
       activeContextManagement,
       activeThread?.modelAutoCompactTokenLimit ?? null,
+      activeThread?.effectiveAutoCompactTokenLimit ?? null,
+      activeThread?.autoCompactCurrentTotalTokens ?? null,
+      activeThread?.autoCompactWillCheckBeforeNextTurn ?? false,
+      activeThread?.autoCompactWouldWaitForFollowUp ?? false,
       activeThread?.autoCompactEnabled ?? false,
       activeThread?.remainingToAutoCompact ?? null,
       activeThread?.autoCompactNearThreshold ?? false
@@ -2094,13 +2114,37 @@ export class CodexBackend {
     } else {
       thread.modelAutoCompactTokenLimit = null;
     }
+    const rawEffectiveLimit: Object | undefined = payload['effectiveAutoCompactTokenLimit'];
+    if (typeof rawEffectiveLimit === 'number' && rawEffectiveLimit === rawEffectiveLimit) {
+      thread.effectiveAutoCompactTokenLimit = rawEffectiveLimit > 0 ? rawEffectiveLimit : null;
+    } else {
+      thread.effectiveAutoCompactTokenLimit = null;
+    }
+    const rawExplanation: Object | undefined = payload['autoCompactExplanation'];
+    if (rawExplanation !== undefined && rawExplanation !== null && typeof rawExplanation === 'object') {
+      const explanation = rawExplanation as Record<string, Object>;
+      const rawCurrentTotal = explanation['autoCompactCurrentTotalTokens'];
+      thread.autoCompactCurrentTotalTokens = typeof rawCurrentTotal === 'number' && rawCurrentTotal === rawCurrentTotal
+        ? rawCurrentTotal
+        : null;
+      thread.autoCompactWillCheckBeforeNextTurn = explanation['autoCompactWillCheckBeforeNextTurn'] === true;
+      thread.autoCompactWouldWaitForFollowUp = explanation['autoCompactWouldWaitForFollowUp'] === true;
+    } else {
+      thread.autoCompactCurrentTotalTokens = null;
+      thread.autoCompactWillCheckBeforeNextTurn = false;
+      thread.autoCompactWouldWaitForFollowUp = false;
+    }
     this.applyAutoCompactDerivedState(thread);
   }
 
   private applyAutoCompactDerivedState(thread: CodexThreadRecord): void {
-    const limit = thread.modelAutoCompactTokenLimit;
+    const limit = thread.effectiveAutoCompactTokenLimit ?? thread.modelAutoCompactTokenLimit;
     if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
+      thread.effectiveAutoCompactTokenLimit = null;
       thread.modelAutoCompactTokenLimit = null;
+      thread.autoCompactCurrentTotalTokens = null;
+      thread.autoCompactWillCheckBeforeNextTurn = false;
+      thread.autoCompactWouldWaitForFollowUp = false;
       thread.autoCompactEnabled = false;
       thread.remainingToAutoCompact = null;
       thread.autoCompactNearThreshold = false;

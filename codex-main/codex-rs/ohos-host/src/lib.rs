@@ -58,6 +58,8 @@ use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
+use codex_app_server_protocol::ThreadUnsubscribeParams;
+use codex_app_server_protocol::ThreadUnsubscribeResponse;
 use codex_app_server_protocol::ThreadSetNameParams;
 use codex_app_server_protocol::ThreadSetNameResponse;
 use codex_app_server_protocol::ThreadStartParams;
@@ -2444,35 +2446,43 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
 
         let mut params = TurnStartParams::default();
         params.thread_id = request.thread_id.clone();
-        let cwd = request
-            .cwd
-            .filter(|value| !value.trim().is_empty())
-            .map(PathBuf::from);
+        let requested_cwd = request.cwd.filter(|value| !value.trim().is_empty());
+        let cwd = requested_cwd.clone().map(PathBuf::from);
         params.cwd = cwd.clone();
         let requested_model = request.model.filter(|value| !value.trim().is_empty());
         let requested_effort = parse_reasoning_effort(request.effort.as_deref())?;
         params.model = requested_model.clone();
         params.effort = requested_effort;
         params.summary = Some(ReasoningSummary::Detailed);
-        params.approval_policy = parse_approval_policy(
+        let approval_policy = parse_approval_policy(
             request
                 .approval_policy
                 .as_deref()
                 .or(Some(DEFAULT_APPROVAL_POLICY)),
         )?;
+        params.approval_policy = approval_policy;
         params.approvals_reviewer = Some(ApprovalsReviewer::User);
-        params.sandbox_policy = build_sandbox_policy(
+        let sandbox_policy = build_sandbox_policy(
             request
                 .sandbox_mode
                 .as_deref()
                 .or(Some(DEFAULT_SANDBOX_MODE)),
             cwd.as_deref(),
         )?;
+        params.sandbox_policy = sandbox_policy.clone();
         params.collaboration_mode = collaboration_mode_from_native_mask(
             request.collaboration_mode.unwrap_or_default(),
-            requested_model,
+            requested_model.clone(),
             requested_effort,
         )?;
+        refresh_thread_session_before_turn_start(
+            &request.thread_id,
+            requested_cwd,
+            requested_model.clone(),
+            approval_policy,
+            parse_thread_sandbox_mode(request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE)))?,
+        )
+        .await?;
         params.input = request
             .input
             .into_iter()
@@ -5031,6 +5041,167 @@ fn build_context_management_payload(snapshot: &NativeContextManagementSnapshot) 
     serde_json::to_value(snapshot).unwrap_or_else(|_| serde_json::json!({}))
 }
 
+async fn refresh_thread_session_before_turn_start(
+    thread_id: &str,
+    cwd: Option<String>,
+    model: Option<String>,
+    approval_policy: Option<AskForApproval>,
+    sandbox_mode: Option<SandboxMode>,
+) -> Result<()> {
+    let (handle, unsubscribe_request_id) = with_native_handle(|state| {
+        let handle = state
+            .client
+            .as_ref()
+            .map(RemoteAppServerClient::request_handle)
+            .context("remote app-server client is not initialized")?;
+        let request_id = next_request_id(state);
+        Ok::<_, anyhow::Error>((handle, request_id))
+    })?;
+    let unsubscribe: ThreadUnsubscribeResponse = handle
+        .request_typed(ClientRequest::ThreadUnsubscribe {
+            request_id: unsubscribe_request_id,
+            params: ThreadUnsubscribeParams {
+                thread_id: thread_id.to_string(),
+            },
+        })
+        .await
+        .map_err(anyhow::Error::from)?;
+
+    match unsubscribe.status {
+        codex_app_server_protocol::ThreadUnsubscribeStatus::Unsubscribed => {
+            wait_for_thread_closed(thread_id).await?;
+        }
+        codex_app_server_protocol::ThreadUnsubscribeStatus::NotLoaded => {}
+        codex_app_server_protocol::ThreadUnsubscribeStatus::NotSubscribed => {
+            let read_request_id = with_native_state(|state| next_request_id(state));
+            let read: ThreadReadResponse = handle
+                .request_typed(ClientRequest::ThreadRead {
+                    request_id: read_request_id,
+                    params: ThreadReadParams {
+                        thread_id: thread_id.to_string(),
+                        include_turns: false,
+                    },
+                })
+                .await
+                .map_err(anyhow::Error::from)?;
+            if !matches!(read.thread.status, codex_app_server_protocol::ThreadStatus::NotLoaded) {
+                anyhow::bail!(
+                    "thread {thread_id} is already loaded but not subscribed; cannot refresh provider config before turn start"
+                );
+            }
+        }
+    }
+
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..4 {
+        let resume_request_id = with_native_state(|state| next_request_id(state));
+        let mut resume_params = ThreadResumeParams::default();
+        resume_params.thread_id = thread_id.to_string();
+        resume_params.cwd = cwd.clone();
+        resume_params.model = model.clone();
+        resume_params.model_provider = Some(CUSTOM_PROVIDER_ID.to_string());
+        resume_params.approval_policy = approval_policy;
+        resume_params.approvals_reviewer = Some(ApprovalsReviewer::User);
+        resume_params.sandbox = sandbox_mode;
+        resume_params.persist_extended_history = true;
+        match handle
+            .request_typed::<ThreadResumeResponse>(ClientRequest::ThreadResume {
+                request_id: resume_request_id,
+                params: resume_params,
+            })
+            .await
+        {
+            Ok(response) => {
+                with_native_state(|state| {
+                    upsert_thread_state_from_protocol(state, &response.thread, true);
+                });
+                return Ok(());
+            }
+            Err(err) => {
+                let err = anyhow::Error::from(err);
+                if attempt >= 3 || !err.to_string().contains(" is closing; retry thread/resume ") {
+                    return Err(err);
+                }
+                last_err = Some(err);
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("thread {thread_id} resume did not complete")))
+}
+
+async fn wait_for_thread_closed(thread_id: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            anyhow::bail!("timed out waiting for thread {thread_id} to close before config refresh");
+        }
+
+        let idle_timeout = remaining.min(Duration::from_millis(250));
+        let mut client = with_native_state(|state| state.client.take())
+            .context("remote app-server client is not initialized")?;
+        let event = tokio::time::timeout(idle_timeout, client.next_event())
+            .await
+            .ok()
+            .flatten();
+        let mut event_result = Ok(());
+        let closed = match event {
+            Some(AppServerEvent::ServerNotification(ServerNotification::ThreadClosed(payload))) => {
+                payload.thread_id == thread_id
+            }
+            Some(app_event) => {
+                event_result = handle_app_server_event(&mut client, app_event, None).await;
+                false
+            }
+            None => false,
+        };
+        with_native_state(|state| {
+            state.client = Some(client);
+        });
+        event_result?;
+        if closed {
+            with_native_state(|state| {
+                state.threads.remove(thread_id);
+                state.turns.retain(|_, turn| turn.thread_id != thread_id);
+            });
+            return Ok(());
+        }
+    }
+}
+
+fn resolve_effective_auto_compact_limit(
+    provider_settings: &ProviderSettings,
+    token_usage: Option<&NativeTokenUsage>,
+) -> Option<i64> {
+    let model_context_window = token_usage.and_then(|usage| usage.model_context_window)?;
+    if model_context_window <= 0 {
+        return None;
+    }
+    let context_limit = (model_context_window * 9) / 10;
+    Some(match provider_settings.model_auto_compact_token_limit {
+        Some(config_limit) if config_limit > 0 => std::cmp::min(config_limit, context_limit),
+        _ => context_limit,
+    })
+}
+
+fn build_auto_compact_explanation_payload(
+    token_usage: Option<&NativeTokenUsage>,
+    effective_auto_compact_limit: Option<i64>,
+    turn_status: &str,
+) -> serde_json::Value {
+    let total_usage_tokens = token_usage.map(|usage| usage.total.total_tokens);
+    let will_check_before_next_turn = matches!(turn_status, "completed" | "failed" | "interrupted" | "cancelled");
+    let would_wait_for_follow_up = !matches!(turn_status, "completed" | "failed" | "interrupted" | "cancelled");
+    serde_json::json!({
+        "autoCompactCurrentTotalTokens": total_usage_tokens,
+        "autoCompactEffectiveLimit": effective_auto_compact_limit,
+        "autoCompactWillCheckBeforeNextTurn": will_check_before_next_turn,
+        "autoCompactWouldWaitForFollowUp": would_wait_for_follow_up,
+    })
+}
+
 fn build_turn_poll_payload(
     state: &NativeConversationState,
     thread_id: &str,
@@ -5061,6 +5232,8 @@ fn build_turn_poll_payload(
         .or_else(|| turn.token_usage.clone());
     let context_management = resolve_thread_context_management(state, &effective_thread_id);
     let provider_settings = load_provider_settings(&resolve_codex_home(None)).unwrap_or_default();
+    let effective_auto_compact_limit =
+        resolve_effective_auto_compact_limit(&provider_settings, resolved_token_usage.as_ref());
 
     serde_json::json!({
         "threadId": effective_thread_id,
@@ -5073,6 +5246,12 @@ fn build_turn_poll_payload(
         "tokenUsage": build_token_usage_payload(resolved_token_usage.as_ref()),
         "contextManagement": build_context_management_payload(&context_management),
         "modelAutoCompactTokenLimit": provider_settings.model_auto_compact_token_limit,
+        "effectiveAutoCompactTokenLimit": effective_auto_compact_limit,
+        "autoCompactExplanation": build_auto_compact_explanation_payload(
+            resolved_token_usage.as_ref(),
+            effective_auto_compact_limit,
+            &status,
+        ),
     })
 }
 
@@ -5169,6 +5348,8 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
         .or_else(|| latest_thread_token_usage_from_turns(thread));
     let context_management = resolve_thread_context_management(state, &thread.id);
     let provider_settings = load_provider_settings(&resolve_codex_home(None)).unwrap_or_default();
+    let effective_auto_compact_limit =
+        resolve_effective_auto_compact_limit(&provider_settings, thread_token_usage.as_ref());
 
     serde_json::json!({
         "thread": build_thread_meta_payload(thread),
@@ -5184,6 +5365,12 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
         "tokenUsage": build_token_usage_payload(thread_token_usage.as_ref()),
         "contextManagement": build_context_management_payload(&context_management),
         "modelAutoCompactTokenLimit": provider_settings.model_auto_compact_token_limit,
+        "effectiveAutoCompactTokenLimit": effective_auto_compact_limit,
+        "autoCompactExplanation": build_auto_compact_explanation_payload(
+            thread_token_usage.as_ref(),
+            effective_auto_compact_limit,
+            &last_turn_status,
+        ),
     })
 }
 

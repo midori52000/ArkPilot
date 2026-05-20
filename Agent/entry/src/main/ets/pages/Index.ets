@@ -1258,6 +1258,10 @@ struct Index {
   @State private tokenUsage: TurnTokenUsage | null = null;
   @State private contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
   @State private modelAutoCompactTokenLimit: number | null = null;
+  @State private effectiveAutoCompactTokenLimit: number | null = null;
+  @State private autoCompactCurrentTotalTokens: number | null = null;
+  @State private autoCompactWillCheckBeforeNextTurn: boolean = false;
+  @State private autoCompactWouldWaitForFollowUp: boolean = false;
   @State private autoCompactEnabled: boolean = false;
   @State private remainingToAutoCompact: number | null = null;
   @State private autoCompactNearThreshold: boolean = false;
@@ -1514,12 +1518,20 @@ struct Index {
       this.tokenUsage = snapshot.tokenUsage;
       this.contextManagement = snapshot.contextManagement;
       this.modelAutoCompactTokenLimit = snapshot.modelAutoCompactTokenLimit;
+      this.effectiveAutoCompactTokenLimit = snapshot.effectiveAutoCompactTokenLimit;
+      this.autoCompactCurrentTotalTokens = snapshot.autoCompactCurrentTotalTokens;
+      this.autoCompactWillCheckBeforeNextTurn = snapshot.autoCompactWillCheckBeforeNextTurn;
+      this.autoCompactWouldWaitForFollowUp = snapshot.autoCompactWouldWaitForFollowUp;
       this.autoCompactEnabled = snapshot.autoCompactEnabled;
       this.remainingToAutoCompact = snapshot.remainingToAutoCompact;
       this.autoCompactNearThreshold = snapshot.autoCompactNearThreshold;
     } else {
       this.backendActiveThreadId = this.activeWorkspaceBindingId.trim();
       this.modelAutoCompactTokenLimit = null;
+      this.effectiveAutoCompactTokenLimit = null;
+      this.autoCompactCurrentTotalTokens = null;
+      this.autoCompactWillCheckBeforeNextTurn = false;
+      this.autoCompactWouldWaitForFollowUp = false;
       this.autoCompactEnabled = false;
       this.remainingToAutoCompact = null;
       this.autoCompactNearThreshold = false;
@@ -11353,7 +11365,7 @@ struct Index {
     if (!this.autoCompactEnabled) {
       return '未启用';
     }
-    const limit = this.modelAutoCompactTokenLimit;
+    const limit = this.effectiveAutoCompactTokenLimit ?? this.modelAutoCompactTokenLimit;
     if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
       return '未启用';
     }
@@ -11365,6 +11377,30 @@ struct Index {
       return `${thresholdText}（已到达）`;
     }
     return `${thresholdText}（还差 ${this.formatTokenCount(this.remainingToAutoCompact)}）`;
+  }
+
+  private autoCompactCurrentTotalText(): string {
+    const total = this.autoCompactCurrentTotalTokens;
+    if (typeof total !== 'number' || total !== total || total < 0) {
+      return '未上报';
+    }
+    return this.formatTokenCount(total);
+  }
+
+  private autoCompactEffectiveLimitText(): string {
+    const limit = this.effectiveAutoCompactTokenLimit ?? this.modelAutoCompactTokenLimit;
+    if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
+      return '未上报';
+    }
+    return this.formatTokenCount(limit);
+  }
+
+  private autoCompactWillCheckText(): string {
+    return this.autoCompactWillCheckBeforeNextTurn ? '会' : '不会';
+  }
+
+  private autoCompactFollowUpWaitText(): string {
+    return this.autoCompactWouldWaitForFollowUp ? '会等待 follow-up' : '不等 follow-up';
   }
 
   private currentThreadCompactionNotice(): CompactionNotice | null {
@@ -12007,6 +12043,10 @@ struct Index {
 
               Column() {
                 this.contextManagementMetricRow('自动压缩', this.autoCompactionText())
+                this.contextManagementMetricRow('当前总量', this.autoCompactCurrentTotalText())
+                this.contextManagementMetricRow('真实阈值', this.autoCompactEffectiveLimitText())
+                this.contextManagementMetricRow('下轮前检查', this.autoCompactWillCheckText())
+                this.contextManagementMetricRow('follow-up 判定', this.autoCompactFollowUpWaitText())
                 this.contextManagementMetricRow('微压缩', this.contextMicroCompactionText())
                 this.contextManagementMetricRow('Memory', this.contextMemoryModeText())
                 this.contextManagementMetricRow('记忆引用', this.contextMemoryUsageText())
