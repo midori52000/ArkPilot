@@ -60,7 +60,6 @@ import {
   EndpointSpeedResult,
   UsageQueryResult
 } from '../apim/ApiTypes';
-import { CompactionDecisionInput, shouldStartCompaction } from './CompactionPolicy';
 import { providerCatalogService } from './ProviderCatalogService';
 import { apiManagementService } from '../apim/ApiManagementService';
 import {
@@ -92,7 +91,6 @@ const TURN_POLL_HEARTBEAT_INTERVAL_MS: number = 500;
 const TURN_POLL_TIMEOUT_MS: number = 300000; // 5 分钟轮询超时
 const TURN_STATUS_RECONCILE_INTERVAL_MS: number = 5000;
 const TURN_STATUS_RECONCILE_START_MS: number = 10000;
-const AUTO_COMPACTION_COOLDOWN_MS: number = 60000;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
@@ -1071,6 +1069,10 @@ export class CodexBackendSnapshot {
   activeThreadId: string;
   compaction: CodexCompactionSnapshot;
   contextManagement: CodexContextManagementSnapshot;
+  modelAutoCompactTokenLimit: number | null;
+  autoCompactEnabled: boolean;
+  remainingToAutoCompact: number | null;
+  autoCompactNearThreshold: boolean;
 
   constructor(
     serverUrl: string,
@@ -1089,7 +1091,11 @@ export class CodexBackendSnapshot {
     tokenUsage?: TurnTokenUsage | null,
     activeThreadId?: string,
     compaction?: CodexCompactionSnapshot,
-    contextManagement?: CodexContextManagementSnapshot | null
+    contextManagement?: CodexContextManagementSnapshot | null,
+    modelAutoCompactTokenLimit?: number | null,
+    autoCompactEnabled?: boolean,
+    remainingToAutoCompact?: number | null,
+    autoCompactNearThreshold?: boolean
   ) {
     this.serverUrl = serverUrl;
     this.connectionState = connectionState;
@@ -1108,6 +1114,10 @@ export class CodexBackendSnapshot {
     this.activeThreadId = activeThreadId ?? '';
     this.compaction = compaction ?? new CodexCompactionSnapshot('', 'idle');
     this.contextManagement = contextManagement ?? new CodexContextManagementSnapshot();
+    this.modelAutoCompactTokenLimit = modelAutoCompactTokenLimit ?? null;
+    this.autoCompactEnabled = autoCompactEnabled ?? false;
+    this.remainingToAutoCompact = remainingToAutoCompact ?? null;
+    this.autoCompactNearThreshold = autoCompactNearThreshold ?? false;
   }
 }
 
@@ -1167,6 +1177,10 @@ class CodexThreadRecord {
   lastTurnId: string = '';
   tokenUsage: TurnTokenUsage | null = null;
   contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
+  modelAutoCompactTokenLimit: number | null = null;
+  autoCompactEnabled: boolean = false;
+  remainingToAutoCompact: number | null = null;
+  autoCompactNearThreshold: boolean = false;
   lastCompactionAtMs: number = 0;
   lastCompactionTurnId: string = '';
   updatedAt: string = '';
@@ -1278,7 +1292,11 @@ export class CodexBackend {
       activeTokenUsage,
       activeThread?.remoteThreadId ?? '',
       this.compactionSnapshot(),
-      activeContextManagement
+      activeContextManagement,
+      activeThread?.modelAutoCompactTokenLimit ?? null,
+      activeThread?.autoCompactEnabled ?? false,
+      activeThread?.remainingToAutoCompact ?? null,
+      activeThread?.autoCompactNearThreshold ?? false
     );
   }
 
@@ -1835,48 +1853,6 @@ export class CodexBackend {
     return this.threads.get(this.activeThreadId) ?? null;
   }
 
-  private resolveBackendAutoCompactEnabled(): boolean {
-    const activeProvider: ProviderRecord | null = providerCatalogService.activeProvider();
-    if (activeProvider !== null) {
-      return activeProvider.modelAutoCompactTokenLimit > 0;
-    }
-    try {
-      const providers: ProviderRecord[] = apiManagementService.getProviders();
-      for (let i = 0; i < providers.length; i++) {
-        if (providers[i].isActive) {
-          return providers[i].modelAutoCompactTokenLimit > 0;
-        }
-      }
-    } catch (_err) {
-    }
-    return false;
-  }
-
-  shouldStartFallbackCompaction(threadId: string = ''): boolean {
-    const normalizedThreadId: string = this.normalizeThreadId(threadId);
-    const thread: CodexThreadRecord | null = normalizedThreadId.length > 0
-      ? (this.threads.get(normalizedThreadId) ?? null)
-      : this.activeThreadRecord();
-    if (thread === null || thread.remoteThreadId.trim().length === 0) {
-      return false;
-    }
-    if (this.compactionState.threadId === thread.remoteThreadId &&
-        (this.compactionState.status === 'starting' || this.compactionState.status === 'running')) {
-      return false;
-    }
-    const input: CompactionDecisionInput = {
-      contextRemainingPercent: thread.tokenUsage?.contextRemainingPercent ?? -1,
-      hasTokenUsage: thread.tokenUsage !== null,
-      activeTurnId: thread.activeTurn?.turnId ?? '',
-      currentTurnId: thread.lastTurnId,
-      lastCompactionTurnId: thread.lastCompactionTurnId,
-      cooldownMs: AUTO_COMPACTION_COOLDOWN_MS,
-      lastCompactionAtMs: thread.lastCompactionAtMs,
-      nowMs: Date.now(),
-    };
-    return shouldStartCompaction(input);
-  }
-
   private normalizeThreadId(threadId: string): string {
     const trimmedThreadId: string = threadId.trim();
     if (trimmedThreadId.length === 0 || trimmedThreadId.startsWith('session:')) {
@@ -2029,6 +2005,7 @@ export class CodexBackend {
       ) as Record<string, Object>;
       this.applyTokenUsagePayload(thread, payload['tokenUsage']);
       this.applyContextManagementPayload(thread, payload['contextManagement']);
+      this.applyAutoCompactConfigPayload(thread, payload);
     } catch (err) {
       const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
       this.logInfo(`hydrateThreadTokenUsage failed thread=${thread.remoteThreadId} turnId=${trimmedTurnId} error=${errorText}`);
@@ -2056,6 +2033,7 @@ export class CodexBackend {
     const ctxWindow = typeof tu['modelContextWindow'] === 'number' ? (tu['modelContextWindow'] as number) : 0;
     const ctxRemainingPct = typeof tu['contextRemainingPercent'] === 'number' ? (tu['contextRemainingPercent'] as number) : -1;
     thread.tokenUsage = new TurnTokenUsage(total, last, ctxWindow, ctxRemainingPct);
+    this.applyAutoCompactDerivedState(thread);
     this.updateCompactionTokenDelta(thread);
   }
 
@@ -2102,8 +2080,43 @@ export class CodexBackend {
         : null,
       typeof raw['lastFullCompactionReferenceContextReestablished'] === 'boolean'
         ? (raw['lastFullCompactionReferenceContextReestablished'] as boolean)
+        : null,
+      typeof raw['lastContextCompactionAt'] === 'number'
+        ? (raw['lastContextCompactionAt'] as number)
         : null
     );
+  }
+
+  private applyAutoCompactConfigPayload(thread: CodexThreadRecord, payload: Record<string, Object>): void {
+    const rawLimit: Object | undefined = payload['modelAutoCompactTokenLimit'];
+    if (typeof rawLimit === 'number' && rawLimit === rawLimit) {
+      thread.modelAutoCompactTokenLimit = rawLimit > 0 ? rawLimit : null;
+    } else {
+      thread.modelAutoCompactTokenLimit = null;
+    }
+    this.applyAutoCompactDerivedState(thread);
+  }
+
+  private applyAutoCompactDerivedState(thread: CodexThreadRecord): void {
+    const limit = thread.modelAutoCompactTokenLimit;
+    if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
+      thread.modelAutoCompactTokenLimit = null;
+      thread.autoCompactEnabled = false;
+      thread.remainingToAutoCompact = null;
+      thread.autoCompactNearThreshold = false;
+      return;
+    }
+    thread.autoCompactEnabled = true;
+    const used = thread.tokenUsage?.total.totalTokens ?? 0;
+    if (typeof used !== 'number' || used !== used || used <= 0) {
+      thread.remainingToAutoCompact = null;
+      thread.autoCompactNearThreshold = false;
+      return;
+    }
+    thread.remainingToAutoCompact = used >= limit ? 0 : (limit - used);
+    const remainingPct = thread.tokenUsage?.contextRemainingPercent ?? -1;
+    thread.autoCompactNearThreshold = thread.remainingToAutoCompact === 0
+      || (typeof remainingPct === 'number' && remainingPct === remainingPct && remainingPct >= 0 && remainingPct <= 15);
   }
 
   private updateCompactionTokenDelta(thread: CodexThreadRecord): void {
@@ -2674,6 +2687,7 @@ export class CodexBackend {
     );
     this.applyTokenUsagePayload(thread, payload['tokenUsage']);
     this.applyContextManagementPayload(thread, payload['contextManagement']);
+    this.applyAutoCompactConfigPayload(thread, payload);
     if (thread.tokenUsage === null && previousTokenUsage !== null) {
       thread.tokenUsage = previousTokenUsage;
     }
@@ -3245,6 +3259,7 @@ export class CodexBackend {
     thread.lastTurnId = turnId;
     this.applyTokenUsagePayload(thread, payload['tokenUsage']);
     this.applyContextManagementPayload(thread, payload['contextManagement']);
+    this.applyAutoCompactConfigPayload(thread, payload);
     thread.lastTurnStatus = status;
     thread.updatedAt = currentThreadTimestamp();
     return this.snapshotForThread(thread, status, turnId);
@@ -3757,7 +3772,8 @@ export class CodexBackend {
       snapshot.lastFullCompactionTrigger,
       snapshot.lastFullCompactionProviderMode,
       snapshot.lastFullCompactionTrimmedItemCount,
-      snapshot.lastFullCompactionReferenceContextReestablished
+      snapshot.lastFullCompactionReferenceContextReestablished,
+      snapshot.lastContextCompactionAt
     );
   }
 

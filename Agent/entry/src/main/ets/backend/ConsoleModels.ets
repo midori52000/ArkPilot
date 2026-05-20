@@ -473,6 +473,7 @@ export class CodexContextManagementSnapshot {
   lastFullCompactionProviderMode: string | null;
   lastFullCompactionTrimmedItemCount: number | null;
   lastFullCompactionReferenceContextReestablished: boolean | null;
+  lastContextCompactionAt: number | null;
 
   constructor(
     memoryMode?: string | null,
@@ -502,7 +503,8 @@ export class CodexContextManagementSnapshot {
     lastFullCompactionTrigger?: string | null,
     lastFullCompactionProviderMode?: string | null,
     lastFullCompactionTrimmedItemCount?: number | null,
-    lastFullCompactionReferenceContextReestablished?: boolean | null
+    lastFullCompactionReferenceContextReestablished?: boolean | null,
+    lastContextCompactionAt?: number | null
   ) {
     this.memoryMode = memoryMode ?? null;
     this.recentArtifactRefs = recentArtifactRefs ?? null;
@@ -533,6 +535,7 @@ export class CodexContextManagementSnapshot {
     this.lastFullCompactionTrimmedItemCount = lastFullCompactionTrimmedItemCount ?? null;
     this.lastFullCompactionReferenceContextReestablished =
       lastFullCompactionReferenceContextReestablished ?? null;
+    this.lastContextCompactionAt = lastContextCompactionAt ?? null;
   }
 }
 

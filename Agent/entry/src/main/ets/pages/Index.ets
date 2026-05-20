@@ -1257,6 +1257,10 @@ struct Index {
   ];
   @State private tokenUsage: TurnTokenUsage | null = null;
   @State private contextManagement: CodexContextManagementSnapshot = new CodexContextManagementSnapshot();
+  @State private modelAutoCompactTokenLimit: number | null = null;
+  @State private autoCompactEnabled: boolean = false;
+  @State private remainingToAutoCompact: number | null = null;
+  @State private autoCompactNearThreshold: boolean = false;
   @State private tokenAggregate: TokenUsageAggregate | null = null;
   @State private tokenCardExpanded: boolean = true;
   @State private tokenCardHeight: number = 280;
@@ -1509,8 +1513,16 @@ struct Index {
       this.backendActiveThreadId = snapshotThreadId;
       this.tokenUsage = snapshot.tokenUsage;
       this.contextManagement = snapshot.contextManagement;
+      this.modelAutoCompactTokenLimit = snapshot.modelAutoCompactTokenLimit;
+      this.autoCompactEnabled = snapshot.autoCompactEnabled;
+      this.remainingToAutoCompact = snapshot.remainingToAutoCompact;
+      this.autoCompactNearThreshold = snapshot.autoCompactNearThreshold;
     } else {
       this.backendActiveThreadId = this.activeWorkspaceBindingId.trim();
+      this.modelAutoCompactTokenLimit = null;
+      this.autoCompactEnabled = false;
+      this.remainingToAutoCompact = null;
+      this.autoCompactNearThreshold = false;
     }
     this.applyCompactionSnapshot(snapshot);
   }
@@ -3640,9 +3652,6 @@ struct Index {
     this.renderedWorkspaceId = workspaceId;
     this.renderedThreadId = resultThreadId.length > 0 ? resultThreadId : threadKey;
     this.syncActiveWorkspaceRunState();
-    if (result.status !== 'inProgress' && codexBackend.shouldStartFallbackCompaction(this.backendActiveThreadId)) {
-      this.retryCurrentCompaction(this.backendActiveThreadId);
-    }
   }
 
   private applyBackendResult(result: CodexTurnResult, preserveDisplayState: boolean = true): void {
@@ -9957,13 +9966,10 @@ struct Index {
     if (notice.errorMessage.trim().length > 0) {
       return notice.errorMessage.trim();
     }
-    const detailText = this.currentFullCompactionDetailText();
     if (notice.savedTokens > 0) {
-      return detailText.length > 0
-        ? `释放 ${this.formatTokenCount(notice.savedTokens)} tokens（${detailText}）。`
-        : `释放 ${this.formatTokenCount(notice.savedTokens)} tokens。`;
+      return `释放 ${this.formatTokenCount(notice.savedTokens)} tokens。`;
     }
-    return detailText.length > 0 ? `压缩完成（${detailText}）。` : '压缩完成，token 用量暂无明显变化。';
+    return '压缩完成，token 用量暂无明显变化。';
   }
 
   private compactionSavedText(notice: CompactionNotice): string {
@@ -11068,6 +11074,12 @@ struct Index {
       }
       .layoutWeight(1)
       .width('100%')
+
+      Column() {
+        this.tokenUsageCard()
+      }
+      .width('100%')
+      .margin({ top: 12 })
     }
     .height('100%')
     .width(this.rightPanelWidth)
@@ -11264,10 +11276,6 @@ struct Index {
         return v;
       }
     }
-    const provider = providerCatalogService.activeProvider();
-    if (provider !== null && provider.contextWindow > 0) {
-      return provider.contextWindow;
-    }
     return 0;
   }
 
@@ -11313,9 +11321,13 @@ struct Index {
     const rem = this.contextRemainingPct();
     let suffix: string = '';
     if (win > 0 && rem >= 0) {
-      suffix = rem <= 0 ? ' (压缩中...)' : ' (' + rem.toString() + '% 剩余)';
+      suffix = ' (' + rem.toString() + '% 剩余)';
     }
-    if (win <= 0) return this.formatTokenCount(used) + suffix;
+    if (win <= 0) {
+      return suffix.length > 0
+        ? this.formatTokenCount(used) + ' / 未上报' + suffix
+        : this.formatTokenCount(used) + ' / 未上报';
+    }
     return this.formatTokenCount(used) + ' / ' + this.formatTokenCount(win) + suffix;
   }
 
@@ -11332,9 +11344,27 @@ struct Index {
     const pct = this.contextRemainingPct();
     let suffix: string = '';
     if (win > 0 && pct >= 0) {
-      suffix = pct <= 0 ? ' · 压缩中...' : ' · 剩余 ' + pct.toString() + '%';
+      suffix = ' · 剩余 ' + pct.toString() + '%';
     }
     return '总 ' + this.formatTokenCount(total) + suffix;
+  }
+
+  private autoCompactionText(): string {
+    if (!this.autoCompactEnabled) {
+      return '未启用';
+    }
+    const limit = this.modelAutoCompactTokenLimit;
+    if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
+      return '未启用';
+    }
+    const thresholdText = `阈值 ${this.formatTokenCount(limit)}`;
+    if (this.remainingToAutoCompact === null || this.remainingToAutoCompact === undefined) {
+      return thresholdText;
+    }
+    if (this.remainingToAutoCompact <= 0) {
+      return `${thresholdText}（已到达）`;
+    }
+    return `${thresholdText}（还差 ${this.formatTokenCount(this.remainingToAutoCompact)}）`;
   }
 
   private currentThreadCompactionNotice(): CompactionNotice | null {
@@ -11676,12 +11706,30 @@ struct Index {
     const referenceContextText = this.fullCompactionReferenceContextText(
       this.contextManagement.lastFullCompactionReferenceContextReestablished
     );
-    return this.fullCompactionSourceDetail(
+    const detailText = this.fullCompactionSourceDetail(
       triggerText,
       providerModeText,
       trimmedItemText,
       referenceContextText
     );
+    if (detailText.length > 0) {
+      return detailText;
+    }
+    if (triggerText.length > 0) {
+      return `${triggerText}触发过`;
+    }
+    const relative = typeof this.contextManagement.lastContextCompactionAt === 'number'
+      && this.contextManagement.lastContextCompactionAt > 0
+      ? this.relativeTimeFromEpoch(this.contextManagement.lastContextCompactionAt)
+      : '';
+    if (relative.length > 0) {
+      return relative === '刚刚' ? '后端刚刚压缩过' : `后端 ${relative}前压缩过`;
+    }
+    if (typeof this.contextManagement.lastContextCompactionAt === 'number'
+      && this.contextManagement.lastContextCompactionAt > 0) {
+      return '后端压缩过';
+    }
+    return '';
   }
 
   private contextFullCompactionText(): string {
@@ -11724,7 +11772,7 @@ struct Index {
       return '已熔断';
     }
     if (typeof failureCount === 'number' && failureCount > 0) {
-      return `连续失败 ${failureCount} 次`;
+      return `存在失败记录（${failureCount} 次）`;
     }
     return '正常';
   }
@@ -11929,8 +11977,8 @@ struct Index {
                     .fontSize(12)
                     .fontColor('#18181B')
                     .fontWeight(FontWeight.Medium)
-                  if (this.contextRemainingPct() <= 70 && this.contextRemainingPct() >= 0) {
-                    Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '压缩'))
+                  if (this.compacting || this.compactError.length > 0 || this.contextRemainingPct() >= 0) {
+                    Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '手动压缩'))
                       .fontSize(10)
                       .fontColor(this.compactError.length > 0 ? '#EF4444' : '#27272A')
                       .padding({ left: 8, right: 8, top: 3, bottom: 3 })
@@ -11958,6 +12006,7 @@ struct Index {
               .padding({ top: 8, bottom: 10 })
 
               Column() {
+                this.contextManagementMetricRow('自动压缩', this.autoCompactionText())
                 this.contextManagementMetricRow('微压缩', this.contextMicroCompactionText())
                 this.contextManagementMetricRow('Memory', this.contextMemoryModeText())
                 this.contextManagementMetricRow('记忆引用', this.contextMemoryUsageText())

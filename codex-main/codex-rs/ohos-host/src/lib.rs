@@ -188,6 +188,7 @@ struct NativeContextManagementSnapshot {
     last_full_compaction_provider_mode: Option<String>,
     last_full_compaction_trimmed_item_count: Option<i64>,
     last_full_compaction_reference_context_reestablished: Option<bool>,
+    last_context_compaction_at: Option<i64>,
 }
 
 impl NativeContextManagementSnapshot {
@@ -227,6 +228,7 @@ impl NativeContextManagementSnapshot {
         fill!(last_full_compaction_provider_mode);
         fill!(last_full_compaction_trimmed_item_count);
         fill!(last_full_compaction_reference_context_reestablished);
+        fill!(last_context_compaction_at);
     }
 }
 
@@ -352,12 +354,18 @@ fn load_persisted_thread_token_usage(codex_home: &Path, thread_id: &str) -> Opti
 fn store_thread_context_snapshot(
     codex_home: &Path,
     thread_id: &str,
-    usage: &NativeTokenUsage,
+    usage: Option<&NativeTokenUsage>,
+    context_management: Option<&NativeContextManagementSnapshot>,
 ) -> Result<()> {
     let mut snapshots = load_thread_context_snapshots(codex_home).unwrap_or_default();
     let mut snapshot = snapshots.threads.remove(thread_id).unwrap_or_default();
     snapshot.updated_at = chrono::Utc::now().timestamp_millis();
-    snapshot.latest_token_usage = Some(usage.clone());
+    if let Some(usage) = usage {
+        snapshot.latest_token_usage = Some(usage.clone());
+    }
+    if let Some(context_management) = context_management {
+        snapshot.context_management = context_management.clone();
+    }
     snapshots.threads.insert(thread_id.to_string(), snapshot);
     persist_thread_context_snapshots(codex_home, &snapshots)
 }
@@ -2399,20 +2407,6 @@ pub extern "C" fn codex_ohos_host_thread_compact_start(
             .await
             .map_err(anyhow::Error::from)?;
 
-        with_native_state(|state| {
-            let thread = state
-                .threads
-                .entry(request.thread_id.clone())
-                .or_insert_with(|| NativeThreadState {
-                    remote_thread_id: request.thread_id.clone(),
-                    cwd: None,
-                    messages: Vec::new(),
-                    latest_token_usage: None,
-                    context_management: NativeContextManagementSnapshot::default(),
-                });
-            thread.context_management.last_full_compaction_trigger = Some("manual".to_string());
-        });
-
         Ok::<(), anyhow::Error>(())
     });
 
@@ -3933,6 +3927,20 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
         }
         ServerNotification::ItemCompleted(payload) => {
             with_native_state(|state| {
+                if matches!(payload.item, codex_app_server_protocol::ThreadItem::ContextCompaction { .. }) {
+                    let thread = state
+                        .threads
+                        .entry(payload.thread_id.clone())
+                        .or_insert_with(|| NativeThreadState {
+                            remote_thread_id: payload.thread_id.clone(),
+                            cwd: None,
+                            messages: Vec::new(),
+                            latest_token_usage: None,
+                            context_management: NativeContextManagementSnapshot::default(),
+                        });
+                    thread.context_management.last_context_compaction_at =
+                        Some(chrono::Utc::now().timestamp_millis());
+                }
                 sync_thread_from_completed_item(
                     state,
                     &payload.thread_id,
@@ -4068,7 +4076,12 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                 }
             });
             let codex_home = resolve_codex_home(None);
-            if let Err(err) = store_thread_context_snapshot(&codex_home, &payload.thread_id, &usage) {
+            if let Err(err) = store_thread_context_snapshot(
+                &codex_home,
+                &payload.thread_id,
+                Some(&usage),
+                None,
+            ) {
                 eprintln!(
                     "failed to persist thread context snapshot thread_id={} error={err}",
                     payload.thread_id
@@ -4997,11 +5010,13 @@ fn resolve_thread_context_management(
     state: &NativeConversationState,
     thread_id: &str,
 ) -> NativeContextManagementSnapshot {
-    state
-        .threads
-        .get(thread_id)
-        .map(|thread| thread.context_management.clone())
-        .unwrap_or_default()
+    let mut effective = load_persisted_thread_context_management(thread_id);
+    if let Some(thread) = state.threads.get(thread_id) {
+        let mut local = thread.context_management.clone();
+        local.merge_missing_from(&effective);
+        effective = local;
+    }
+    effective
 }
 
 fn load_persisted_thread_context_management(thread_id: &str) -> NativeContextManagementSnapshot {
@@ -5045,6 +5060,7 @@ fn build_turn_poll_payload(
     let resolved_token_usage = resolve_thread_token_usage(state, &effective_thread_id)
         .or_else(|| turn.token_usage.clone());
     let context_management = resolve_thread_context_management(state, &effective_thread_id);
+    let provider_settings = load_provider_settings(&resolve_codex_home(None)).unwrap_or_default();
 
     serde_json::json!({
         "threadId": effective_thread_id,
@@ -5056,6 +5072,7 @@ fn build_turn_poll_payload(
         "diff": turn.diff,
         "tokenUsage": build_token_usage_payload(resolved_token_usage.as_ref()),
         "contextManagement": build_context_management_payload(&context_management),
+        "modelAutoCompactTokenLimit": provider_settings.model_auto_compact_token_limit,
     })
 }
 
@@ -5083,7 +5100,10 @@ fn upsert_thread_state_from_protocol(
     if let Some(token_usage) = latest_token_usage {
         entry.latest_token_usage = Some(token_usage);
     }
-    entry.context_management.merge_missing_from(&persisted_context_management);
+    let mut effective_context_management = persisted_context_management;
+    entry.context_management.merge_missing_from(&effective_context_management);
+    effective_context_management.merge_missing_from(&entry.context_management);
+    entry.context_management = effective_context_management;
     if refresh_messages {
         let message_timestamps = thread
             .path
@@ -5148,6 +5168,7 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
     let thread_token_usage = resolve_thread_token_usage(state, &thread.id)
         .or_else(|| latest_thread_token_usage_from_turns(thread));
     let context_management = resolve_thread_context_management(state, &thread.id);
+    let provider_settings = load_provider_settings(&resolve_codex_home(None)).unwrap_or_default();
 
     serde_json::json!({
         "thread": build_thread_meta_payload(thread),
@@ -5162,6 +5183,7 @@ fn build_thread_read_payload(state: &NativeConversationState, thread: &Thread) -
         "lastTurnStatus": last_turn_status,
         "tokenUsage": build_token_usage_payload(thread_token_usage.as_ref()),
         "contextManagement": build_context_management_payload(&context_management),
+        "modelAutoCompactTokenLimit": provider_settings.model_auto_compact_token_limit,
     })
 }
 
