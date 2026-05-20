@@ -941,8 +941,16 @@ export class CodexTurnResult {
   diffStat: string;
   tokenUsage: TurnTokenUsage | null;
   contextManagement: CodexContextManagementSnapshot | null;
+  modelAutoCompactTokenLimit: number | null;
+  effectiveAutoCompactTokenLimit: number | null;
+  autoCompactCurrentTotalTokens: number | null;
+  autoCompactWillCheckBeforeNextTurn: boolean;
+  autoCompactWouldWaitForFollowUp: boolean;
+  autoCompactEnabled: boolean;
+  remainingToAutoCompact: number | null;
+  autoCompactNearThreshold: boolean;
 
-  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string, tokenUsage?: TurnTokenUsage | null, contextManagement?: CodexContextManagementSnapshot | null) {
+  constructor(threadId: string, turnId: string, status: CodexTurnStatus, messages: CodexChatMessage[], diffLines: CodexDiffLine[], summaryTitle: string, summaryPoints: string[], changedFiles: string, diffStat: string, tokenUsage?: TurnTokenUsage | null, contextManagement?: CodexContextManagementSnapshot | null, modelAutoCompactTokenLimit?: number | null, effectiveAutoCompactTokenLimit?: number | null, autoCompactCurrentTotalTokens?: number | null, autoCompactWillCheckBeforeNextTurn?: boolean, autoCompactWouldWaitForFollowUp?: boolean, autoCompactEnabled?: boolean, remainingToAutoCompact?: number | null, autoCompactNearThreshold?: boolean) {
     this.threadId = threadId;
     this.turnId = turnId;
     this.status = status;
@@ -954,6 +962,14 @@ export class CodexTurnResult {
     this.diffStat = diffStat;
     this.tokenUsage = tokenUsage ?? null;
     this.contextManagement = contextManagement ?? null;
+    this.modelAutoCompactTokenLimit = modelAutoCompactTokenLimit ?? null;
+    this.effectiveAutoCompactTokenLimit = effectiveAutoCompactTokenLimit ?? null;
+    this.autoCompactCurrentTotalTokens = autoCompactCurrentTotalTokens ?? null;
+    this.autoCompactWillCheckBeforeNextTurn = autoCompactWillCheckBeforeNextTurn ?? false;
+    this.autoCompactWouldWaitForFollowUp = autoCompactWouldWaitForFollowUp ?? false;
+    this.autoCompactEnabled = autoCompactEnabled ?? false;
+    this.remainingToAutoCompact = remainingToAutoCompact ?? null;
+    this.autoCompactNearThreshold = autoCompactNearThreshold ?? false;
   }
 }
 
@@ -1683,6 +1699,7 @@ export class CodexBackend {
     }
     const thread: CodexThreadRecord = await this.ensureRemoteThread(request);
     this.activeThreadId = thread.remoteThreadId;
+    await this.compactThreadBeforeTurnIfNeeded(thread);
     const startingTotalTokens: number = thread.tokenUsage?.total.totalTokens ?? -1;
     const pendingTurn: PendingTurnState = new PendingTurnState(request.threadKey, onUpdate, startingTotalTokens);
     thread.activeTurn = pendingTurn;
@@ -1855,6 +1872,20 @@ export class CodexBackend {
 
   getLastCompactError(): string {
     return this.lastCompactError;
+  }
+
+  private async compactThreadBeforeTurnIfNeeded(thread: CodexThreadRecord): Promise<void> {
+    this.applyAutoCompactDerivedState(thread);
+    if (!thread.autoCompactEnabled || thread.remainingToAutoCompact !== 0) {
+      return;
+    }
+    if (thread.remoteThreadId.trim().length === 0 || thread.activeTurn !== null) {
+      return;
+    }
+    if (this.compactionState.status === 'starting' || this.compactionState.status === 'running') {
+      return;
+    }
+    await this.compactThread(thread.remoteThreadId);
   }
 
   clearCompactionNotice(threadId: string): void {
@@ -2995,7 +3026,15 @@ export class CodexBackend {
       snapshot.thread.changedFiles,
       snapshot.thread.diffStat,
       snapshot.thread.tokenUsage,
-      this.cloneContextManagement(snapshot.thread.contextManagement)
+      this.cloneContextManagement(snapshot.thread.contextManagement),
+      snapshot.thread.modelAutoCompactTokenLimit,
+      snapshot.thread.effectiveAutoCompactTokenLimit,
+      snapshot.thread.autoCompactCurrentTotalTokens,
+      snapshot.thread.autoCompactWillCheckBeforeNextTurn,
+      snapshot.thread.autoCompactWouldWaitForFollowUp,
+      snapshot.thread.autoCompactEnabled,
+      snapshot.thread.remainingToAutoCompact,
+      snapshot.thread.autoCompactNearThreshold
     );
   }
 
@@ -3164,7 +3203,15 @@ export class CodexBackend {
           recovered.changedFiles,
           recovered.diffStat,
           recovered.tokenUsage,
-          recovered.contextManagement
+          recovered.contextManagement,
+          recovered.modelAutoCompactTokenLimit,
+          recovered.effectiveAutoCompactTokenLimit,
+          recovered.autoCompactCurrentTotalTokens,
+          recovered.autoCompactWillCheckBeforeNextTurn,
+          recovered.autoCompactWouldWaitForFollowUp,
+          recovered.autoCompactEnabled,
+          recovered.remainingToAutoCompact,
+          recovered.autoCompactNearThreshold
         );
         this.logInfo(
           `threadRead diff recovery thread=${thread.remoteThreadId} attempt=${attempt + 1} diffStat=${currentSnapshot.diffStat}`
@@ -3620,7 +3667,15 @@ export class CodexBackend {
       thread.changedFiles,
       thread.diffStat,
       thread.tokenUsage,
-      this.cloneContextManagement(thread.contextManagement)
+      this.cloneContextManagement(thread.contextManagement),
+      thread.modelAutoCompactTokenLimit,
+      thread.effectiveAutoCompactTokenLimit,
+      thread.autoCompactCurrentTotalTokens,
+      thread.autoCompactWillCheckBeforeNextTurn,
+      thread.autoCompactWouldWaitForFollowUp,
+      thread.autoCompactEnabled,
+      thread.remainingToAutoCompact,
+      thread.autoCompactNearThreshold
     );
   }
 

@@ -3704,6 +3704,14 @@ struct Index {
     if (result.contextManagement !== null) {
       this.contextManagement = result.contextManagement;
     }
+    this.modelAutoCompactTokenLimit = result.modelAutoCompactTokenLimit;
+    this.effectiveAutoCompactTokenLimit = result.effectiveAutoCompactTokenLimit;
+    this.autoCompactCurrentTotalTokens = result.autoCompactCurrentTotalTokens;
+    this.autoCompactWillCheckBeforeNextTurn = result.autoCompactWillCheckBeforeNextTurn;
+    this.autoCompactWouldWaitForFollowUp = result.autoCompactWouldWaitForFollowUp;
+    this.autoCompactEnabled = result.autoCompactEnabled;
+    this.remainingToAutoCompact = result.remainingToAutoCompact;
+    this.autoCompactNearThreshold = result.autoCompactNearThreshold;
     this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
     this.syncTextOutputIdleState();
     this.scheduleMessageScrollToBottom();
@@ -11379,30 +11387,6 @@ struct Index {
     return `${thresholdText}（还差 ${this.formatTokenCount(this.remainingToAutoCompact)}）`;
   }
 
-  private autoCompactCurrentTotalText(): string {
-    const total = this.autoCompactCurrentTotalTokens;
-    if (typeof total !== 'number' || total !== total || total < 0) {
-      return '未上报';
-    }
-    return this.formatTokenCount(total);
-  }
-
-  private autoCompactEffectiveLimitText(): string {
-    const limit = this.effectiveAutoCompactTokenLimit ?? this.modelAutoCompactTokenLimit;
-    if (typeof limit !== 'number' || limit !== limit || limit <= 0) {
-      return '未上报';
-    }
-    return this.formatTokenCount(limit);
-  }
-
-  private autoCompactWillCheckText(): string {
-    return this.autoCompactWillCheckBeforeNextTurn ? '会' : '不会';
-  }
-
-  private autoCompactFollowUpWaitText(): string {
-    return this.autoCompactWouldWaitForFollowUp ? '会等待 follow-up' : '不等 follow-up';
-  }
-
   private currentThreadCompactionNotice(): CompactionNotice | null {
     const threadId: string = this.backendActiveThreadId.trim();
     if (threadId.length === 0) {
@@ -12043,10 +12027,6 @@ struct Index {
 
               Column() {
                 this.contextManagementMetricRow('自动压缩', this.autoCompactionText())
-                this.contextManagementMetricRow('当前总量', this.autoCompactCurrentTotalText())
-                this.contextManagementMetricRow('真实阈值', this.autoCompactEffectiveLimitText())
-                this.contextManagementMetricRow('下轮前检查', this.autoCompactWillCheckText())
-                this.contextManagementMetricRow('follow-up 判定', this.autoCompactFollowUpWaitText())
                 this.contextManagementMetricRow('微压缩', this.contextMicroCompactionText())
                 this.contextManagementMetricRow('Memory', this.contextMemoryModeText())
                 this.contextManagementMetricRow('记忆引用', this.contextMemoryUsageText())
