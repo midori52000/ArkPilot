@@ -1393,7 +1393,7 @@ struct Index {
       targetName: this.deleteProjectDialogName,
       title: '删除项目',
       targetType: '项目',
-      description: '项目下的会话会一并从侧边栏移除。',
+      description: '删除会话记录及应用内项目文件夹，\n已映射的外部同步文件夹不会被删除。',
       cancel: () => {
         this.cancelDeleteProjectDialog();
       },
@@ -2606,6 +2606,36 @@ struct Index {
     this.persistWorkspaceBindings();
   }
 
+  private deleteProjectFolder(projectPath: string): void {
+    const trimmedPath: string = projectPath.trim();
+    const context: common.UIAbilityContext | null = this.currentAbilityContext();
+    if (trimmedPath.length === 0 || context === null) {
+      return;
+    }
+    const projectsRoot: string = `${context.filesDir}/projects`;
+    if (!trimmedPath.startsWith(`${projectsRoot}/`)) {
+      return;
+    }
+    this.deletePathRecursive(trimmedPath);
+  }
+
+  private deletePathRecursive(path: string): void {
+    try {
+      const stat = fileIo.statSync(path);
+      if (stat.isDirectory()) {
+        const entries: string[] = fileIo.listFileSync(path) as string[];
+        for (let index: number = 0; index < entries.length; index += 1) {
+          this.deletePathRecursive(`${path}/${entries[index]}`);
+        }
+        fileIo.rmdirSync(path);
+      } else {
+        fileIo.unlinkSync(path);
+      }
+    } catch (err) {
+      hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'delete project folder failed: %{public}s', this.describeError(err));
+    }
+  }
+
   private async deleteProject(projectId: string): Promise<void> {
     let targetIndex: number = -1;
     for (let i: number = 0; i < this.projects.length; i += 1) {
@@ -2617,7 +2647,8 @@ struct Index {
     if (targetIndex < 0) {
       return;
     }
-    projectStore.addDeletedPath(this.projects[targetIndex].path);
+    const projectPath: string = this.projects[targetIndex].path;
+    projectStore.addDeletedPath(projectPath);
 
     // Archive all backend sessions belonging to this project
     for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
@@ -2639,6 +2670,7 @@ struct Index {
     }
     this.projects = next;
     this.saveProjects();
+    this.deleteProjectFolder(projectPath);
     for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
       if (this.workspaces[i].projectId === projectId) {
         this.workspaces.splice(i, 1);
