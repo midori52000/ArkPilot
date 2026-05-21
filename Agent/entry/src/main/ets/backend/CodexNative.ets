@@ -811,16 +811,11 @@ export function checkWorkspaceAccess(rootPath: string): WorkspaceAccessStatus {
   }
 }
 
-export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAggregate | null {
-  if (nativeModuleUnavailable()) {
-    return null;
-  }
+function parseTokenUsageAggregate(raw: string | null | undefined): TokenUsageAggregate | null {
+  if (raw === null || raw === undefined || raw.length === 0) return null;
   try {
-    const raw = nativeBridge!.tokenUsageAggregate(codexHome);
-    if (raw === null || raw === undefined || raw.length === 0) return null;
     const parsed: Record<string, Object> = JSON.parse(raw) as Record<string, Object>;
 
-    // 解析 today
     const todayRaw = parsed['today'] as Record<string, Object> | undefined;
     const today = new TodayTokenDetail(
       typeof todayRaw?.['totalTokens'] === 'number' ? (todayRaw['totalTokens'] as number) : 0,
@@ -831,7 +826,6 @@ export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAgg
       typeof todayRaw?.['requestCount'] === 'number' ? (todayRaw['requestCount'] as number) : 0
     );
 
-    // 解析 daily
     const dailyRaw = parsed['daily'] as Array<Record<string, Object>> | undefined;
     const daily: DailyTokenSnapshot[] = [];
     if (Array.isArray(dailyRaw)) {
@@ -846,6 +840,17 @@ export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAgg
     }
 
     return new TokenUsageAggregate(today, daily);
+  } catch (_err) {
+    return null;
+  }
+}
+
+export function fetchNativeTokenUsageAggregate(codexHome: string): TokenUsageAggregate | null {
+  if (nativeModuleUnavailable()) {
+    return null;
+  }
+  try {
+    return parseTokenUsageAggregate(nativeBridge!.tokenUsageAggregate(codexHome));
   } catch (_err) {
     return null;
   }

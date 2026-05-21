@@ -2476,14 +2476,16 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
             requested_model.clone(),
             requested_effort,
         )?;
-        refresh_thread_session_before_turn_start(
-            &request.thread_id,
-            requested_cwd,
-            requested_model.clone(),
-            approval_policy,
-            parse_thread_sandbox_mode(request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE)))?,
-        )
-        .await?;
+        if !is_native_thread_empty(&request.thread_id) {
+            refresh_thread_session_before_turn_start(
+                &request.thread_id,
+                requested_cwd,
+                requested_model.clone(),
+                approval_policy,
+                parse_thread_sandbox_mode(request.sandbox_mode.as_deref().or(Some(DEFAULT_SANDBOX_MODE)))?,
+            )
+            .await?;
+        }
         params.input = request
             .input
             .into_iter()
@@ -5147,6 +5149,16 @@ fn update_thread_context_from_item(
         }
         _ => false,
     }
+}
+
+fn is_native_thread_empty(thread_id: &str) -> bool {
+    with_native_state(|state| {
+        state
+            .threads
+            .get(thread_id)
+            .map(|thread| thread.messages.is_empty() && thread.latest_token_usage.is_none())
+            .unwrap_or(false)
+    })
 }
 
 async fn refresh_thread_session_before_turn_start(

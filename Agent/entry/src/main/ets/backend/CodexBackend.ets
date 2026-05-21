@@ -1875,6 +1875,9 @@ export class CodexBackend {
   }
 
   private async compactThreadBeforeTurnIfNeeded(thread: CodexThreadRecord): Promise<void> {
+    if (thread.tokenUsage === null) {
+      return;
+    }
     this.applyAutoCompactDerivedState(thread);
     if (!thread.autoCompactEnabled || thread.remainingToAutoCompact !== 0) {
       return;

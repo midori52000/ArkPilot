@@ -19,7 +19,6 @@ import {
   WorkspaceAccessStatus,
   checkWorkspaceAccess,
   getEmbeddedCodexHostStatus,
-  getEmbeddedCodexHostStatusAsync,
   getEmbeddedCodexProviderCatalog,
   getEmbeddedCodexProviderConfig,
   saveEmbeddedCodexProviderConfig
@@ -1272,6 +1271,7 @@ struct Index {
   @State private tokenCardDragStartH: number = 0;
   @State private tokenTab: number = 0;
   @State private tokenTrendRange: number = 0;
+  private tokenAggregateRequestVersion: number = 0;
   @State private compacting: boolean = false;
   @State private compactError: string = '';
   private compactionClearTimerId: number = -1;
@@ -1548,6 +1548,39 @@ struct Index {
       : null;
   }
 
+  private clearTokenAggregate(): void {
+    this.tokenAggregateRequestVersion += 1;
+    this.tokenAggregate = null;
+  }
+
+  private async refreshTokenAggregateForActiveWorkspace(expectedThreadId?: string): Promise<void> {
+    const workspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (workspace === undefined || !this.isRemoteThreadId(workspace.workspaceId)) {
+      this.clearTokenAggregate();
+      return;
+    }
+    const targetWorkspaceId: number = workspace.id;
+    const targetThreadId: string = expectedThreadId !== undefined && expectedThreadId.trim().length > 0
+      ? expectedThreadId.trim()
+      : workspace.workspaceId.trim();
+    const requestVersion: number = this.tokenAggregateRequestVersion + 1;
+    this.tokenAggregateRequestVersion = requestVersion;
+    this.tokenAggregate = null;
+    await Promise.resolve();
+    if (this.tokenAggregateRequestVersion !== requestVersion) {
+      return;
+    }
+    const aggregate: TokenUsageAggregate | null = codexBackend.fetchTokenUsageAggregate();
+    const activeWorkspace: WorkspaceItem | undefined = this.activeWorkspace();
+    if (activeWorkspace === undefined || activeWorkspace.id !== targetWorkspaceId) {
+      return;
+    }
+    if (!this.isRemoteThreadId(activeWorkspace.workspaceId) || activeWorkspace.workspaceId.trim() !== targetThreadId) {
+      return;
+    }
+    this.tokenAggregate = aggregate;
+  }
+
   private requestBelongsToWorkspace(threadId: string, workspaceId: number): boolean {
     const trimmedThreadId: string = threadId.trim();
     if (trimmedThreadId.length === 0) {
@@ -1728,7 +1761,7 @@ struct Index {
   }
 
   private async applyEmbeddedHostStatus(): Promise<void> {
-    const hostStatus = await getEmbeddedCodexHostStatusAsync();
+    const hostStatus = getEmbeddedCodexHostStatus();
     if (hostStatus.serverUrl.trim().length > 0) {
       this.serverUrl = hostStatus.serverUrl;
     }
@@ -2063,6 +2096,7 @@ struct Index {
     const requestedThreadKey: string = workspace.workspaceId;
     if (!this.isRemoteThreadId(workspace.workspaceId)) {
       codexBackend.setActiveThread('');
+      this.clearTokenAggregate();
       this.resetConversationSurface('等待创建新会话', ['当前会话尚未在 app-server 中创建，发送第一条消息后会自动建立线程。']);
       this.syncActiveWorkspaceRunState();
       return;
@@ -3583,10 +3617,10 @@ struct Index {
     this.resetIdleThinkingTimer();
     this.workspaceRoots.set(runWorkspaceId, this.workspaceRoot);
     this.refreshWorkspaceBindingState();
-    codexBackend.configureServerUrl(this.serverUrl);
 
-    await this.applyEmbeddedHostStatus();
     try {
+      await this.applyEmbeddedHostStatus();
+      codexBackend.configureServerUrl(this.serverUrl);
       const result: CodexTurnResult = await codexBackend.startTurn(
         new CodexTurnRequest(
           threadKey,
@@ -3712,7 +3746,9 @@ struct Index {
     this.autoCompactEnabled = result.autoCompactEnabled;
     this.remainingToAutoCompact = result.remainingToAutoCompact;
     this.autoCompactNearThreshold = result.autoCompactNearThreshold;
-    this.tokenAggregate = codexBackend.fetchTokenUsageAggregate();
+    if (result.status !== 'inProgress') {
+      void this.refreshTokenAggregateForActiveWorkspace(result.threadId);
+    }
     this.syncTextOutputIdleState();
     this.scheduleMessageScrollToBottom();
   }
