@@ -2863,10 +2863,6 @@ struct SettingsPage {
         Column() {
           Text('确认删除 Skill')
             .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-          Text(`删除后将从当前前端列表中移除 "${this.pendingDeleteSkillName}"。`)
-            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
-          Text('当前仍为前端模拟，但危险操作需要确认。')
-            .copyOption(CopyOptions.None).fontSize(11).fontColor('#B45309').margin({ top: 8 })
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
