@@ -134,7 +134,9 @@ export class PromptsViewModel {
       this.state.prompts = filtered;
       this.showStatus('已删除', 'success');
     } catch (err) {
-      this.showStatus('删除失败: ' + this.getErrorMessage(err), 'error');
+      const message: string = this.getErrorMessage(err);
+      this.showStatus('删除失败: ' + message, 'error');
+      throw new Error(message);
     }
   }
 

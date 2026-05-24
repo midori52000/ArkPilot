@@ -36,7 +36,9 @@ export default class EntryAbility extends UIAbility {
 
       // 首次启动自动导入已有 AGENTS.md
       const promptsService = new PromptsBackendService(codexHome);
-      promptsService.autoImportOnFirstLaunch();
+      promptsService.autoImportOnFirstLaunch().catch((err: Error) => {
+        hilog.warn(DOMAIN, TAG, 'Prompt auto import failed: %{public}s', JSON.stringify(err));
+      });
 
       // 预设 bundled skills（幂等，已存在则跳过）
       installBundledSkills(codexHome);
