@@ -888,6 +888,10 @@ struct SettingsPage {
     return directory.trim().length > 0 ? directory : '/';
   }
 
+  private skillsResultListMaxHeight(): number {
+    return this.isPhoneBreakpoint() ? 260 : 320;
+  }
+
   private skillMetaText(skill: InstalledSkill): string {
     if (skill.repoOwner.length > 0 && skill.repoName.length > 0) {
       return `${skill.repoOwner}/${skill.repoName}`;
@@ -2837,32 +2841,37 @@ struct SettingsPage {
         }
         .width('100%')
         if (this.skillsShResults.length > 0) {
-          Column() {
-            ForEach(this.skillsShResults, (item: SkillsShItem) => {
-              Row() {
-                Column() {
-                  Text(item.name)
-                    .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
-                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
-                    .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+          Scroll() {
+            Column() {
+              ForEach(this.skillsShResults, (item: SkillsShItem) => {
+                Row() {
+                  Column() {
+                    Text(item.name)
+                      .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
+                      .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+                  }
+                  .alignItems(HorizontalAlign.Start).layoutWeight(1)
+                  Column() {
+                    this.actionButton(
+                      this.isSkillInstalling(item.key) ? '安装中...' : '安装',
+                      `skillsh-install-${item.key}`,
+                      !this.isSkillInstalling(item.key),
+                      () => { this.installFromSkillsSh(item); }
+                    )
+                  }
+                  .margin({ left: 12 })
                 }
-                .alignItems(HorizontalAlign.Start).layoutWeight(1)
-                Column() {
-                  this.actionButton(
-                    this.isSkillInstalling(item.key) ? '安装中...' : '安装',
-                    `skillsh-install-${item.key}`,
-                    !this.isSkillInstalling(item.key),
-                    () => { this.installFromSkillsSh(item); }
-                  )
-                }
-                .margin({ left: 12 })
-              }
-              .width('100%').padding(14).backgroundColor('#FFFFFF')
-              .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
-            }, (item: SkillsShItem) => `${item.key}`)
+                .width('100%').padding(14).backgroundColor('#FFFFFF')
+                .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
+              }, (item: SkillsShItem) => `${item.key}`)
+            }
+            .width('100%')
           }
           .width('100%')
+          .constraintSize({ maxHeight: this.skillsResultListMaxHeight() })
+          .scrollBar(BarState.Auto)
           .margin({ top: 8 })
         }
       }
