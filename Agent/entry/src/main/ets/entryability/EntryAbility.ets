@@ -40,7 +40,7 @@ export default class EntryAbility extends UIAbility {
         hilog.warn(DOMAIN, TAG, 'Prompt auto import failed: %{public}s', JSON.stringify(err));
       });
 
-      // 预设 bundled skills（幂等，已存在则跳过）
+      // 首次启动安装预设 bundled skills
       installBundledSkills(codexHome);
 
       // Skill 一致性检查：修复 registry 与 SSOT 目录的不一致

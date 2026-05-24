@@ -5,6 +5,8 @@ import {
 import fileIo from '@ohos.file.fs';
 import util from '@ohos.util';
 
+const BUNDLED_SKILLS_MARKER_NAME = '.bundled-skills-installed';
+
 interface BundledExtraFile {
   name: string;
   content: string;
@@ -755,9 +757,30 @@ const BUNDLED_DEFS: BundledSkillDef[] = [
   }
 ];
 
+function bundledSkillsMarkerPath(codexHome: string): string {
+  return `${codexHome}/${BUNDLED_SKILLS_MARKER_NAME}`;
+}
+
+function hasBundledSkillsMarker(codexHome: string): boolean {
+  try {
+    fileIo.statSync(bundledSkillsMarkerPath(codexHome));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeBundledSkillsMarker(codexHome: string): void {
+  const markerFile = fileIo.openSync(
+    bundledSkillsMarkerPath(codexHome),
+    fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC
+  );
+  fileIo.closeSync(markerFile);
+}
+
 /**
- * 首次启动时安装预设 Skill
- * 如果 registry 中已存在同名 skill 则跳过
+ * 首次启动时安装预设 Skill。
+ * 安装完成后写入 marker，后续启动不再自动补装。
  *
  * @param codexHome - 应用 codex-home 目录路径
  */
@@ -794,6 +817,10 @@ export function installBundledSkills(codexHome: string): void {
     // 旧目录不存在，无需迁移
   }
 
+  if (hasBundledSkillsMarker(codexHome)) {
+    return;
+  }
+
   // 读取现有 registry
   let existing: InstalledSkill[] = [];
   try {
@@ -803,6 +830,11 @@ export function installBundledSkills(codexHome: string): void {
     existing = entries.map((e: SkillEntryJson) => InstalledSkill.fromJSON(e));
   } catch (_) {
     // registry 不存在或为空，继续安装
+  }
+
+  if (existing.length > 0) {
+    writeBundledSkillsMarker(codexHome);
+    return;
   }
 
   const now = Date.now();
@@ -875,6 +907,7 @@ export function installBundledSkills(codexHome: string): void {
   }
 
   if (newSkills.length === 0) {
+    writeBundledSkillsMarker(codexHome);
     return;
   }
 
@@ -885,5 +918,8 @@ export function installBundledSkills(codexHome: string): void {
     skills: merged as SkillEntryJson[],
     updatedAt: new Date(now).toISOString()
   };
-  saveSkillsRegistry(codexHome, JSON.stringify(registry));
+  const saved: boolean = saveSkillsRegistry(codexHome, JSON.stringify(registry));
+  if (saved) {
+    writeBundledSkillsMarker(codexHome);
+  }
 }
