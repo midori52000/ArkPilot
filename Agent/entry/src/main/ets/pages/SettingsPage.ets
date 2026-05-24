@@ -152,6 +152,9 @@ struct SettingsPage {
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private prompts: PromptRecord[] = [];
   @State private selectedPromptId: string = '';
+  @State private pendingDeletePromptId: string = '';
+  @State private pendingDeletePromptName: string = '';
+  @State private showPromptDeleteDialog: boolean = false;
   @State private promptDraftName: string = '';
   @State private promptDraftSummary: string = '';
   @State private promptDraftContent: string = '';
@@ -1349,15 +1352,37 @@ struct SettingsPage {
       });
   }
 
-  private deletePromptById(promptId: string): void {
+  private requestDeletePrompt(promptId: string): void {
     const prompt = this.prompts.find((item: PromptRecord) => item.id === promptId) ?? null;
     if (prompt === null) {
+      return;
+    }
+    this.pendingDeletePromptId = prompt.id;
+    this.pendingDeletePromptName = prompt.name;
+    this.runMotion(() => {
+      this.showPromptDeleteDialog = true;
+    });
+  }
+
+  private cancelDeletePrompt(): void {
+    this.runMotion(() => {
+      this.showPromptDeleteDialog = false;
+    });
+    this.pendingDeletePromptId = '';
+    this.pendingDeletePromptName = '';
+  }
+
+  private confirmDeletePrompt(): void {
+    const promptId: string = this.pendingDeletePromptId;
+    const promptName: string = this.pendingDeletePromptName;
+    this.cancelDeletePrompt();
+    if (promptId.length === 0) {
       return;
     }
     this.promptsViewModel.deletePrompt(promptId)
       .then(() => {
         this.syncPromptsStateFromViewModel();
-        this.triggerFeedback(`${prompt.name} 已删除。`, 'success');
+        this.triggerFeedback(`${promptName} 已删除。`, 'success');
       })
       .catch((err: Object) => {
         this.promptsStatusText = this.describeRuntimeError(err);
@@ -3298,6 +3323,45 @@ struct SettingsPage {
   }
 
   @Builder
+  private promptDeleteDialog() {
+    if (this.showPromptDeleteDialog) {
+      Stack() {
+        Column()
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
+          .onClick(() => { this.cancelDeletePrompt(); })
+        Column() {
+          Text('确认删除 Prompt')
+            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Text(`确认删除 "${this.pendingDeletePromptName}" 吗？`)
+            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+          Row() {
+            Button('取消')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('prompt-delete-cancel'), y: this.pressScale('prompt-delete-cancel') })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
+              .onTouch((event: TouchEvent) => { this.updatePressed('prompt-delete-cancel', event); })
+              .onClick(() => { this.cancelDeletePrompt(); })
+            Button('确认删除')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
+              .scale({ x: this.pressScale('prompt-delete-confirm'), y: this.pressScale('prompt-delete-confirm') })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
+              .onTouch((event: TouchEvent) => { this.updatePressed('prompt-delete-confirm', event); })
+              .onClick(() => { this.confirmDeletePrompt(); })
+          }
+          .width('100%').margin({ top: 20 })
+        }
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
+      }
+      .width('100%').height('100%')
+      .transition(this.dialogTransition())
+    }
+  }
+
+  @Builder
   private promptsPanel() {
     if (this.animatedMode !== 'desktop' && this.selectedPromptId.length > 0) {
       this.phonePromptEditorView()
@@ -3458,7 +3522,7 @@ struct SettingsPage {
             .fontColor('#991B1B')
             .borderRadius(12)
             .onClick(() => {
-              this.deletePromptById(prompt.id);
+              this.requestDeletePrompt(prompt.id);
             })
         }
         .width('100%')
@@ -4233,6 +4297,7 @@ struct SettingsPage {
       this.skillDetailDialog()
       this.mcpAddDialog()
       this.mcpDeleteDialog()
+      this.promptDeleteDialog()
       this.validationResultDialog()
       this.apiSpeedResultsPanel()
       this.configTomlDialog()
