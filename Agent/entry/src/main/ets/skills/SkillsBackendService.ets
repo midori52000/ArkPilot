@@ -28,6 +28,12 @@ interface SkillMetadata {
   description: string;
 }
 
+interface ImportSourceEntry {
+  sourcePath: string;
+  installName: string;
+  fallbackName: string;
+}
+
 interface SkillsShApiItemJson {
   id: string;
   name: string;
@@ -136,6 +142,25 @@ export class SkillsBackendService {
       return null;
     }
     return trimmed;
+  }
+
+  private normalizeInstallName(raw: string): string | null {
+    const normalized = raw.trim()
+      .replace(/[^a-zA-Z0-9\-_]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[.-]+/, '')
+      .replace(/[.-]+$/g, '');
+    return this.sanitizeInstallName(normalized);
+  }
+
+  private getPathBaseName(path: string): string {
+    const parts = path.split(/[\\/]/).filter((part: string): boolean => part.length > 0);
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  private getZipBaseName(zipPath: string): string {
+    const fileName = this.getPathBaseName(zipPath);
+    return fileName.replace(/\.zip$/i, '');
   }
 
   // ================================================================
@@ -576,45 +601,19 @@ export class SkillsBackendService {
     return unmanaged;
   }
 
-  async importFromLocal(directories: string[]): Promise<InstalledSkill[]> {
-    const installed = await this.getInstalled();
-    const imported: InstalledSkill[] = [];
-    const ssotDir = this.getSsotDir();
+  async importFromLocal(directories: string[], source: SkillSource = 'local'): Promise<InstalledSkill[]> {
+    const sources: ImportSourceEntry[] = [];
 
     for (const sourcePath of directories) {
-      const parts = sourcePath.split('/');
-      const dirName = parts[parts.length - 1];
+      const dirName = this.getPathBaseName(sourcePath);
       const installName = this.sanitizeInstallName(dirName);
       if (!installName) {
         continue;
       }
-
-      if (installed.some((s: InstalledSkill): boolean => s.directory.toLowerCase() === installName.toLowerCase())) {
-        continue;
-      }
-
-      const dest = `${ssotDir}/${installName}`;
-      await this.copyDirRecursive(sourcePath, dest);
-
-      const metadata = this.parseSkillMetadata(`${dest}/SKILL.md`, installName);
-      const name = metadata.name;
-      const description = metadata.description;
-      const contentHash = computeDirHash(dest);
-
-      const entry = new InstalledSkill(
-        `local:${installName}`, name, description, installName,
-        'local', '', '', '', '', true, Date.now(), contentHash, 0
-      );
-
-      installed.push(entry);
-      imported.push(entry);
+      sources.push({ sourcePath, installName, fallbackName: installName });
     }
 
-    if (imported.length > 0) {
-      await this.saveInstalled(installed);
-    }
-
-    return imported;
+    return this.importResolvedSources(sources, source);
   }
 
   /**
@@ -640,7 +639,23 @@ export class SkillsBackendService {
         );
       }
 
-      const result = await this.importFromLocal(skillDirs);
+      const sources = this.resolveZipImportSources(zipPath, tempDir, skillDirs);
+      if (sources.length === 0) {
+        throw new SkillError(
+          SkillErrorCode.INVALID_SKILL_DIRECTORY,
+          `zipPath=${zipPath}`,
+          'ZIP 已解压，但未找到可安装的 Skill 目录名，请检查 ZIP 文件名或目录名是否仅包含字母、数字、-、_'
+        );
+      }
+
+      const result = await this.importResolvedSources(sources, 'zip');
+      if (result.length === 0) {
+        throw new SkillError(
+          SkillErrorCode.SKILL_DIRECTORY_CONFLICT,
+          `zipPath=${zipPath}`,
+          'ZIP 中的 Skill 没有导入任何新内容；如果同名 Skill 已存在，请先卸载或清理后再重试'
+        );
+      }
       return result;
     } finally {
       try { await this.removeDir(tempDir); } catch (_) { /* */ }
@@ -668,6 +683,79 @@ export class SkillsBackendService {
         } catch (_) { /* */ }
       }
     } catch (_) { /* */ }
+  }
+
+  private resolveZipImportSources(zipPath: string, tempDir: string, skillDirs: string[]): ImportSourceEntry[] {
+    const results: ImportSourceEntry[] = [];
+    const seen = new Set<string>();
+    const zipBaseName = this.getZipBaseName(zipPath);
+
+    for (const sourcePath of skillDirs) {
+      let installName: string | null = null;
+
+      if (sourcePath === tempDir) {
+        const metadata = this.parseSkillMetadata(`${sourcePath}/SKILL.md`, zipBaseName);
+        installName = this.normalizeInstallName(metadata.name) || this.normalizeInstallName(zipBaseName);
+      } else {
+        const dirName = this.getPathBaseName(sourcePath);
+        installName = this.sanitizeInstallName(dirName) || this.normalizeInstallName(dirName);
+      }
+
+      if (!installName) {
+        continue;
+      }
+
+      const key = installName.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      results.push({ sourcePath, installName, fallbackName: installName });
+    }
+
+    return results;
+  }
+
+  private async importResolvedSources(sources: ImportSourceEntry[], source: SkillSource): Promise<InstalledSkill[]> {
+    const installed = await this.getInstalled();
+    const imported: InstalledSkill[] = [];
+    const ssotDir = this.getSsotDir();
+
+    for (const sourceEntry of sources) {
+      const installName = sourceEntry.installName;
+      if (installed.some((s: InstalledSkill): boolean => s.directory.toLowerCase() === installName.toLowerCase())) {
+        continue;
+      }
+
+      const dest = `${ssotDir}/${installName}`;
+      if (this.pathExists(dest)) {
+        throw new SkillError(
+          SkillErrorCode.SKILL_DIRECTORY_CONFLICT,
+          `directory=${installName}`,
+          `Skill 目录 ${installName} 已存在，请先卸载现有 Skill 或清理残留目录后再重试`
+        );
+      }
+      await this.copyDirRecursive(sourceEntry.sourcePath, dest);
+
+      const metadata = this.parseSkillMetadata(`${dest}/SKILL.md`, sourceEntry.fallbackName);
+      const name = metadata.name;
+      const description = metadata.description;
+      const contentHash = computeDirHash(dest);
+
+      const entry = new InstalledSkill(
+        `${source}:${installName}`, name, description, installName,
+        source, '', '', '', '', true, Date.now(), contentHash, 0
+      );
+
+      installed.push(entry);
+      imported.push(entry);
+    }
+
+    if (imported.length > 0) {
+      await this.saveInstalled(installed);
+    }
+
+    return imported;
   }
 
   // ================================================================
@@ -977,146 +1065,29 @@ export class SkillsBackendService {
   }
 
   /**
-   * 解压 ZIP 文件（最小实现：读取 central directory，逐条目提取）
+   * 使用系统 ZIP 解压能力将整个压缩包解到目标目录。
    */
   private async extractZip(zipPath: string, destDir: string): Promise<void> {
-    const fd = fileIo.openSync(zipPath, fileIo.OpenMode.READ_ONLY);
-    const fileSize: number = fileIo.statSync(zipPath).size;
-
-    const readBytes = (offset: number, length: number): ArrayBuffer => {
-      const buf = new ArrayBuffer(length);
-      fileIo.readSync(fd.fd, buf, { offset: offset, length: length });
-      return buf;
-    };
-
-    const readU16 = (offset: number): number => {
-      const buf = readBytes(offset, 2);
-      const view = new DataView(buf);
-      return view.getUint16(0, true);
-    };
-
-    const readU32 = (offset: number): number => {
-      const buf = readBytes(offset, 4);
-      const view = new DataView(buf);
-      return view.getUint32(0, true);
-    };
-
-    // 查找 End of Central Directory
-    let eocdOffset = -1;
-    const scanStart = Math.max(0, fileSize - 65557);
-    for (let i = fileSize - 21; i >= scanStart; i--) {
-      if (readU32(i) === 0x06054b50) {
-        eocdOffset = i;
-        break;
-      }
-    }
-
-    if (eocdOffset < 0) {
-      fileIo.closeSync(fd);
-      throw new Error('Invalid ZIP: no EOCD record');
-    }
-
-    const centralDirOffset = readU32(eocdOffset + 16);
-    const numEntries = readU16(eocdOffset + 10);
-
-    // 解析 Central Directory 并提取文件
-    let offset = centralDirOffset;
-    for (let i = 0; i < numEntries; i++) {
-      if (readU32(offset) !== 0x02014b50) {
-        break;
-      }
-
-      const compressionMethod = readU16(offset + 10);
-      const compressedSize = readU32(offset + 20);
-      const uncompressedSize = readU32(offset + 24);
-      const nameLen = readU16(offset + 28);
-      const extraLen = readU16(offset + 30);
-      const commentLen = readU16(offset + 32);
-      const localHeaderOffset = readU32(offset + 42);
-
-      const nameBytes = readBytes(offset + 46, nameLen);
-      const name = this.arrayBufferToString(nameBytes);
-
-      offset += 46 + nameLen + extraLen + commentLen;
-
-      if (name.endsWith('/')) {
-        fileIo.mkdirSync(`${destDir}/${name}`, true);
-        continue;
-      }
-
-      // 从 local header 读取实际数据偏移
-      const localNameLen = readU16(localHeaderOffset + 26);
-      const localExtraLen = readU16(localHeaderOffset + 28);
-      const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
-
-      const compressedData = readBytes(dataOffset, compressedSize);
-
-      const destPath = `${destDir}/${name}`;
-      const parentDir = destPath.substring(0, destPath.lastIndexOf('/'));
-      fileIo.mkdirSync(parentDir, true);
-
-      if (compressionMethod === 0) {
-        // Stored (无压缩)
-        const file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-        fileIo.writeSync(file.fd, compressedData);
-        fileIo.closeSync(file);
-      } else if (compressionMethod === 8) {
-        // Deflate - 通过 zlib 解压
-        await this.inflateDeflateData(compressedData, uncompressedSize, destPath);
-      } else {
-        console.warn(`Unsupported compression method ${compressionMethod} for ${name}`);
-      }
-    }
-
-    fileIo.closeSync(fd);
-  }
-
-  private arrayBufferToString(buf: ArrayBuffer): string {
-    const bytes = new Uint8Array(buf);
-    let result = '';
-    for (let i = 0; i < bytes.length; i++) {
-      result += String.fromCharCode(bytes[i]);
-    }
-    return result;
-  }
-
-  private async inflateDeflateData(compressed: ArrayBuffer, expectedSize: number, destPath: string): Promise<void> {
-    // 使用 zlib gzip 格式包装 deflate 数据进行解压
-    // deflate 数据需要 2 字节 zlib header + deflate stream + adler32 校验
-    // 构造 zlib 格式包装
-    const zlibHeader = new Uint8Array([0x78, 0x01]); // zlib header, no compression
-    const compressedBytes = new Uint8Array(compressed);
-    const wrapped = new ArrayBuffer(2 + compressedBytes.length + 4);
-    const wrappedView = new Uint8Array(wrapped);
-    wrappedView.set(zlibHeader, 0);
-    wrappedView.set(compressedBytes, 2);
-    // adler32 checksum (placeholder)
-    wrappedView[wrappedView.length - 4] = 0;
-    wrappedView[wrappedView.length - 3] = 0;
-    wrappedView[wrappedView.length - 2] = 0;
-    wrappedView[wrappedView.length - 1] = 1;
-
-    // 写入临时文件
-    const tmpPath = `${destPath}.ztmp`;
-    const tmpFile = fileIo.openSync(tmpPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-    fileIo.writeSync(tmpFile.fd, wrapped);
-    fileIo.closeSync(tmpFile);
-
     try {
-      await zlib.decompressFile(tmpPath, destPath, { level: zlib.CompressLevel.COMPRESS_LEVEL_BEST_SPEED });
-      fileIo.unlinkSync(tmpPath);
+      await zlib.decompressFile(zipPath, destDir);
     } catch (e) {
-      // 如果 zlib 解压失败，尝试直接写入压缩数据（可能是 stored 误标）
-      try { fileIo.unlinkSync(tmpPath); } catch (_) { /* */ }
-      const file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      fileIo.writeSync(file.fd, compressed);
-      fileIo.closeSync(file);
+      const message = e instanceof Error ? e.message : JSON.stringify(e);
+      throw new Error(`解压 ZIP 失败: ${message}`);
     }
   }
 
   // ================================================================
   // 文件操作
   // ================================================================
+
+  private pathExists(path: string): boolean {
+    try {
+      fileIo.statSync(path);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   private async copyDirRecursive(src: string, dest: string): Promise<void> {
     fileIo.mkdirSync(dest, true);
