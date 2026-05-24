@@ -626,14 +626,71 @@ struct SettingsPage {
     this.installingSkillKeys = this.installingSkillKeys.filter((item: string) => item !== key);
   }
 
-  private installScannedSkill(skill: DiscoverableSkill): void {
-    if (this.isSkillInstalling(skill.key)) {
+  private normalizeSkillMatchText(value: string): string {
+    return value.trim().toLowerCase().replace(/[\s._-]+/g, '');
+  }
+
+  private matchesSkillsShHint(item: SkillsShItem, skill: DiscoverableSkill): boolean {
+    const hint = this.normalizeSkillMatchText(item.directory);
+    if (hint.length === 0) {
+      return false;
+    }
+
+    const candidates: string[] = [skill.directory];
+    if (skill.directory.trim().length === 0) {
+      candidates.push('.', skill.repoName, skill.name);
+    } else {
+      const parts = skill.directory.split('/').filter((part: string) => part.length > 0);
+      if (parts.length > 0) {
+        candidates.push(parts[parts.length - 1]);
+      }
+    }
+
+    return candidates.some((candidate: string) => this.normalizeSkillMatchText(candidate) === hint);
+  }
+
+  private resolveSkillsShCandidate(item: SkillsShItem, skills: DiscoverableSkill[]): DiscoverableSkill | null {
+    if (skills.length === 0) {
+      return null;
+    }
+    if (skills.length === 1) {
+      return skills[0];
+    }
+
+    const normalizedName = this.normalizeSkillMatchText(item.name);
+    const nameMatches = skills.filter((skill: DiscoverableSkill) =>
+      this.normalizeSkillMatchText(skill.name) === normalizedName
+    );
+    if (nameMatches.length === 1) {
+      return nameMatches[0];
+    }
+
+    const hintPool = nameMatches.length > 0 ? nameMatches : skills;
+    const hintMatches = hintPool.filter((skill: DiscoverableSkill) => this.matchesSkillsShHint(item, skill));
+    if (hintMatches.length === 1) {
+      return hintMatches[0];
+    }
+
+    return null;
+  }
+
+  private installScannedSkill(
+    skill: DiscoverableSkill,
+    trackingKey: string = skill.key,
+    alreadyTracking: boolean = false
+  ): void {
+    if (!alreadyTracking && this.isSkillInstalling(trackingKey)) {
       this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
       return;
     }
 
-    this.setSkillInstalling(skill.key, true);
-    this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+    if (!alreadyTracking) {
+      this.setSkillInstalling(trackingKey, true);
+      this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+    } else {
+      this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+    }
+
     skillsVM.installFromGithub(skill)
       .then(() => {
         this.syncSkillsStateFromViewModel();
@@ -646,7 +703,7 @@ struct SettingsPage {
         this.triggerFeedback(message, 'error');
       })
       .finally(() => {
-        this.setSkillInstalling(skill.key, false);
+        this.setSkillInstalling(trackingKey, false);
       });
   }
 
@@ -743,12 +800,38 @@ struct SettingsPage {
   }
 
   private installFromSkillsSh(item: SkillsShItem): void {
-    const skill = new DiscoverableSkill(
-      `${item.repoOwner}/${item.repoName}:${item.directory}`,
-      item.name, '', item.directory, item.readmeUrl,
-      item.repoOwner, item.repoName, item.repoBranch
-    );
-    this.installScannedSkill(skill);
+    if (this.isSkillInstalling(item.key)) {
+      this.triggerFeedback(`正在定位 ${item.name}...`, 'info');
+      return;
+    }
+
+    this.setSkillInstalling(item.key, true);
+    this.triggerFeedback(`正在定位 ${item.name}...`, 'info');
+    skillsVM.discoverFromRepo(item.repoOwner, item.repoName, item.repoBranch)
+      .then((skills: DiscoverableSkill[]) => {
+        if (skillsVM.state.errorText.trim().length > 0) {
+          this.triggerFeedback(skillsVM.state.errorText, 'error');
+          this.setSkillInstalling(item.key, false);
+          return;
+        }
+
+        const matched = this.resolveSkillsShCandidate(item, skills);
+        if (matched === null) {
+          this.setSkillInstalling(item.key, false);
+          if (skills.length === 0) {
+            this.triggerFeedback(`未在 ${item.repoOwner}/${item.repoName} 中发现可安装的 Skill。`, 'warning');
+          } else {
+            this.triggerFeedback('该仓库包含多个 Skill，skills.sh 无法唯一定位，请先使用 GitHub 扫描后手动选择。', 'warning');
+          }
+          return;
+        }
+
+        this.installScannedSkill(matched, item.key, true);
+      })
+      .catch((err: Object) => {
+        this.setSkillInstalling(item.key, false);
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
   }
 
   private skillsSubTabIndex(tab: SkillsSubTab): number {
