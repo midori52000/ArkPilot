@@ -128,6 +128,7 @@ struct SettingsPage {
   @State private githubRepoUrl: string = '';
   @State private githubScanResults: DiscoverableSkill[] = [];
   @State private githubScanning: boolean = false;
+  @State private installingSkillKeys: string[] = [];
   @State private skillsShQuery: string = '';
   @State private skillsShResults: SkillsShItem[] = [];
   @State private skillsShSearching: boolean = false;
@@ -611,7 +612,28 @@ struct SettingsPage {
       });
   }
 
+  private isSkillInstalling(key: string): boolean {
+    return this.installingSkillKeys.includes(key);
+  }
+
+  private setSkillInstalling(key: string, installing: boolean): void {
+    if (installing) {
+      if (!this.installingSkillKeys.includes(key)) {
+        this.installingSkillKeys = [...this.installingSkillKeys, key];
+      }
+      return;
+    }
+    this.installingSkillKeys = this.installingSkillKeys.filter((item: string) => item !== key);
+  }
+
   private installScannedSkill(skill: DiscoverableSkill): void {
+    if (this.isSkillInstalling(skill.key)) {
+      this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+      return;
+    }
+
+    this.setSkillInstalling(skill.key, true);
+    this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
     skillsVM.installFromGithub(skill)
       .then(() => {
         this.syncSkillsStateFromViewModel();
@@ -622,6 +644,9 @@ struct SettingsPage {
           ? skillsVM.state.errorText
           : this.describeRuntimeError(err);
         this.triggerFeedback(message, 'error');
+      })
+      .finally(() => {
+        this.setSkillInstalling(skill.key, false);
       });
   }
 
@@ -2741,7 +2766,12 @@ struct SettingsPage {
                 }
                 .alignItems(HorizontalAlign.Start).layoutWeight(1)
                 Column() {
-                  this.actionButton('安装', `skillsh-install-${item.key}`, true, () => { this.installFromSkillsSh(item); })
+                  this.actionButton(
+                    this.isSkillInstalling(item.key) ? '安装中...' : '安装',
+                    `skillsh-install-${item.key}`,
+                    !this.isSkillInstalling(item.key),
+                    () => { this.installFromSkillsSh(item); }
+                  )
                 }
                 .margin({ left: 12 })
               }
@@ -2796,7 +2826,12 @@ struct SettingsPage {
                 }
                 .alignItems(HorizontalAlign.Start).layoutWeight(1)
                 Column() {
-                  this.actionButton('安装', `github-install-${skill.key}`, true, () => { this.installScannedSkill(skill); })
+                  this.actionButton(
+                    this.isSkillInstalling(skill.key) ? '安装中...' : '安装',
+                    `github-install-${skill.key}`,
+                    !this.isSkillInstalling(skill.key),
+                    () => { this.installScannedSkill(skill); }
+                  )
                 }
                 .margin({ left: 12 })
               }
