@@ -618,7 +618,10 @@ struct SettingsPage {
         this.triggerFeedback(`已安装 ${skill.name}。`, 'success');
       })
       .catch((err: Object) => {
-        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+        const message = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : this.describeRuntimeError(err);
+        this.triggerFeedback(message, 'error');
       });
   }
 
@@ -773,11 +776,15 @@ struct SettingsPage {
     return skill.source === 'github' ? 'GitHub' : '本地';
   }
 
+  private displaySkillDirectory(directory: string): string {
+    return directory.trim().length > 0 ? directory : '/';
+  }
+
   private skillMetaText(skill: InstalledSkill): string {
     if (skill.repoOwner.length > 0 && skill.repoName.length > 0) {
       return `${skill.repoOwner}/${skill.repoName}`;
     }
-    return skill.directory;
+    return this.displaySkillDirectory(skill.directory);
   }
 
   private skillDetailSourceLabel(): string {
@@ -2600,7 +2607,7 @@ struct SettingsPage {
             .width('100%')
           Column() {
             this.skillDetailRow('来源', this.skillSourceText(this.selectedSkill()!))
-            this.skillDetailRow('目录', this.selectedSkill()!.directory)
+            this.skillDetailRow('目录', this.displaySkillDirectory(this.selectedSkill()!.directory))
             this.skillDetailRow('ID', this.selectedSkill()!.id)
             if (this.selectedSkill()!.source === 'github') {
               this.skillDetailRow('仓库', this.selectedSkill()!.repoOwner + '/' + this.selectedSkill()!.repoName)
@@ -2784,7 +2791,7 @@ struct SettingsPage {
                   Text(skill.description)
                     .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').lineHeight(17)
                     .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).margin({ top: 4 })
-                  Text(skill.directory)
+                  Text(this.displaySkillDirectory(skill.directory))
                     .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
                 }
                 .alignItems(HorizontalAlign.Start).layoutWeight(1)
@@ -2938,7 +2945,7 @@ struct SettingsPage {
             .lineHeight(20).margin({ top: 10 }).width('100%')
           Column() {
             this.skillDetailRow('来源', this.skillDetailSourceLabel())
-            this.skillDetailRow('目录', this.selectedSkillDetail.directory)
+            this.skillDetailRow('目录', this.displaySkillDirectory(this.selectedSkillDetail.directory))
             this.skillDetailRow('ID', this.selectedSkillDetail.id)
             if (this.selectedSkillDetail.source === 'github') {
               this.skillDetailRow('仓库', this.selectedSkillDetail.repoOwner + '/' + this.selectedSkillDetail.repoName)

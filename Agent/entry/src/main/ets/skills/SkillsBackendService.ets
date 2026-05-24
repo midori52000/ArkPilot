@@ -16,12 +16,28 @@ import zlib from '@ohos.zlib';
 const GITHUB_API_BASE = 'https://github.com';
 const SKILLS_SH_API = 'https://skills.sh/api/search';
 const DOWNLOAD_TIMEOUT_MS = 60000;
+const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
 
 interface DownloadAndExtractResult {
   tempDir: string;
   usedBranch: string;
 }
 
+interface DiscoverViaApiResult {
+  usedBranch: string;
+  skills: DiscoverableSkill[];
+}
+
+interface TreeEntry {
+  path: string;
+  type: string;
+  sha: string;
+}
+
+interface TreeResponse {
+  tree: TreeEntry[];
+  truncated: boolean;
+}
 
 interface SkillMetadata {
   name: string;
@@ -46,6 +62,10 @@ interface SkillsShApiResponse {
   skills: SkillsShApiItemJson[];
   count: number;
   query: string;
+}
+
+interface InstallSkillResultJson extends SkillEntryJson {
+  error?: string;
 }
 
 export enum SkillErrorCode {
@@ -151,6 +171,19 @@ export class SkillsBackendService {
       .replace(/^[.-]+/, '')
       .replace(/[.-]+$/g, '');
     return this.sanitizeInstallName(normalized);
+  }
+
+  private isRootSkillDirectory(directory: string): boolean {
+    return directory.trim().length === 0;
+  }
+
+  private displaySkillDirectory(directory: string): string {
+    return this.isRootSkillDirectory(directory) ? '(仓库根目录)' : directory;
+  }
+
+  private buildSkillReadmeUrl(owner: string, repoName: string, branch: string, directory: string): string {
+    const relativePath = this.isRootSkillDirectory(directory) ? 'SKILL.md' : `${directory}/SKILL.md`;
+    return `https://github.com/${owner}/${repoName}/blob/${branch}/${relativePath}`;
   }
 
   private getPathBaseName(path: string): string {
@@ -297,8 +330,10 @@ export class SkillsBackendService {
    */
   async installFromGithub(skill: DiscoverableSkill): Promise<InstalledSkill> {
     // Step 1: 校验
-    const sourceRel = this.sanitizeSourcePath(skill.directory);
-    if (!sourceRel) {
+    const sourceRel = this.isRootSkillDirectory(skill.directory)
+      ? ''
+      : this.sanitizeSourcePath(skill.directory);
+    if (sourceRel === null) {
       throw new SkillError(
         SkillErrorCode.INVALID_SKILL_DIRECTORY,
         `directory=${skill.directory}`,
@@ -306,8 +341,10 @@ export class SkillsBackendService {
       );
     }
 
-    const segments = sourceRel.split('/');
-    const installName = this.sanitizeInstallName(segments[segments.length - 1]);
+    const installNameRaw = this.isRootSkillDirectory(sourceRel)
+      ? skill.repoName
+      : sourceRel.split('/')[sourceRel.split('/').length - 1];
+    const installName = this.sanitizeInstallName(installNameRaw);
     if (!installName) {
       throw new SkillError(
         SkillErrorCode.INVALID_SKILL_DIRECTORY,
@@ -350,18 +387,18 @@ export class SkillsBackendService {
     const tempDir = downloadResult.tempDir;
     const usedBranch = downloadResult.usedBranch;
 
-    const sourceDir = this.resolveSourceDir(tempDir, skill.directory);
+    const sourceDir = this.resolveSourceDir(tempDir, sourceRel);
     if (!sourceDir) {
       await this.removeDir(tempDir);
       throw new SkillError(
         SkillErrorCode.SKILL_DIR_NOT_FOUND,
         `directory=${skill.directory}, repo=${skill.repoOwner}/${skill.repoName}`,
-        `在 ${skill.repoOwner}/${skill.repoName} 中未找到目录 ${skill.directory}`
+        `在 ${skill.repoOwner}/${skill.repoName} 中未找到目录 ${this.displaySkillDirectory(skill.directory)}`
       );
     }
 
     // Step 5: 通过 Rust host 复制到 SSOT + 解析 SKILL.md + 计算哈希 + 注册
-    const readmeUrl = `https://github.com/${skill.repoOwner}/${skill.repoName}/blob/${usedBranch}/${skill.directory}/SKILL.md`;
+    const readmeUrl = this.buildSkillReadmeUrl(skill.repoOwner, skill.repoName, usedBranch, sourceRel);
     const skillJson = JSON.stringify({
       id: skill.key,
       source: 'github',
@@ -377,9 +414,17 @@ export class SkillsBackendService {
     const resultJson = installSkillFromDir(this.codexHome, sourceDir, skillJson);
     await this.removeDir(tempDir);
 
-    const parsed = JSON.parse(resultJson) as SkillEntryJson;
+    const trimmedResult = resultJson.trim();
+    if (trimmedResult.length === 0 || trimmedResult === '{}') {
+      throw new Error('installSkillFromDir 返回空结果');
+    }
+
+    const parsed = JSON.parse(trimmedResult) as InstallSkillResultJson;
+    if (typeof parsed.error === 'string' && parsed.error.length > 0) {
+      throw new Error(`installSkillFromDir failed: ${parsed.error}`);
+    }
     if (parsed.id === undefined || parsed.id.length === 0) {
-      throw new Error(`installSkillFromDir failed: ${resultJson}`);
+      throw new Error(`installSkillFromDir 返回无效结果: ${trimmedResult}`);
     }
 
     return InstalledSkill.fromJSON(parsed);
@@ -505,12 +550,108 @@ export class SkillsBackendService {
   }
 
   private async fetchRepoSkills(repo: SkillRepo): Promise<DiscoverableSkill[]> {
+    const apiResult = await this.discoverRepoSkillsViaApi(repo);
+    if (apiResult !== null) {
+      return apiResult.skills;
+    }
+
     const downloadResult = await this.downloadAndExtractRepo(repo);
     const tempDir = downloadResult.tempDir;
     const usedBranch = downloadResult.usedBranch;
     const skills = await this.scanDirRecursive(tempDir, tempDir, repo, usedBranch);
     await this.removeDir(tempDir);
     return skills;
+  }
+
+  private async discoverRepoSkillsViaApi(repo: SkillRepo): Promise<DiscoverViaApiResult | null> {
+    const branches = [repo.branch];
+    if (repo.branch !== 'main') {
+      branches.push('main');
+    }
+    if (repo.branch !== 'master') {
+      branches.push('master');
+    }
+
+    for (const branch of branches) {
+      const tree = await this.fetchRepoTree(repo, branch);
+      if (tree === null || tree.truncated) {
+        continue;
+      }
+
+      const manifestPaths: string[] = tree.tree
+        .filter((entry: TreeEntry): boolean => entry.type === 'blob' && (entry.path.endsWith('/SKILL.md') || entry.path === 'SKILL.md'))
+        .map((entry: TreeEntry): string => entry.path);
+
+      if (manifestPaths.length === 0) {
+        return { usedBranch: branch, skills: [] };
+      }
+
+      const skills: DiscoverableSkill[] = [];
+      for (const manifestPath of manifestPaths) {
+        const directory = manifestPath === 'SKILL.md'
+          ? ''
+          : manifestPath.substring(0, manifestPath.length - '/SKILL.md'.length);
+        const fallbackName = this.isRootSkillDirectory(directory) ? repo.name : directory;
+        const metadata = await this.fetchSkillMetadataFromGitHub(repo, branch, manifestPath, fallbackName);
+        const keyDirectory = this.isRootSkillDirectory(directory) ? '.' : directory;
+        skills.push(new DiscoverableSkill(
+          `${repo.owner}/${repo.name}:${keyDirectory}`,
+          metadata.name,
+          metadata.description,
+          directory,
+          this.buildSkillReadmeUrl(repo.owner, repo.name, branch, directory),
+          repo.owner,
+          repo.name,
+          branch
+        ));
+      }
+
+      return { usedBranch: branch, skills: skills };
+    }
+
+    return null;
+  }
+
+  private async fetchRepoTree(repo: SkillRepo, branch: string): Promise<TreeResponse | null> {
+    const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${branch}?recursive=1`;
+    try {
+      const httpRequest = http.createHttp();
+      const response = await httpRequest.request(treeUrl, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/vnd.github.v3+json' },
+        connectTimeout: DOWNLOAD_TIMEOUT_MS,
+        readTimeout: DOWNLOAD_TIMEOUT_MS
+      });
+      if (response.responseCode !== 200) {
+        return null;
+      }
+      return JSON.parse(response.result as string) as TreeResponse;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  private async fetchSkillMetadataFromGitHub(
+    repo: SkillRepo,
+    branch: string,
+    manifestPath: string,
+    fallbackName: string
+  ): Promise<SkillMetadata> {
+    const rawUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${manifestPath}`;
+    try {
+      const httpRequest = http.createHttp();
+      const response = await httpRequest.request(rawUrl, {
+        method: http.RequestMethod.GET,
+        connectTimeout: DOWNLOAD_TIMEOUT_MS,
+        readTimeout: DOWNLOAD_TIMEOUT_MS
+      });
+      if (response.responseCode !== 200) {
+        return { name: fallbackName, description: '' };
+      }
+      return this.parseSkillMetadataText(response.result as string, fallbackName);
+    } catch (_) {
+      return { name: fallbackName, description: '' };
+    }
   }
 
   private async scanDirRecursive(
@@ -524,17 +665,19 @@ export class SkillsBackendService {
       fileIo.statSync(skillMdPath);
 
       const directory = currentDir === baseDir
-        ? repo.name
+        ? ''
         : currentDir.substring(baseDir.length + 1);
+      const fallbackName = this.isRootSkillDirectory(directory) ? repo.name : directory;
 
-      const metadata = this.parseSkillMetadata(skillMdPath, directory);
+      const metadata = this.parseSkillMetadata(skillMdPath, fallbackName);
       const name = metadata.name;
       const description = metadata.description;
+      const keyDirectory = this.isRootSkillDirectory(directory) ? '.' : directory;
 
       results.push(new DiscoverableSkill(
-        `${repo.owner}/${repo.name}:${directory}`,
+        `${repo.owner}/${repo.name}:${keyDirectory}`,
         name, description, directory,
-        `https://github.com/${repo.owner}/${repo.name}/blob/${usedBranch}/${directory}/SKILL.md`,
+        this.buildSkillReadmeUrl(repo.owner, repo.name, usedBranch, directory),
         repo.owner, repo.name, usedBranch
       ));
 
@@ -933,6 +1076,8 @@ export class SkillsBackendService {
         const httpRequest = http.createHttp();
         const response = await httpRequest.request(url, {
           method: http.RequestMethod.GET,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          maxLimit: DOWNLOAD_MAX_BYTES,
           connectTimeout: DOWNLOAD_TIMEOUT_MS,
           readTimeout: DOWNLOAD_TIMEOUT_MS
         });
@@ -1028,6 +1173,10 @@ export class SkillsBackendService {
       }
 
       const treeData: TreeResponse = JSON.parse(treeResponse.result as string) as TreeResponse;
+      if (treeData.truncated) {
+        return false;
+      }
+
       const files: TreeEntry[] = [];
       for (let i = 0; i < treeData.tree.length; i++) {
         if (treeData.tree[i].type === 'blob') {
@@ -1035,11 +1184,14 @@ export class SkillsBackendService {
         }
       }
 
+      let downloadedCount = 0;
       for (let i = 0; i < files.length; i++) {
         const entry = files[i];
         const rawUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${entry.path}`;
         const fileResponse = await httpRequest.request(rawUrl, {
           method: http.RequestMethod.GET,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          maxLimit: DOWNLOAD_MAX_BYTES,
           connectTimeout: DOWNLOAD_TIMEOUT_MS,
           readTimeout: DOWNLOAD_TIMEOUT_MS
         });
@@ -1056,8 +1208,14 @@ export class SkillsBackendService {
         const content: ArrayBuffer = fileResponse.result as ArrayBuffer;
         fileIo.writeSync(file.fd, content);
         fileIo.closeSync(file);
+        downloadedCount += 1;
       }
-      return true;
+
+      if (downloadedCount === 0) {
+        return false;
+      }
+
+      return this.hasAnySkillManifest(destDir);
     } catch (e) {
       console.warn(`GitHub API download failed: ${JSON.stringify(e)}`);
       return false;
@@ -1087,6 +1245,25 @@ export class SkillsBackendService {
     } catch (_) {
       return false;
     }
+  }
+
+  private isSkillDir(path: string): boolean {
+    try {
+      const stat = fileIo.statSync(path);
+      if (!stat.isDirectory()) {
+        return false;
+      }
+      fileIo.statSync(`${path}/SKILL.md`);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  private hasAnySkillManifest(root: string): boolean {
+    const skillDirs: string[] = [];
+    this.findSkillDirs(root, skillDirs);
+    return skillDirs.length > 0;
   }
 
   private async copyDirRecursive(src: string, dest: string): Promise<void> {
@@ -1151,51 +1328,53 @@ export class SkillsBackendService {
   ): SkillMetadata {
     try {
       const content: string = fileIo.readTextSync(skillMdPath) as string;
-      const clean: string = content.replace(/^﻿/, ''); // 去除 BOM
-
-      const parts: string[] = clean.split('---');
-      if (parts.length < 3) {
-        const fallbackMetadata: SkillMetadata = {
-          name: fallbackName,
-          description: ''
-        };
-        return fallbackMetadata;
-      }
-
-      const frontMatter: string = parts[1].trim();
-      const lines: string[] = frontMatter.split('\n');
-      let name: string | null = null;
-      let description: string | null = null;
-
-      for (const line of lines) {
-        const colonIdx: number = line.indexOf(':');
-        if (colonIdx === -1) {
-          continue;
-        }
-
-        const key: string = line.substring(0, colonIdx).trim();
-        const value: string = line.substring(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
-
-        if (key === 'name') {
-          name = value;
-        }
-        if (key === 'description') {
-          description = value;
-        }
-      }
-
-      const parsedMetadata: SkillMetadata = {
-        name: name || fallbackName,
-        description: description || ''
-      };
-      return parsedMetadata;
+      return this.parseSkillMetadataText(content, fallbackName);
     } catch (_) {
       const fallbackMetadata: SkillMetadata = {
-          name: fallbackName,
-          description: ''
-        };
-        return fallbackMetadata;
+        name: fallbackName,
+        description: ''
+      };
+      return fallbackMetadata;
     }
+  }
+
+  private parseSkillMetadataText(content: string, fallbackName: string): SkillMetadata {
+    const clean: string = content.replace(/^﻿/, '');
+
+    const parts: string[] = clean.split('---');
+    if (parts.length < 3) {
+      return {
+        name: fallbackName,
+        description: ''
+      };
+    }
+
+    const frontMatter: string = parts[1].trim();
+    const lines: string[] = frontMatter.split('\n');
+    let name: string | null = null;
+    let description: string | null = null;
+
+    for (const line of lines) {
+      const colonIdx: number = line.indexOf(':');
+      if (colonIdx === -1) {
+        continue;
+      }
+
+      const key: string = line.substring(0, colonIdx).trim();
+      const value: string = line.substring(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+
+      if (key === 'name') {
+        name = value;
+      }
+      if (key === 'description') {
+        description = value;
+      }
+    }
+
+    return {
+      name: name || fallbackName,
+      description: description || ''
+    };
   }
 
   // ================================================================
@@ -1211,28 +1390,40 @@ export class SkillsBackendService {
    * 3. 根目录有 SKILL.md 则使用根目录
    */
   private resolveSourceDir(root: string, rawDirectory: string): string | null {
+    if (this.isRootSkillDirectory(rawDirectory)) {
+      return this.isSkillDir(root) ? root : null;
+    }
+
     // 1. 直接匹配
     const direct = `${root}/${rawDirectory}`;
-    try {
-      const stat = fileIo.statSync(direct);
-      if (stat.isDirectory()) {
-        return direct;
-      }
-    } catch (_) { /* not found */ }
+    if (this.isSkillDir(direct)) {
+      return direct;
+    }
 
-    // 2. 递归查找同名目录
     const parts = rawDirectory.split('/');
     const targetName = parts[parts.length - 1];
+
+    // 2. 常见 skills 目录布局
+    const underSkills = `${root}/skills/${rawDirectory}`;
+    if (this.isSkillDir(underSkills)) {
+      return underSkills;
+    }
+
+    const underSkillsBase = `${root}/skills/${targetName}`;
+    if (this.isSkillDir(underSkillsBase)) {
+      return underSkillsBase;
+    }
+
+    // 3. 递归查找同名目录
     const found = this.findDirByName(root, targetName, 0);
     if (found) {
       return found;
     }
 
-    // 3. 根目录有 SKILL.md
-    try {
-      fileIo.statSync(`${root}/SKILL.md`);
+    // 4. 根目录有 SKILL.md
+    if (this.isSkillDir(root)) {
       return root;
-    } catch (_) { /* no SKILL.md at root */ }
+    }
 
     return null;
   }
