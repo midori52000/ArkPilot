@@ -16,16 +16,38 @@ import zlib from '@ohos.zlib';
 const GITHUB_API_BASE = 'https://github.com';
 const SKILLS_SH_API = 'https://skills.sh/api/search';
 const DOWNLOAD_TIMEOUT_MS = 60000;
+const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
 
 interface DownloadAndExtractResult {
   tempDir: string;
   usedBranch: string;
 }
 
+interface DiscoverViaApiResult {
+  usedBranch: string;
+  skills: DiscoverableSkill[];
+}
+
+interface TreeEntry {
+  path: string;
+  type: string;
+  sha: string;
+}
+
+interface TreeResponse {
+  tree: TreeEntry[];
+  truncated: boolean;
+}
 
 interface SkillMetadata {
   name: string;
   description: string;
+}
+
+interface ImportSourceEntry {
+  sourcePath: string;
+  installName: string;
+  fallbackName: string;
 }
 
 interface SkillsShApiItemJson {
@@ -40,6 +62,10 @@ interface SkillsShApiResponse {
   skills: SkillsShApiItemJson[];
   count: number;
   query: string;
+}
+
+interface InstallSkillResultJson extends SkillEntryJson {
+  error?: string;
 }
 
 export enum SkillErrorCode {
@@ -136,6 +162,38 @@ export class SkillsBackendService {
       return null;
     }
     return trimmed;
+  }
+
+  private normalizeInstallName(raw: string): string | null {
+    const normalized = raw.trim()
+      .replace(/[^a-zA-Z0-9\-_]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[.-]+/, '')
+      .replace(/[.-]+$/g, '');
+    return this.sanitizeInstallName(normalized);
+  }
+
+  private isRootSkillDirectory(directory: string): boolean {
+    return directory.trim().length === 0;
+  }
+
+  private displaySkillDirectory(directory: string): string {
+    return this.isRootSkillDirectory(directory) ? '(仓库根目录)' : directory;
+  }
+
+  private buildSkillReadmeUrl(owner: string, repoName: string, branch: string, directory: string): string {
+    const relativePath = this.isRootSkillDirectory(directory) ? 'SKILL.md' : `${directory}/SKILL.md`;
+    return `https://github.com/${owner}/${repoName}/blob/${branch}/${relativePath}`;
+  }
+
+  private getPathBaseName(path: string): string {
+    const parts = path.split(/[\\/]/).filter((part: string): boolean => part.length > 0);
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  private getZipBaseName(zipPath: string): string {
+    const fileName = this.getPathBaseName(zipPath);
+    return fileName.replace(/\.zip$/i, '');
   }
 
   // ================================================================
@@ -272,8 +330,10 @@ export class SkillsBackendService {
    */
   async installFromGithub(skill: DiscoverableSkill): Promise<InstalledSkill> {
     // Step 1: 校验
-    const sourceRel = this.sanitizeSourcePath(skill.directory);
-    if (!sourceRel) {
+    const sourceRel = this.isRootSkillDirectory(skill.directory)
+      ? ''
+      : this.sanitizeSourcePath(skill.directory);
+    if (sourceRel === null) {
       throw new SkillError(
         SkillErrorCode.INVALID_SKILL_DIRECTORY,
         `directory=${skill.directory}`,
@@ -281,8 +341,10 @@ export class SkillsBackendService {
       );
     }
 
-    const segments = sourceRel.split('/');
-    const installName = this.sanitizeInstallName(segments[segments.length - 1]);
+    const installNameRaw = this.isRootSkillDirectory(sourceRel)
+      ? skill.repoName
+      : sourceRel.split('/')[sourceRel.split('/').length - 1];
+    const installName = this.sanitizeInstallName(installNameRaw);
     if (!installName) {
       throw new SkillError(
         SkillErrorCode.INVALID_SKILL_DIRECTORY,
@@ -325,18 +387,18 @@ export class SkillsBackendService {
     const tempDir = downloadResult.tempDir;
     const usedBranch = downloadResult.usedBranch;
 
-    const sourceDir = this.resolveSourceDir(tempDir, skill.directory);
+    const sourceDir = this.resolveSourceDir(tempDir, sourceRel);
     if (!sourceDir) {
       await this.removeDir(tempDir);
       throw new SkillError(
         SkillErrorCode.SKILL_DIR_NOT_FOUND,
         `directory=${skill.directory}, repo=${skill.repoOwner}/${skill.repoName}`,
-        `在 ${skill.repoOwner}/${skill.repoName} 中未找到目录 ${skill.directory}`
+        `在 ${skill.repoOwner}/${skill.repoName} 中未找到目录 ${this.displaySkillDirectory(skill.directory)}`
       );
     }
 
     // Step 5: 通过 Rust host 复制到 SSOT + 解析 SKILL.md + 计算哈希 + 注册
-    const readmeUrl = `https://github.com/${skill.repoOwner}/${skill.repoName}/blob/${usedBranch}/${skill.directory}/SKILL.md`;
+    const readmeUrl = this.buildSkillReadmeUrl(skill.repoOwner, skill.repoName, usedBranch, sourceRel);
     const skillJson = JSON.stringify({
       id: skill.key,
       source: 'github',
@@ -352,9 +414,17 @@ export class SkillsBackendService {
     const resultJson = installSkillFromDir(this.codexHome, sourceDir, skillJson);
     await this.removeDir(tempDir);
 
-    const parsed = JSON.parse(resultJson) as SkillEntryJson;
+    const trimmedResult = resultJson.trim();
+    if (trimmedResult.length === 0 || trimmedResult === '{}') {
+      throw new Error('installSkillFromDir 返回空结果');
+    }
+
+    const parsed = JSON.parse(trimmedResult) as InstallSkillResultJson;
+    if (typeof parsed.error === 'string' && parsed.error.length > 0) {
+      throw new Error(`installSkillFromDir failed: ${parsed.error}`);
+    }
     if (parsed.id === undefined || parsed.id.length === 0) {
-      throw new Error(`installSkillFromDir failed: ${resultJson}`);
+      throw new Error(`installSkillFromDir 返回无效结果: ${trimmedResult}`);
     }
 
     return InstalledSkill.fromJSON(parsed);
@@ -480,12 +550,108 @@ export class SkillsBackendService {
   }
 
   private async fetchRepoSkills(repo: SkillRepo): Promise<DiscoverableSkill[]> {
+    const apiResult = await this.discoverRepoSkillsViaApi(repo);
+    if (apiResult !== null) {
+      return apiResult.skills;
+    }
+
     const downloadResult = await this.downloadAndExtractRepo(repo);
     const tempDir = downloadResult.tempDir;
     const usedBranch = downloadResult.usedBranch;
     const skills = await this.scanDirRecursive(tempDir, tempDir, repo, usedBranch);
     await this.removeDir(tempDir);
     return skills;
+  }
+
+  private async discoverRepoSkillsViaApi(repo: SkillRepo): Promise<DiscoverViaApiResult | null> {
+    const branches = [repo.branch];
+    if (repo.branch !== 'main') {
+      branches.push('main');
+    }
+    if (repo.branch !== 'master') {
+      branches.push('master');
+    }
+
+    for (const branch of branches) {
+      const tree = await this.fetchRepoTree(repo, branch);
+      if (tree === null || tree.truncated) {
+        continue;
+      }
+
+      const manifestPaths: string[] = tree.tree
+        .filter((entry: TreeEntry): boolean => entry.type === 'blob' && (entry.path.endsWith('/SKILL.md') || entry.path === 'SKILL.md'))
+        .map((entry: TreeEntry): string => entry.path);
+
+      if (manifestPaths.length === 0) {
+        return { usedBranch: branch, skills: [] };
+      }
+
+      const skills: DiscoverableSkill[] = [];
+      for (const manifestPath of manifestPaths) {
+        const directory = manifestPath === 'SKILL.md'
+          ? ''
+          : manifestPath.substring(0, manifestPath.length - '/SKILL.md'.length);
+        const fallbackName = this.isRootSkillDirectory(directory) ? repo.name : directory;
+        const metadata = await this.fetchSkillMetadataFromGitHub(repo, branch, manifestPath, fallbackName);
+        const keyDirectory = this.isRootSkillDirectory(directory) ? '.' : directory;
+        skills.push(new DiscoverableSkill(
+          `${repo.owner}/${repo.name}:${keyDirectory}`,
+          metadata.name,
+          metadata.description,
+          directory,
+          this.buildSkillReadmeUrl(repo.owner, repo.name, branch, directory),
+          repo.owner,
+          repo.name,
+          branch
+        ));
+      }
+
+      return { usedBranch: branch, skills: skills };
+    }
+
+    return null;
+  }
+
+  private async fetchRepoTree(repo: SkillRepo, branch: string): Promise<TreeResponse | null> {
+    const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${branch}?recursive=1`;
+    try {
+      const httpRequest = http.createHttp();
+      const response = await httpRequest.request(treeUrl, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/vnd.github.v3+json' },
+        connectTimeout: DOWNLOAD_TIMEOUT_MS,
+        readTimeout: DOWNLOAD_TIMEOUT_MS
+      });
+      if (response.responseCode !== 200) {
+        return null;
+      }
+      return JSON.parse(response.result as string) as TreeResponse;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  private async fetchSkillMetadataFromGitHub(
+    repo: SkillRepo,
+    branch: string,
+    manifestPath: string,
+    fallbackName: string
+  ): Promise<SkillMetadata> {
+    const rawUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${manifestPath}`;
+    try {
+      const httpRequest = http.createHttp();
+      const response = await httpRequest.request(rawUrl, {
+        method: http.RequestMethod.GET,
+        connectTimeout: DOWNLOAD_TIMEOUT_MS,
+        readTimeout: DOWNLOAD_TIMEOUT_MS
+      });
+      if (response.responseCode !== 200) {
+        return { name: fallbackName, description: '' };
+      }
+      return this.parseSkillMetadataText(response.result as string, fallbackName);
+    } catch (_) {
+      return { name: fallbackName, description: '' };
+    }
   }
 
   private async scanDirRecursive(
@@ -499,17 +665,19 @@ export class SkillsBackendService {
       fileIo.statSync(skillMdPath);
 
       const directory = currentDir === baseDir
-        ? repo.name
+        ? ''
         : currentDir.substring(baseDir.length + 1);
+      const fallbackName = this.isRootSkillDirectory(directory) ? repo.name : directory;
 
-      const metadata = this.parseSkillMetadata(skillMdPath, directory);
+      const metadata = this.parseSkillMetadata(skillMdPath, fallbackName);
       const name = metadata.name;
       const description = metadata.description;
+      const keyDirectory = this.isRootSkillDirectory(directory) ? '.' : directory;
 
       results.push(new DiscoverableSkill(
-        `${repo.owner}/${repo.name}:${directory}`,
+        `${repo.owner}/${repo.name}:${keyDirectory}`,
         name, description, directory,
-        `https://github.com/${repo.owner}/${repo.name}/blob/${usedBranch}/${directory}/SKILL.md`,
+        this.buildSkillReadmeUrl(repo.owner, repo.name, usedBranch, directory),
         repo.owner, repo.name, usedBranch
       ));
 
@@ -576,45 +744,19 @@ export class SkillsBackendService {
     return unmanaged;
   }
 
-  async importFromLocal(directories: string[]): Promise<InstalledSkill[]> {
-    const installed = await this.getInstalled();
-    const imported: InstalledSkill[] = [];
-    const ssotDir = this.getSsotDir();
+  async importFromLocal(directories: string[], source: SkillSource = 'local'): Promise<InstalledSkill[]> {
+    const sources: ImportSourceEntry[] = [];
 
     for (const sourcePath of directories) {
-      const parts = sourcePath.split('/');
-      const dirName = parts[parts.length - 1];
+      const dirName = this.getPathBaseName(sourcePath);
       const installName = this.sanitizeInstallName(dirName);
       if (!installName) {
         continue;
       }
-
-      if (installed.some((s: InstalledSkill): boolean => s.directory.toLowerCase() === installName.toLowerCase())) {
-        continue;
-      }
-
-      const dest = `${ssotDir}/${installName}`;
-      await this.copyDirRecursive(sourcePath, dest);
-
-      const metadata = this.parseSkillMetadata(`${dest}/SKILL.md`, installName);
-      const name = metadata.name;
-      const description = metadata.description;
-      const contentHash = computeDirHash(dest);
-
-      const entry = new InstalledSkill(
-        `local:${installName}`, name, description, installName,
-        'local', '', '', '', '', true, Date.now(), contentHash, 0
-      );
-
-      installed.push(entry);
-      imported.push(entry);
+      sources.push({ sourcePath, installName, fallbackName: installName });
     }
 
-    if (imported.length > 0) {
-      await this.saveInstalled(installed);
-    }
-
-    return imported;
+    return this.importResolvedSources(sources, source);
   }
 
   /**
@@ -640,7 +782,23 @@ export class SkillsBackendService {
         );
       }
 
-      const result = await this.importFromLocal(skillDirs);
+      const sources = this.resolveZipImportSources(zipPath, tempDir, skillDirs);
+      if (sources.length === 0) {
+        throw new SkillError(
+          SkillErrorCode.INVALID_SKILL_DIRECTORY,
+          `zipPath=${zipPath}`,
+          'ZIP 已解压，但未找到可安装的 Skill 目录名，请检查 ZIP 文件名或目录名是否仅包含字母、数字、-、_'
+        );
+      }
+
+      const result = await this.importResolvedSources(sources, 'zip');
+      if (result.length === 0) {
+        throw new SkillError(
+          SkillErrorCode.SKILL_DIRECTORY_CONFLICT,
+          `zipPath=${zipPath}`,
+          'ZIP 中的 Skill 没有导入任何新内容；如果同名 Skill 已存在，请先卸载或清理后再重试'
+        );
+      }
       return result;
     } finally {
       try { await this.removeDir(tempDir); } catch (_) { /* */ }
@@ -668,6 +826,79 @@ export class SkillsBackendService {
         } catch (_) { /* */ }
       }
     } catch (_) { /* */ }
+  }
+
+  private resolveZipImportSources(zipPath: string, tempDir: string, skillDirs: string[]): ImportSourceEntry[] {
+    const results: ImportSourceEntry[] = [];
+    const seen = new Set<string>();
+    const zipBaseName = this.getZipBaseName(zipPath);
+
+    for (const sourcePath of skillDirs) {
+      let installName: string | null = null;
+
+      if (sourcePath === tempDir) {
+        const metadata = this.parseSkillMetadata(`${sourcePath}/SKILL.md`, zipBaseName);
+        installName = this.normalizeInstallName(metadata.name) || this.normalizeInstallName(zipBaseName);
+      } else {
+        const dirName = this.getPathBaseName(sourcePath);
+        installName = this.sanitizeInstallName(dirName) || this.normalizeInstallName(dirName);
+      }
+
+      if (!installName) {
+        continue;
+      }
+
+      const key = installName.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      results.push({ sourcePath, installName, fallbackName: installName });
+    }
+
+    return results;
+  }
+
+  private async importResolvedSources(sources: ImportSourceEntry[], source: SkillSource): Promise<InstalledSkill[]> {
+    const installed = await this.getInstalled();
+    const imported: InstalledSkill[] = [];
+    const ssotDir = this.getSsotDir();
+
+    for (const sourceEntry of sources) {
+      const installName = sourceEntry.installName;
+      if (installed.some((s: InstalledSkill): boolean => s.directory.toLowerCase() === installName.toLowerCase())) {
+        continue;
+      }
+
+      const dest = `${ssotDir}/${installName}`;
+      if (this.pathExists(dest)) {
+        throw new SkillError(
+          SkillErrorCode.SKILL_DIRECTORY_CONFLICT,
+          `directory=${installName}`,
+          `Skill 目录 ${installName} 已存在，请先卸载现有 Skill 或清理残留目录后再重试`
+        );
+      }
+      await this.copyDirRecursive(sourceEntry.sourcePath, dest);
+
+      const metadata = this.parseSkillMetadata(`${dest}/SKILL.md`, sourceEntry.fallbackName);
+      const name = metadata.name;
+      const description = metadata.description;
+      const contentHash = computeDirHash(dest);
+
+      const entry = new InstalledSkill(
+        `${source}:${installName}`, name, description, installName,
+        source, '', '', '', '', true, Date.now(), contentHash, 0
+      );
+
+      installed.push(entry);
+      imported.push(entry);
+    }
+
+    if (imported.length > 0) {
+      await this.saveInstalled(installed);
+    }
+
+    return imported;
   }
 
   // ================================================================
@@ -845,6 +1076,8 @@ export class SkillsBackendService {
         const httpRequest = http.createHttp();
         const response = await httpRequest.request(url, {
           method: http.RequestMethod.GET,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          maxLimit: DOWNLOAD_MAX_BYTES,
           connectTimeout: DOWNLOAD_TIMEOUT_MS,
           readTimeout: DOWNLOAD_TIMEOUT_MS
         });
@@ -940,6 +1173,10 @@ export class SkillsBackendService {
       }
 
       const treeData: TreeResponse = JSON.parse(treeResponse.result as string) as TreeResponse;
+      if (treeData.truncated) {
+        return false;
+      }
+
       const files: TreeEntry[] = [];
       for (let i = 0; i < treeData.tree.length; i++) {
         if (treeData.tree[i].type === 'blob') {
@@ -947,11 +1184,14 @@ export class SkillsBackendService {
         }
       }
 
+      let downloadedCount = 0;
       for (let i = 0; i < files.length; i++) {
         const entry = files[i];
         const rawUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${entry.path}`;
         const fileResponse = await httpRequest.request(rawUrl, {
           method: http.RequestMethod.GET,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
+          maxLimit: DOWNLOAD_MAX_BYTES,
           connectTimeout: DOWNLOAD_TIMEOUT_MS,
           readTimeout: DOWNLOAD_TIMEOUT_MS
         });
@@ -968,8 +1208,14 @@ export class SkillsBackendService {
         const content: ArrayBuffer = fileResponse.result as ArrayBuffer;
         fileIo.writeSync(file.fd, content);
         fileIo.closeSync(file);
+        downloadedCount += 1;
       }
-      return true;
+
+      if (downloadedCount === 0) {
+        return false;
+      }
+
+      return this.hasAnySkillManifest(destDir);
     } catch (e) {
       console.warn(`GitHub API download failed: ${JSON.stringify(e)}`);
       return false;
@@ -977,146 +1223,48 @@ export class SkillsBackendService {
   }
 
   /**
-   * 解压 ZIP 文件（最小实现：读取 central directory，逐条目提取）
+   * 使用系统 ZIP 解压能力将整个压缩包解到目标目录。
    */
   private async extractZip(zipPath: string, destDir: string): Promise<void> {
-    const fd = fileIo.openSync(zipPath, fileIo.OpenMode.READ_ONLY);
-    const fileSize: number = fileIo.statSync(zipPath).size;
-
-    const readBytes = (offset: number, length: number): ArrayBuffer => {
-      const buf = new ArrayBuffer(length);
-      fileIo.readSync(fd.fd, buf, { offset: offset, length: length });
-      return buf;
-    };
-
-    const readU16 = (offset: number): number => {
-      const buf = readBytes(offset, 2);
-      const view = new DataView(buf);
-      return view.getUint16(0, true);
-    };
-
-    const readU32 = (offset: number): number => {
-      const buf = readBytes(offset, 4);
-      const view = new DataView(buf);
-      return view.getUint32(0, true);
-    };
-
-    // 查找 End of Central Directory
-    let eocdOffset = -1;
-    const scanStart = Math.max(0, fileSize - 65557);
-    for (let i = fileSize - 21; i >= scanStart; i--) {
-      if (readU32(i) === 0x06054b50) {
-        eocdOffset = i;
-        break;
-      }
-    }
-
-    if (eocdOffset < 0) {
-      fileIo.closeSync(fd);
-      throw new Error('Invalid ZIP: no EOCD record');
-    }
-
-    const centralDirOffset = readU32(eocdOffset + 16);
-    const numEntries = readU16(eocdOffset + 10);
-
-    // 解析 Central Directory 并提取文件
-    let offset = centralDirOffset;
-    for (let i = 0; i < numEntries; i++) {
-      if (readU32(offset) !== 0x02014b50) {
-        break;
-      }
-
-      const compressionMethod = readU16(offset + 10);
-      const compressedSize = readU32(offset + 20);
-      const uncompressedSize = readU32(offset + 24);
-      const nameLen = readU16(offset + 28);
-      const extraLen = readU16(offset + 30);
-      const commentLen = readU16(offset + 32);
-      const localHeaderOffset = readU32(offset + 42);
-
-      const nameBytes = readBytes(offset + 46, nameLen);
-      const name = this.arrayBufferToString(nameBytes);
-
-      offset += 46 + nameLen + extraLen + commentLen;
-
-      if (name.endsWith('/')) {
-        fileIo.mkdirSync(`${destDir}/${name}`, true);
-        continue;
-      }
-
-      // 从 local header 读取实际数据偏移
-      const localNameLen = readU16(localHeaderOffset + 26);
-      const localExtraLen = readU16(localHeaderOffset + 28);
-      const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
-
-      const compressedData = readBytes(dataOffset, compressedSize);
-
-      const destPath = `${destDir}/${name}`;
-      const parentDir = destPath.substring(0, destPath.lastIndexOf('/'));
-      fileIo.mkdirSync(parentDir, true);
-
-      if (compressionMethod === 0) {
-        // Stored (无压缩)
-        const file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-        fileIo.writeSync(file.fd, compressedData);
-        fileIo.closeSync(file);
-      } else if (compressionMethod === 8) {
-        // Deflate - 通过 zlib 解压
-        await this.inflateDeflateData(compressedData, uncompressedSize, destPath);
-      } else {
-        console.warn(`Unsupported compression method ${compressionMethod} for ${name}`);
-      }
-    }
-
-    fileIo.closeSync(fd);
-  }
-
-  private arrayBufferToString(buf: ArrayBuffer): string {
-    const bytes = new Uint8Array(buf);
-    let result = '';
-    for (let i = 0; i < bytes.length; i++) {
-      result += String.fromCharCode(bytes[i]);
-    }
-    return result;
-  }
-
-  private async inflateDeflateData(compressed: ArrayBuffer, expectedSize: number, destPath: string): Promise<void> {
-    // 使用 zlib gzip 格式包装 deflate 数据进行解压
-    // deflate 数据需要 2 字节 zlib header + deflate stream + adler32 校验
-    // 构造 zlib 格式包装
-    const zlibHeader = new Uint8Array([0x78, 0x01]); // zlib header, no compression
-    const compressedBytes = new Uint8Array(compressed);
-    const wrapped = new ArrayBuffer(2 + compressedBytes.length + 4);
-    const wrappedView = new Uint8Array(wrapped);
-    wrappedView.set(zlibHeader, 0);
-    wrappedView.set(compressedBytes, 2);
-    // adler32 checksum (placeholder)
-    wrappedView[wrappedView.length - 4] = 0;
-    wrappedView[wrappedView.length - 3] = 0;
-    wrappedView[wrappedView.length - 2] = 0;
-    wrappedView[wrappedView.length - 1] = 1;
-
-    // 写入临时文件
-    const tmpPath = `${destPath}.ztmp`;
-    const tmpFile = fileIo.openSync(tmpPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-    fileIo.writeSync(tmpFile.fd, wrapped);
-    fileIo.closeSync(tmpFile);
-
     try {
-      await zlib.decompressFile(tmpPath, destPath, { level: zlib.CompressLevel.COMPRESS_LEVEL_BEST_SPEED });
-      fileIo.unlinkSync(tmpPath);
+      await zlib.decompressFile(zipPath, destDir);
     } catch (e) {
-      // 如果 zlib 解压失败，尝试直接写入压缩数据（可能是 stored 误标）
-      try { fileIo.unlinkSync(tmpPath); } catch (_) { /* */ }
-      const file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      fileIo.writeSync(file.fd, compressed);
-      fileIo.closeSync(file);
+      const message = e instanceof Error ? e.message : JSON.stringify(e);
+      throw new Error(`解压 ZIP 失败: ${message}`);
     }
   }
 
   // ================================================================
   // 文件操作
   // ================================================================
+
+  private pathExists(path: string): boolean {
+    try {
+      fileIo.statSync(path);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  private isSkillDir(path: string): boolean {
+    try {
+      const stat = fileIo.statSync(path);
+      if (!stat.isDirectory()) {
+        return false;
+      }
+      fileIo.statSync(`${path}/SKILL.md`);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  private hasAnySkillManifest(root: string): boolean {
+    const skillDirs: string[] = [];
+    this.findSkillDirs(root, skillDirs);
+    return skillDirs.length > 0;
+  }
 
   private async copyDirRecursive(src: string, dest: string): Promise<void> {
     fileIo.mkdirSync(dest, true);
@@ -1180,51 +1328,53 @@ export class SkillsBackendService {
   ): SkillMetadata {
     try {
       const content: string = fileIo.readTextSync(skillMdPath) as string;
-      const clean: string = content.replace(/^﻿/, ''); // 去除 BOM
-
-      const parts: string[] = clean.split('---');
-      if (parts.length < 3) {
-        const fallbackMetadata: SkillMetadata = {
-          name: fallbackName,
-          description: ''
-        };
-        return fallbackMetadata;
-      }
-
-      const frontMatter: string = parts[1].trim();
-      const lines: string[] = frontMatter.split('\n');
-      let name: string | null = null;
-      let description: string | null = null;
-
-      for (const line of lines) {
-        const colonIdx: number = line.indexOf(':');
-        if (colonIdx === -1) {
-          continue;
-        }
-
-        const key: string = line.substring(0, colonIdx).trim();
-        const value: string = line.substring(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
-
-        if (key === 'name') {
-          name = value;
-        }
-        if (key === 'description') {
-          description = value;
-        }
-      }
-
-      const parsedMetadata: SkillMetadata = {
-        name: name || fallbackName,
-        description: description || ''
-      };
-      return parsedMetadata;
+      return this.parseSkillMetadataText(content, fallbackName);
     } catch (_) {
       const fallbackMetadata: SkillMetadata = {
-          name: fallbackName,
-          description: ''
-        };
-        return fallbackMetadata;
+        name: fallbackName,
+        description: ''
+      };
+      return fallbackMetadata;
     }
+  }
+
+  private parseSkillMetadataText(content: string, fallbackName: string): SkillMetadata {
+    const clean: string = content.replace(/^﻿/, '');
+
+    const parts: string[] = clean.split('---');
+    if (parts.length < 3) {
+      return {
+        name: fallbackName,
+        description: ''
+      };
+    }
+
+    const frontMatter: string = parts[1].trim();
+    const lines: string[] = frontMatter.split('\n');
+    let name: string | null = null;
+    let description: string | null = null;
+
+    for (const line of lines) {
+      const colonIdx: number = line.indexOf(':');
+      if (colonIdx === -1) {
+        continue;
+      }
+
+      const key: string = line.substring(0, colonIdx).trim();
+      const value: string = line.substring(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+
+      if (key === 'name') {
+        name = value;
+      }
+      if (key === 'description') {
+        description = value;
+      }
+    }
+
+    return {
+      name: name || fallbackName,
+      description: description || ''
+    };
   }
 
   // ================================================================
@@ -1240,28 +1390,40 @@ export class SkillsBackendService {
    * 3. 根目录有 SKILL.md 则使用根目录
    */
   private resolveSourceDir(root: string, rawDirectory: string): string | null {
+    if (this.isRootSkillDirectory(rawDirectory)) {
+      return this.isSkillDir(root) ? root : null;
+    }
+
     // 1. 直接匹配
     const direct = `${root}/${rawDirectory}`;
-    try {
-      const stat = fileIo.statSync(direct);
-      if (stat.isDirectory()) {
-        return direct;
-      }
-    } catch (_) { /* not found */ }
+    if (this.isSkillDir(direct)) {
+      return direct;
+    }
 
-    // 2. 递归查找同名目录
     const parts = rawDirectory.split('/');
     const targetName = parts[parts.length - 1];
+
+    // 2. 常见 skills 目录布局
+    const underSkills = `${root}/skills/${rawDirectory}`;
+    if (this.isSkillDir(underSkills)) {
+      return underSkills;
+    }
+
+    const underSkillsBase = `${root}/skills/${targetName}`;
+    if (this.isSkillDir(underSkillsBase)) {
+      return underSkillsBase;
+    }
+
+    // 3. 递归查找同名目录
     const found = this.findDirByName(root, targetName, 0);
     if (found) {
       return found;
     }
 
-    // 3. 根目录有 SKILL.md
-    try {
-      fileIo.statSync(`${root}/SKILL.md`);
+    // 4. 根目录有 SKILL.md
+    if (this.isSkillDir(root)) {
       return root;
-    } catch (_) { /* no SKILL.md at root */ }
+    }
 
     return null;
   }

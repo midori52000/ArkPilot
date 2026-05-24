@@ -397,13 +397,16 @@ export function computeDirHash(dirPath: string): string {
 
 export function installSkillFromDir(codexHome: string, sourceDir: string, skillJson: string): string {
   if (nativeModuleUnavailable()) {
-    return '{}';
+    return '{"error":"native bridge unavailable"}';
   }
   try {
     const result = nativeBridge!.installSkillFromDir(codexHome, sourceDir, skillJson);
-    return result !== undefined && result !== null && result.length > 0 ? result : '{}';
-  } catch (_err) {
-    return '{}';
+    return result !== undefined && result !== null && result.length > 0
+      ? result
+      : '{"error":"native bridge returned empty result"}';
+  } catch (err) {
+    const message = err instanceof Error ? err.message : JSON.stringify(err);
+    return JSON.stringify({ error: `native bridge exception: ${message}` });
   }
 }
 

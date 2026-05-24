@@ -59,7 +59,7 @@ export class SkillsViewModel {
     const result = await configManagerFacade.installSkill(skill);
     if (!result.ok || result.data === null) {
       this.state.errorText = this.describeActionError(result.error);
-      return;
+      throw new Error(this.state.errorText);
     }
     this.state.installed = [...this.state.installed, result.data];
     this.state.errorText = '';

@@ -128,6 +128,7 @@ struct SettingsPage {
   @State private githubRepoUrl: string = '';
   @State private githubScanResults: DiscoverableSkill[] = [];
   @State private githubScanning: boolean = false;
+  @State private installingSkillKeys: string[] = [];
   @State private skillsShQuery: string = '';
   @State private skillsShResults: SkillsShItem[] = [];
   @State private skillsShSearching: boolean = false;
@@ -152,6 +153,9 @@ struct SettingsPage {
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private prompts: PromptRecord[] = [];
   @State private selectedPromptId: string = '';
+  @State private pendingDeletePromptId: string = '';
+  @State private pendingDeletePromptName: string = '';
+  @State private showPromptDeleteDialog: boolean = false;
   @State private promptDraftName: string = '';
   @State private promptDraftSummary: string = '';
   @State private promptDraftContent: string = '';
@@ -608,14 +612,98 @@ struct SettingsPage {
       });
   }
 
-  private installScannedSkill(skill: DiscoverableSkill): void {
+  private isSkillInstalling(key: string): boolean {
+    return this.installingSkillKeys.includes(key);
+  }
+
+  private setSkillInstalling(key: string, installing: boolean): void {
+    if (installing) {
+      if (!this.installingSkillKeys.includes(key)) {
+        this.installingSkillKeys = [...this.installingSkillKeys, key];
+      }
+      return;
+    }
+    this.installingSkillKeys = this.installingSkillKeys.filter((item: string) => item !== key);
+  }
+
+  private normalizeSkillMatchText(value: string): string {
+    return value.trim().toLowerCase().replace(/[\s._-]+/g, '');
+  }
+
+  private matchesSkillsShHint(item: SkillsShItem, skill: DiscoverableSkill): boolean {
+    const hint = this.normalizeSkillMatchText(item.directory);
+    if (hint.length === 0) {
+      return false;
+    }
+
+    const candidates: string[] = [skill.directory];
+    if (skill.directory.trim().length === 0) {
+      candidates.push('.', skill.repoName, skill.name);
+    } else {
+      const parts = skill.directory.split('/').filter((part: string) => part.length > 0);
+      if (parts.length > 0) {
+        candidates.push(parts[parts.length - 1]);
+      }
+    }
+
+    return candidates.some((candidate: string) => this.normalizeSkillMatchText(candidate) === hint);
+  }
+
+  private resolveSkillsShCandidate(item: SkillsShItem, skills: DiscoverableSkill[]): DiscoverableSkill | null {
+    if (skills.length === 0) {
+      return null;
+    }
+    if (skills.length === 1) {
+      return skills[0];
+    }
+
+    const normalizedName = this.normalizeSkillMatchText(item.name);
+    const nameMatches = skills.filter((skill: DiscoverableSkill) =>
+      this.normalizeSkillMatchText(skill.name) === normalizedName
+    );
+    if (nameMatches.length === 1) {
+      return nameMatches[0];
+    }
+
+    const hintPool = nameMatches.length > 0 ? nameMatches : skills;
+    const hintMatches = hintPool.filter((skill: DiscoverableSkill) => this.matchesSkillsShHint(item, skill));
+    if (hintMatches.length === 1) {
+      return hintMatches[0];
+    }
+
+    return null;
+  }
+
+  private installScannedSkill(
+    skill: DiscoverableSkill,
+    trackingKey: string = skill.key,
+    alreadyTracking: boolean = false
+  ): void {
+    if (!alreadyTracking && this.isSkillInstalling(trackingKey)) {
+      this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+      return;
+    }
+
+    if (!alreadyTracking) {
+      this.setSkillInstalling(trackingKey, true);
+      this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+    } else {
+      this.triggerFeedback(`正在安装 ${skill.name}...`, 'info');
+    }
+
     skillsVM.installFromGithub(skill)
       .then(() => {
         this.syncSkillsStateFromViewModel();
         this.triggerFeedback(`已安装 ${skill.name}。`, 'success');
       })
       .catch((err: Object) => {
-        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+        const message = skillsVM.state.errorText.trim().length > 0
+          ? skillsVM.state.errorText
+          : this.describeRuntimeError(err);
+        this.triggerFeedback(message, 'error');
+      })
+      .finally(() => {
+        this.setSkillInstalling(trackingKey, false);
       });
   }
 
@@ -712,12 +800,38 @@ struct SettingsPage {
   }
 
   private installFromSkillsSh(item: SkillsShItem): void {
-    const skill = new DiscoverableSkill(
-      `${item.repoOwner}/${item.repoName}:${item.directory}`,
-      item.name, '', item.directory, item.readmeUrl,
-      item.repoOwner, item.repoName, item.repoBranch
-    );
-    this.installScannedSkill(skill);
+    if (this.isSkillInstalling(item.key)) {
+      this.triggerFeedback(`正在定位 ${item.name}...`, 'info');
+      return;
+    }
+
+    this.setSkillInstalling(item.key, true);
+    this.triggerFeedback(`正在定位 ${item.name}...`, 'info');
+    skillsVM.discoverFromRepo(item.repoOwner, item.repoName, item.repoBranch)
+      .then((skills: DiscoverableSkill[]) => {
+        if (skillsVM.state.errorText.trim().length > 0) {
+          this.triggerFeedback(skillsVM.state.errorText, 'error');
+          this.setSkillInstalling(item.key, false);
+          return;
+        }
+
+        const matched = this.resolveSkillsShCandidate(item, skills);
+        if (matched === null) {
+          this.setSkillInstalling(item.key, false);
+          if (skills.length === 0) {
+            this.triggerFeedback(`未在 ${item.repoOwner}/${item.repoName} 中发现可安装的 Skill。`, 'warning');
+          } else {
+            this.triggerFeedback('该仓库包含多个 Skill，skills.sh 无法唯一定位，请先使用 GitHub 扫描后手动选择。', 'warning');
+          }
+          return;
+        }
+
+        this.installScannedSkill(matched, item.key, true);
+      })
+      .catch((err: Object) => {
+        this.setSkillInstalling(item.key, false);
+        this.triggerFeedback(this.describeRuntimeError(err), 'error');
+      });
   }
 
   private skillsSubTabIndex(tab: SkillsSubTab): number {
@@ -770,11 +884,19 @@ struct SettingsPage {
     return skill.source === 'github' ? 'GitHub' : '本地';
   }
 
+  private displaySkillDirectory(directory: string): string {
+    return directory.trim().length > 0 ? directory : '/';
+  }
+
+  private skillsResultListMaxHeight(): number {
+    return this.isPhoneBreakpoint() ? 260 : 320;
+  }
+
   private skillMetaText(skill: InstalledSkill): string {
     if (skill.repoOwner.length > 0 && skill.repoName.length > 0) {
       return `${skill.repoOwner}/${skill.repoName}`;
     }
-    return skill.directory;
+    return this.displaySkillDirectory(skill.directory);
   }
 
   private skillDetailSourceLabel(): string {
@@ -1349,15 +1471,37 @@ struct SettingsPage {
       });
   }
 
-  private deletePromptById(promptId: string): void {
+  private requestDeletePrompt(promptId: string): void {
     const prompt = this.prompts.find((item: PromptRecord) => item.id === promptId) ?? null;
     if (prompt === null) {
+      return;
+    }
+    this.pendingDeletePromptId = prompt.id;
+    this.pendingDeletePromptName = prompt.name;
+    this.runMotion(() => {
+      this.showPromptDeleteDialog = true;
+    });
+  }
+
+  private cancelDeletePrompt(): void {
+    this.runMotion(() => {
+      this.showPromptDeleteDialog = false;
+    });
+    this.pendingDeletePromptId = '';
+    this.pendingDeletePromptName = '';
+  }
+
+  private confirmDeletePrompt(): void {
+    const promptId: string = this.pendingDeletePromptId;
+    const promptName: string = this.pendingDeletePromptName;
+    this.cancelDeletePrompt();
+    if (promptId.length === 0) {
       return;
     }
     this.promptsViewModel.deletePrompt(promptId)
       .then(() => {
         this.syncPromptsStateFromViewModel();
-        this.triggerFeedback(`${prompt.name} 已删除。`, 'success');
+        this.triggerFeedback(`${promptName} 已删除。`, 'success');
       })
       .catch((err: Object) => {
         this.promptsStatusText = this.describeRuntimeError(err);
@@ -2575,7 +2719,7 @@ struct SettingsPage {
             .width('100%')
           Column() {
             this.skillDetailRow('来源', this.skillSourceText(this.selectedSkill()!))
-            this.skillDetailRow('目录', this.selectedSkill()!.directory)
+            this.skillDetailRow('目录', this.displaySkillDirectory(this.selectedSkill()!.directory))
             this.skillDetailRow('ID', this.selectedSkill()!.id)
             if (this.selectedSkill()!.source === 'github') {
               this.skillDetailRow('仓库', this.selectedSkill()!.repoOwner + '/' + this.selectedSkill()!.repoName)
@@ -2697,27 +2841,37 @@ struct SettingsPage {
         }
         .width('100%')
         if (this.skillsShResults.length > 0) {
-          Column() {
-            ForEach(this.skillsShResults, (item: SkillsShItem) => {
-              Row() {
-                Column() {
-                  Text(item.name)
-                    .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
-                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
-                    .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+          Scroll() {
+            Column() {
+              ForEach(this.skillsShResults, (item: SkillsShItem) => {
+                Row() {
+                  Column() {
+                    Text(item.name)
+                      .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                      .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
+                      .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+                  }
+                  .alignItems(HorizontalAlign.Start).layoutWeight(1)
+                  Column() {
+                    this.actionButton(
+                      this.isSkillInstalling(item.key) ? '安装中...' : '安装',
+                      `skillsh-install-${item.key}`,
+                      !this.isSkillInstalling(item.key),
+                      () => { this.installFromSkillsSh(item); }
+                    )
+                  }
+                  .margin({ left: 12 })
                 }
-                .alignItems(HorizontalAlign.Start).layoutWeight(1)
-                Column() {
-                  this.actionButton('安装', `skillsh-install-${item.key}`, true, () => { this.installFromSkillsSh(item); })
-                }
-                .margin({ left: 12 })
-              }
-              .width('100%').padding(14).backgroundColor('#FFFFFF')
-              .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
-            }, (item: SkillsShItem) => `${item.key}`)
+                .width('100%').padding(14).backgroundColor('#FFFFFF')
+                .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
+              }, (item: SkillsShItem) => `${item.key}`)
+            }
+            .width('100%')
           }
           .width('100%')
+          .constraintSize({ maxHeight: this.skillsResultListMaxHeight() })
+          .scrollBar(BarState.Auto)
           .margin({ top: 8 })
         }
       }
@@ -2759,12 +2913,17 @@ struct SettingsPage {
                   Text(skill.description)
                     .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').lineHeight(17)
                     .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).margin({ top: 4 })
-                  Text(skill.directory)
+                  Text(this.displaySkillDirectory(skill.directory))
                     .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
                 }
                 .alignItems(HorizontalAlign.Start).layoutWeight(1)
                 Column() {
-                  this.actionButton('安装', `github-install-${skill.key}`, true, () => { this.installScannedSkill(skill); })
+                  this.actionButton(
+                    this.isSkillInstalling(skill.key) ? '安装中...' : '安装',
+                    `github-install-${skill.key}`,
+                    !this.isSkillInstalling(skill.key),
+                    () => { this.installScannedSkill(skill); }
+                  )
                 }
                 .margin({ left: 12 })
               }
@@ -2863,10 +3022,6 @@ struct SettingsPage {
         Column() {
           Text('确认删除 Skill')
             .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-          Text(`删除后将从当前前端列表中移除 "${this.pendingDeleteSkillName}"。`)
-            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
-          Text('当前仍为前端模拟，但危险操作需要确认。')
-            .copyOption(CopyOptions.None).fontSize(11).fontColor('#B45309').margin({ top: 8 })
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
@@ -2917,7 +3072,7 @@ struct SettingsPage {
             .lineHeight(20).margin({ top: 10 }).width('100%')
           Column() {
             this.skillDetailRow('来源', this.skillDetailSourceLabel())
-            this.skillDetailRow('目录', this.selectedSkillDetail.directory)
+            this.skillDetailRow('目录', this.displaySkillDirectory(this.selectedSkillDetail.directory))
             this.skillDetailRow('ID', this.selectedSkillDetail.id)
             if (this.selectedSkillDetail.source === 'github') {
               this.skillDetailRow('仓库', this.selectedSkillDetail.repoOwner + '/' + this.selectedSkillDetail.repoName)
@@ -3302,6 +3457,45 @@ struct SettingsPage {
   }
 
   @Builder
+  private promptDeleteDialog() {
+    if (this.showPromptDeleteDialog) {
+      Stack() {
+        Column()
+          .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
+          .onClick(() => { this.cancelDeletePrompt(); })
+        Column() {
+          Text('确认删除 Prompt')
+            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Text(`确认删除 "${this.pendingDeletePromptName}" 吗？`)
+            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+          Row() {
+            Button('取消')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .border({ width: 1, color: '#D5E0ED' })
+              .scale({ x: this.pressScale('prompt-delete-cancel'), y: this.pressScale('prompt-delete-cancel') })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
+              .onTouch((event: TouchEvent) => { this.updatePressed('prompt-delete-cancel', event); })
+              .onClick(() => { this.cancelDeletePrompt(); })
+            Button('确认删除')
+              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
+              .scale({ x: this.pressScale('prompt-delete-confirm'), y: this.pressScale('prompt-delete-confirm') })
+              .animation({ duration: 140, curve: Curve.FastOutSlowIn })
+              .onTouch((event: TouchEvent) => { this.updatePressed('prompt-delete-confirm', event); })
+              .onClick(() => { this.confirmDeletePrompt(); })
+          }
+          .width('100%').margin({ top: 20 })
+        }
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
+      }
+      .width('100%').height('100%')
+      .transition(this.dialogTransition())
+    }
+  }
+
+  @Builder
   private promptsPanel() {
     if (this.animatedMode !== 'desktop' && this.selectedPromptId.length > 0) {
       this.phonePromptEditorView()
@@ -3462,7 +3656,7 @@ struct SettingsPage {
             .fontColor('#991B1B')
             .borderRadius(12)
             .onClick(() => {
-              this.deletePromptById(prompt.id);
+              this.requestDeletePrompt(prompt.id);
             })
         }
         .width('100%')
@@ -4237,6 +4431,7 @@ struct SettingsPage {
       this.skillDetailDialog()
       this.mcpAddDialog()
       this.mcpDeleteDialog()
+      this.promptDeleteDialog()
       this.validationResultDialog()
       this.apiSpeedResultsPanel()
       this.configTomlDialog()

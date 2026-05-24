@@ -1,8 +1,10 @@
 import { getPromptsRegistry, savePromptsRegistry, readAgentsMd, writeAgentsMd, enablePromptNative, disableAllPromptsNative } from '../backend/CodexNative';
 import { PromptRecord, PromptImportResult } from './PromptTypes';
+import fileIo from '@ohos.file.fs';
 
 const MAX_NAME_LEN = 100;
 const MAX_CONTENT_PREVIEW_LEN = 500;
+const AUTO_IMPORT_MARKER_NAME = '.prompts-auto-imported';
 
 export enum PromptErrorCode {
   INVALID_NAME = 'INVALID_NAME',
@@ -36,7 +38,7 @@ export class PromptError extends Error {
 export const PROMPT_ERROR_MESSAGES: Map<PromptErrorCode, string> = new Map([
   [PromptErrorCode.INVALID_NAME, '名称不合法，不能为空且不超过 100 个字符'],
   [PromptErrorCode.NOT_FOUND, '未找到指定的 Prompt'],
-  [PromptErrorCode.CANNOT_DELETE_ENABLED, '无法删除当前已启用的 Prompt，请先切换到其他 Prompt'],
+  [PromptErrorCode.CANNOT_DELETE_ENABLED, '不能删除正在启用的 Prompt，请先切换到其他 Prompt 或全部禁用'],
 ]);
 
 function makeErrorCtx(): Map<string, string> {
@@ -82,6 +84,27 @@ export class PromptsBackendService {
     this.codexHome = codexHome;
   }
 
+  private autoImportMarkerPath(): string {
+    return `${this.codexHome}/${AUTO_IMPORT_MARKER_NAME}`;
+  }
+
+  private hasAutoImportMarker(): boolean {
+    try {
+      fileIo.statSync(this.autoImportMarkerPath());
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  private writeAutoImportMarker(): void {
+    const markerFile = fileIo.openSync(
+      this.autoImportMarkerPath(),
+      fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC
+    );
+    fileIo.closeSync(markerFile);
+  }
+
   async getPrompts(): Promise<PromptRecord[]> {
     const json: string = getPromptsRegistry(this.codexHome);
     const parsed: Record<string, Object> = JSON.parse(json) as Record<string, Object>;
@@ -99,7 +122,10 @@ export class PromptsBackendService {
     registry['version'] = 1;
     registry['prompts'] = prompts;
     registry['updatedAt'] = now;
-    savePromptsRegistry(this.codexHome, JSON.stringify(registry));
+    const ok: boolean = savePromptsRegistry(this.codexHome, JSON.stringify(registry));
+    if (!ok) {
+      throw new Error('保存 Prompt 失败');
+    }
   }
 
   async savePrompt(prompt: PromptRecord): Promise<void> {
@@ -144,7 +170,7 @@ export class PromptsBackendService {
       ctx.set('id', id);
       ctx.set('name', prompt.name);
       throw new PromptError(PromptErrorCode.CANNOT_DELETE_ENABLED, ctx,
-        '无法删除已启用的 Prompt，请先启用其他 Prompt 或全部禁用');
+        '不能删除正在启用的 Prompt，请先切换到其他 Prompt 或全部禁用');
     }
 
     const filtered: PromptRecord[] = prompts.filter((p: PromptRecord) => p.id !== id);
@@ -201,8 +227,13 @@ export class PromptsBackendService {
   }
 
   async autoImportOnFirstLaunch(): Promise<void> {
+    if (this.hasAutoImportMarker()) {
+      return;
+    }
+
     const prompts: PromptRecord[] = await this.getPrompts();
     if (prompts.length > 0) {
+      this.writeAutoImportMarker();
       return;
     }
 
@@ -220,6 +251,9 @@ export class PromptsBackendService {
 
     prompts.push(prompt);
     await this.savePrompts(prompts);
-    writeAgentsMd(this.codexHome, content);
+    if (!writeAgentsMd(this.codexHome, content)) {
+      throw new Error('写入 AGENTS.md 失败');
+    }
+    this.writeAutoImportMarker();
   }
 }
