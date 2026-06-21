@@ -47,6 +47,7 @@ const USER_FILE_SERVICE_SYSCAP: string = 'SystemCapability.FileManagement.UserFi
 const FOLDER_SELECTION_SYSCAP: string = 'SystemCapability.FileManagement.UserFileService.FolderSelection';
 const FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.AppFileService.FolderAuthorization';
 const LEGACY_FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.File.Environment.FolderObtain';
+const ARK_PILOT_THEME_MODE_KEY: string = 'arkPilotThemeMode';
 
 class ChatMessage {
   id: string;
@@ -1083,6 +1084,7 @@ struct Index {
   @StorageProp('arkPilotBreakpoint')
   @Watch('onBreakpointChanged')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
+  @State private isDarkMode: boolean = false;
   private readonly thinkingStatusPhrases: string[] = [
     '正在厘清问题',
     '正在读取上下文',
@@ -1464,6 +1466,9 @@ struct Index {
   });
 
   aboutToAppear(): void {
+    const savedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
+    this.isDarkMode = savedThemeMode === 'dark';
+    AppStorage.setOrCreate<string>(ARK_PILOT_THEME_MODE_KEY, this.isDarkMode ? 'dark' : 'light');
     const mediaQuery = this.getUIContext().getMediaQuery();
     breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
     this.applyResponsiveLayoutProfile(true);
@@ -2487,6 +2492,66 @@ struct Index {
 
   private runFastMotion(action: () => void): void {
     this.runMotion(action, this.motionFastDuration);
+  }
+
+  private themeColor(light: string, dark: string): string {
+    return this.isDarkMode ? dark : light;
+  }
+
+  private themeRootBackground(): string {
+    return this.themeColor('#EEF2F7', '#1E1E1E');
+  }
+
+  private themePanelBackground(): string {
+    return this.themeColor('#FAFAFA', '#252526');
+  }
+
+  private themeElevatedBackground(): string {
+    return this.themeColor('#FFFFFF', '#2D2D30');
+  }
+
+  private themeInputBackground(): string {
+    return this.themeColor('#FFFFFF', '#1E1E1E');
+  }
+
+  private themeSubtleBackground(): string {
+    return this.themeColor('#F4F4F5', '#333333');
+  }
+
+  private themeTextPrimary(): string {
+    return this.themeColor('#18181B', '#D4D4D4');
+  }
+
+  private themeTextStrong(): string {
+    return this.themeColor('#0F172A', '#E8E8E8');
+  }
+
+  private themeTextSecondary(): string {
+    return this.themeColor('#71717A', '#B3B3B3');
+  }
+
+  private themeTextMuted(): string {
+    return this.themeColor('#A1A1AA', '#858585');
+  }
+
+  private themeBorder(): string {
+    return this.themeColor('#E4E4E7', '#3C3C3C');
+  }
+
+  private themeStrongBorder(): string {
+    return this.themeColor('#D4D4D8', '#505050');
+  }
+
+  private themeBackdrop(): string {
+    return this.themeColor('#66000000', '#99000000');
+  }
+
+  private toggleTheme(): void {
+    const nextDark = !this.isDarkMode;
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.FastOutSlowIn }, () => {
+      this.isDarkMode = nextDark;
+    });
+    AppStorage.set<string>(ARK_PILOT_THEME_MODE_KEY, nextDark ? 'dark' : 'light');
   }
 
   private toggleProjectExpanded(projectId: string): void {
@@ -4739,9 +4804,9 @@ struct Index {
       case 'agent':
         return '#00000000';
       case 'user':
-        return '#EFF6FF';
+        return this.themeColor('#EFF6FF', '#333333');
       default:
-        return '#FFFFFF';
+        return this.themeElevatedBackground();
     }
   }
 
@@ -4779,22 +4844,22 @@ struct Index {
 
   private diffBackground(kind: string): string {
     if (kind === 'add') {
-      return '#ECFDF3';
+      return this.themeColor('#ECFDF3', '#243A2E');
     }
     if (kind === 'delete') {
-      return '#FEF2F2';
+      return this.themeColor('#FEF2F2', '#3A2529');
     }
-    return '#F8FAFC';
+    return this.themeColor('#F8FAFC', '#252526');
   }
 
   private diffColor(kind: string): string {
     if (kind === 'add') {
-      return '#15803D';
+      return this.themeColor('#15803D', '#86EFAC');
     }
     if (kind === 'delete') {
-      return '#DC2626';
+      return this.themeColor('#DC2626', '#FCA5A5');
     }
-    return '#475569';
+    return this.themeColor('#475569', '#CBD5E1');
   }
 
   private isWorkspaceActive(item: WorkspaceItem): boolean {
@@ -5813,9 +5878,9 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor(color)
+      .fontColor(this.themeColor(color, this.themeTextSecondary()))
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-      .backgroundColor(background)
+      .backgroundColor(this.themeColor(background, this.themeSubtleBackground()))
       .borderRadius(6)
   }
 
@@ -5826,12 +5891,12 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#18181B')
+        .fontColor(this.themeTextPrimary())
 
       Text(subtitle)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#A1A1AA')
+        .fontColor(this.themeTextMuted())
         .margin({ top: 4 })
     }
     .alignItems(HorizontalAlign.Start)
@@ -5843,23 +5908,23 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#71717A')
+        .fontColor(this.themeTextSecondary())
 
       Text(value)
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#18181B')
+        .fontColor(this.themeTextPrimary())
         .margin({ left: 6 })
 
       Text('▾')
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#A1A1AA')
+        .fontColor(this.themeTextMuted())
         .margin({ left: 6 })
     }
     .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-    .backgroundColor(active ? '#F4F4F5' : '#FAFAFA')
-    .border({ width: 0.5, color: active ? '#D4D4D8' : '#E4E4E7' })
+    .backgroundColor(active ? this.themeSubtleBackground() : this.themePanelBackground())
+    .border({ width: 0.5, color: active ? this.themeStrongBorder() : this.themeBorder() })
     .borderRadius(8)
     .scale({ x: active ? 1.02 : 1, y: active ? 1.02 : 1 })
     .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
@@ -5873,11 +5938,11 @@ struct Index {
     Text(option.label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor(selected ? '#0F172A' : '#64748B')
+      .fontColor(selected ? this.themeTextStrong() : this.themeTextSecondary())
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Normal)
       .padding({ left: 11, right: 11, top: 6, bottom: 6 })
-      .backgroundColor(selected ? '#EEF6FF' : '#FFFFFF')
-      .border({ width: 0.5, color: selected ? '#93C5FD' : '#E2E8F0' })
+      .backgroundColor(selected ? this.themeColor('#EEF6FF', '#1E3A5F') : this.themeElevatedBackground())
+      .border({ width: 0.5, color: selected ? '#93C5FD' : this.themeBorder() })
       .borderRadius(10)
       .shadow(selected ? { radius: 8, color: '#143B82F6', offsetY: 2 } : { radius: 0, color: '#00000000', offsetY: 0 })
       .scale({ x: selected ? 1.03 : 1, y: selected ? 1.03 : 1 })
@@ -5893,13 +5958,13 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(12)
-      .fontColor(disabled ? '#A1A1AA' : '#0F172A')
+      .fontColor(disabled ? this.themeTextMuted() : this.themeTextStrong())
       .fontWeight(FontWeight.Medium)
       .textAlign(TextAlign.Center)
       .width(24)
       .height(24)
-      .backgroundColor(disabled ? '#F4F4F5' : '#FFFFFF')
-      .border({ width: 0.5, color: disabled ? '#E4E4E7' : '#D4D4D8' })
+      .backgroundColor(disabled ? this.themeSubtleBackground() : this.themeElevatedBackground())
+      .border({ width: 0.5, color: disabled ? this.themeBorder() : this.themeStrongBorder() })
       .borderRadius(6)
       .opacity(disabled ? 0.55 : 1)
       .scale({ x: disabled ? 0.96 : 1, y: disabled ? 0.96 : 1 })
@@ -5921,7 +5986,7 @@ struct Index {
       Text(this.conversationZoomLabel())
         .copyOption(CopyOptions.None)
         .fontSize(10)
-        .fontColor('#64748B')
+        .fontColor(this.themeTextSecondary())
         .fontWeight(FontWeight.Medium)
         .textAlign(TextAlign.Center)
         .width(42)
@@ -5933,8 +5998,8 @@ struct Index {
     .height(28)
     .padding({ left: 2, right: 2 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor('#FAFAFA')
-    .border({ width: 0.5, color: '#E4E4E7' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(8)
   }
 
@@ -5987,8 +6052,8 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .alignItems(VerticalAlign.Center)
     .borderRadius(6)
-    .backgroundColor(disabled ? '#F8FAFC' : '#FFFFFF')
-    .border({ width: 0.5, color: disabled ? '#E4E4E7' : '#BFDBFE' })
+    .backgroundColor(disabled ? this.themeSubtleBackground() : this.themeElevatedBackground())
+    .border({ width: 0.5, color: disabled ? this.themeBorder() : '#BFDBFE' })
     .opacity(disabled ? 0.55 : 1)
     .scale({ x: disabled ? 0.96 : 1, y: disabled ? 0.96 : 1 })
     .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
@@ -6076,14 +6141,14 @@ struct Index {
   @Builder
   private iconSelectTextButton(active: boolean, onPress: () => void) {
     Row() {
-      this.selectTextIcon(active ? '#2563EB' : '#64748B')
+      this.selectTextIcon(active ? this.themeColor('#2563EB', '#93C5FD') : this.themeTextSecondary())
     }
     .width(30)
     .height(26)
     .justifyContent(FlexAlign.Center)
     .alignItems(VerticalAlign.Center)
     .borderRadius(6)
-    .backgroundColor(active ? '#EFF6FF' : '#00000000')
+    .backgroundColor(active ? this.eventSoftBackground('tool') : '#00000000')
     .onClick(() => {
       onPress();
     })
@@ -6231,7 +6296,7 @@ struct Index {
         Row() {
           Text(proj.expanded ? '▾' : '▸')
             .fontSize(13)
-            .fontColor('#71717A')
+            .fontColor(this.themeTextSecondary())
             .width(16)
 
           Stack({ alignContent: Alignment.TopStart }) {
@@ -6245,7 +6310,7 @@ struct Index {
               .height(3)
               .border({ width: 1, color: '#A1A1AA' })
               .borderRadius({ topLeft: 2, topRight: 2 })
-              .backgroundColor('#FAFAFA')
+              .backgroundColor(this.themePanelBackground())
               .position({ x: 0, y: -1 })
           }
           .width(14)
@@ -6256,7 +6321,7 @@ struct Index {
             .copyOption(CopyOptions.None)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#18181B')
+            .fontColor(this.themeTextPrimary())
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6264,7 +6329,7 @@ struct Index {
           // Floating menu button (hover-visible)
           Text('···')
             .fontSize(16)
-            .fontColor('#52525B')
+            .fontColor(this.themeTextSecondary())
             .padding({ left: 6, right: 6, top: 0, bottom: 0 })
             .height(20)
             .visibility(this.hasPointerHover && this.hoveredProjectId === proj.id ? Visibility.Visible : Visibility.Hidden)
@@ -6275,7 +6340,7 @@ struct Index {
           // New session button (plus)
           Text('+')
             .fontSize(18)
-            .fontColor('#71717A')
+            .fontColor(this.themeTextSecondary())
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .onClick(() => {
               this.openNewSessionDialog(proj.id);
@@ -6284,7 +6349,7 @@ struct Index {
         .width('100%')
         .padding({ left: 8, right: 8, top: 6, bottom: 6 })
         .borderRadius(6)
-        .backgroundColor(this.hoveredProjectId === proj.id ? '#F4F4F5' : 'transparent')
+        .backgroundColor(this.hoveredProjectId === proj.id ? this.themeSubtleBackground() : 'transparent')
         .scale({ x: this.hoveredProjectId === proj.id ? 1.01 : 1, y: this.hoveredProjectId === proj.id ? 1.01 : 1 })
         .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
         .onHover((isHover: boolean) => {
@@ -6322,8 +6387,8 @@ struct Index {
               .layoutWeight(1)
               .height(28)
               .fontSize(12)
-              .backgroundColor('#FFFFFF')
-              .border({ width: 0.5, color: '#D4D4D8' })
+              .backgroundColor(this.themeInputBackground())
+              .border({ width: 0.5, color: this.themeStrongBorder() })
               .borderRadius(6)
               .padding({ left: 8, right: 8 })
               .onChange((value: string) => {
@@ -6356,7 +6421,7 @@ struct Index {
             if (this.sessionsForProject(proj.id).length === 0) {
               Text('暂无会话')
                 .fontSize(10)
-                .fontColor('#D4D4D8')
+                .fontColor(this.themeTextMuted())
                 .padding({ left: 24, top: 4, bottom: 4 })
             } else {
               ForEach(this.sessionsForProject(proj.id), (session: WorkspaceItem) => {
@@ -6423,8 +6488,8 @@ struct Index {
     .width(this.floatingMenuWidth)
     .padding({ top: 4, bottom: 4 })
     .borderRadius(8)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 0.5, color: '#E4E4E7' })
+    .backgroundColor(this.themeElevatedBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .shadow({ radius: 12, color: '#1A000000', offsetX: 0, offsetY: 4 })
     .position({ x: this.floatingMenuX, y: this.floatingMenuY })
     .zIndex(1000)
@@ -6435,7 +6500,7 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(12)
-      .fontColor('#18181B')
+      .fontColor(this.themeTextPrimary())
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       .onClick(() => {
@@ -6447,7 +6512,7 @@ struct Index {
   private floatingMenuSeparator() {
     Divider()
       .width('100%')
-      .color('#E4E4E7')
+      .color(this.themeBorder())
       .strokeWidth(0.5)
       .margin({ top: 4, bottom: 4 })
   }
@@ -6457,7 +6522,7 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor('#A1A1AA')
+      .fontColor(this.themeTextMuted())
       .width('100%')
       .padding({ left: 12, right: 12, top: 2, bottom: 2 })
   }
@@ -6473,8 +6538,8 @@ struct Index {
               .layoutWeight(1)
               .height(24)
               .fontSize(11)
-              .backgroundColor('#FFFFFF')
-              .border({ width: 0.5, color: '#D4D4D8' })
+              .backgroundColor(this.themeInputBackground())
+              .border({ width: 0.5, color: this.themeStrongBorder() })
               .borderRadius(4)
               .padding({ left: 6, right: 6 })
               .onChange((value: string) => {
@@ -6506,7 +6571,7 @@ struct Index {
               .copyOption(CopyOptions.None)
               .fontSize(11)
               .fontWeight(this.isWorkspaceActive(item) ? FontWeight.Medium : FontWeight.Regular)
-              .fontColor(this.isWorkspaceActive(item) ? '#18181B' : '#52525B')
+              .fontColor(this.isWorkspaceActive(item) ? this.themeTextPrimary() : this.themeTextSecondary())
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6530,12 +6595,12 @@ struct Index {
 
             Text(this.relativeTime(this.findSessionUpdatedAt(item)))
               .fontSize(9)
-              .fontColor('#A1A1AA')
+              .fontColor(this.themeTextMuted())
               .margin({ right: 4 })
 
             Text('···')
               .fontSize(16)
-              .fontColor('#52525B')
+              .fontColor(this.themeTextSecondary())
               .padding({ left: 2, right: 2 })
               .visibility(this.hasPointerHover && this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? Visibility.Visible : Visibility.Hidden)
               .onClick((event: ClickEvent) => {
@@ -6545,7 +6610,7 @@ struct Index {
           .width('100%')
           .padding({ left: 8, right: 8, top: 5, bottom: 5 })
           .borderRadius(6)
-          .backgroundColor(this.isWorkspaceActive(item) ? '#F4F4F5' : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? '#F9FAFB' : 'transparent'))
+          .backgroundColor(this.isWorkspaceActive(item) ? this.themeSubtleBackground() : (this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? this.themePanelBackground() : 'transparent'))
           .scale({ x: this.isWorkspaceActive(item) || this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? 1.01 : 1, y: this.isWorkspaceActive(item) || this.hoveredSessionId === this.ensureWorkspaceBinding(item) ? 1.01 : 1 })
           .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
           .onTouch((event: TouchEvent) => {
@@ -6598,8 +6663,8 @@ struct Index {
     .width(this.floatingMenuWidth)
     .padding({ top: 4, bottom: 4 })
     .borderRadius(8)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 0.5, color: '#E4E4E7' })
+    .backgroundColor(this.themeElevatedBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .shadow({ radius: 12, color: '#1A000000', offsetX: 0, offsetY: 4 })
     .position({ x: this.floatingMenuX, y: this.floatingMenuY })
     .zIndex(1000)
@@ -6623,13 +6688,13 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#A1A1AA')
+        .fontColor(this.themeTextMuted())
         .width(78)
 
       Text(value)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
-        .fontColor('#27272A')
+        .fontColor(this.themeTextStrong())
         .layoutWeight(1)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6645,10 +6710,10 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(9)
-      .fontColor('#64748B')
+      .fontColor(this.themeTextSecondary())
       .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-      .backgroundColor('#F8FAFC')
-      .border({ width: 0.5, color: '#E2E8F0' })
+      .backgroundColor(this.themeSubtleBackground())
+      .border({ width: 0.5, color: this.themeBorder() })
       .borderRadius(6)
   }
 
@@ -6728,8 +6793,8 @@ struct Index {
         .wordBreak(WordBreak.BREAK_WORD)
         .padding({ left: 10, right: 10, top: 9, bottom: 9 })
         .margin({ top: 6 })
-        .backgroundColor('#F8FAFC')
-        .border({ width: 0.5, color: '#CBD5E1' })
+        .backgroundColor(this.themePanelBackground())
+        .border({ width: 0.5, color: this.themeStrongBorder() })
         .borderRadius(8)
     } else if (this.isStreamingAssistantMessage(item)) {
       Text(item.content)
@@ -6829,7 +6894,7 @@ struct Index {
           messageId,
           block.id,
           block.text,
-          '#0F172A',
+          this.themeTextStrong(),
           this.markdownHeadingFontSize(block.level),
           this.markdownHeadingLineHeight(block.level),
           FontWeight.Medium
@@ -6842,15 +6907,15 @@ struct Index {
         Column()
           .width(3)
           .height('100%')
-          .backgroundColor('#CBD5E1')
+          .backgroundColor(this.themeStrongBorder())
           .borderRadius(2)
           .margin({ right: 9 })
-        this.inlineMarkdownContent(messageId, block.id, block.text, '#475569')
+        this.inlineMarkdownContent(messageId, block.id, block.text, this.themeTextSecondary())
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
       .padding({ top: 7, bottom: 7, right: 8 })
-      .backgroundColor('#F8FAFC')
+      .backgroundColor(this.themePanelBackground())
       .borderRadius(8)
       .margin({ top: 5, bottom: 5 })
     } else if (block.kind === 'list') {
@@ -6860,10 +6925,10 @@ struct Index {
             Text(this.markdownListMarker(line))
               .copyOption(CopyOptions.None)
               .fontSize(this.conversationFontSize(12))
-              .fontColor('#64748B')
+              .fontColor(this.themeTextSecondary())
               .width(24)
             Column() {
-              this.inlineMarkdownContent(messageId, `${block.id}-${index}`, this.markdownListText(line), '#27272A')
+              this.inlineMarkdownContent(messageId, `${block.id}-${index}`, this.markdownListText(line), this.themeTextPrimary())
             }
             .layoutWeight(1)
             .alignItems(HorizontalAlign.Start)
@@ -6887,10 +6952,10 @@ struct Index {
       Column()
         .width('100%')
         .height(1)
-        .backgroundColor('#E4E4E7')
+        .backgroundColor(this.themeBorder())
         .margin({ top: 8, bottom: 8 })
     } else {
-      this.inlineMarkdownContent(messageId, block.id, block.text, '#27272A')
+      this.inlineMarkdownContent(messageId, block.id, block.text, this.themeTextPrimary())
     }
   }
 
@@ -6905,7 +6970,7 @@ struct Index {
                 messageId,
                 `${block.id}:r${rowIndex}:c${cellIndex ?? 0}`,
                 cell,
-                rowIndex === 0 ? '#0F172A' : '#334155',
+                rowIndex === 0 ? this.themeTextStrong() : this.themeTextPrimary(),
                 this.conversationFontSize(10),
                 this.conversationLineHeight(16),
                 rowIndex === 0 ? FontWeight.Medium : FontWeight.Regular
@@ -6917,8 +6982,8 @@ struct Index {
           }, (cell: string, cellIndex?: number) => `${rowIndex}:${cellIndex ?? 0}`)
         }
         .width('100%')
-        .backgroundColor(rowIndex === 0 ? '#F1F5F9' : '#FFFFFF')
-        .border({ width: 0.5, color: '#E2E8F0' })
+        .backgroundColor(rowIndex === 0 ? this.themeSubtleBackground() : this.themeElevatedBackground())
+        .border({ width: 0.5, color: this.themeBorder() })
       })
     }
     .width('100%')
@@ -6933,10 +6998,10 @@ struct Index {
         Text(block.language.length > 0 ? block.language : 'text')
           .copyOption(CopyOptions.None)
           .fontSize(9)
-          .fontColor('#0369A1')
+          .fontColor(this.themeColor('#0369A1', '#9CDCFE'))
           .fontWeight(FontWeight.Medium)
           .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-          .backgroundColor('#E0F2FE')
+          .backgroundColor(this.themeColor('#E0F2FE', '#263241'))
           .borderRadius(6)
         Blank()
           .layoutWeight(1)
@@ -6956,8 +7021,8 @@ struct Index {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 9 })
-    .backgroundColor('#F8FAFC')
-    .border({ width: 0.5, color: '#CBD5E1' })
+    .backgroundColor(this.themeInputBackground())
+    .border({ width: 0.5, color: this.themeStrongBorder() })
     .borderRadius(8)
     .margin({ top: 5, bottom: 5 })
   }
@@ -6973,7 +7038,7 @@ struct Index {
         }, (token: CodeToken) => token.id)
         if (lineIndex < this.codeBlockLines(text).length - 1) {
           Span('\n')
-            .fontColor('#0F172A')
+            .fontColor(this.themeTextStrong())
         }
       }, (line: string, lineIndex: number) => `${lineIndex}:${line}`)
     }
@@ -7018,11 +7083,11 @@ struct Index {
         .fontSize(Math.max(fontSize - this.conversationFontSize(1), this.conversationFontSize(10)))
         .lineHeight(lineHeight)
         .fontFamily('monospace')
-        .fontColor('#0F172A')
+        .fontColor(this.themeTextStrong())
         .padding({ left: 4, right: 4, top: 1, bottom: 1 })
         .margin({ left: 2, right: 2, bottom: 2 })
-        .backgroundColor('#F1F5F9')
-        .border({ width: 0.5, color: '#E2E8F0' })
+        .backgroundColor(this.themeSubtleBackground())
+        .border({ width: 0.5, color: this.themeBorder() })
         .borderRadius(4)
     } else {
       Text(segment.text)
@@ -7062,7 +7127,7 @@ struct Index {
           if (segment.kind === 'code') {
             Span(this.inlineCodeSpanText(segment.text))
               .fontSize(Math.max(fontSize - this.conversationFontSize(1), this.conversationFontSize(10)))
-              .fontColor('#0F172A')
+              .fontColor(this.themeTextStrong())
               .fontWeight(FontWeight.Medium)
           } else {
             Span(segment.text)
@@ -7087,7 +7152,7 @@ struct Index {
           if (segment.kind === 'code') {
             Span(this.inlineCodeSpanText(segment.text))
               .fontSize(Math.max(fontSize - this.conversationFontSize(1), this.conversationFontSize(10)))
-              .fontColor('#0F172A')
+              .fontColor(this.themeTextStrong())
               .fontWeight(FontWeight.Medium)
           } else {
             Span(segment.text)
@@ -7194,15 +7259,15 @@ struct Index {
     }
     .padding({ left: 5, right: 5, top: 2, bottom: 2 })
     .margin({ right: 4, bottom: 2 })
-    .backgroundColor('#F8FAFC')
-    .border({ width: 0.5, color: '#CBD5E1' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeStrongBorder() })
     .borderRadius(6)
   }
 
   @Builder
   private formulaInlineContent(source: string, fontSize: number) {
     Row() {
-      this.formulaNode(this.parseFormula(source), Math.max(fontSize + this.conversationFontSize(1), this.conversationFontSize(13)), '#0F172A', false)
+      this.formulaNode(this.parseFormula(source), Math.max(fontSize + this.conversationFontSize(1), this.conversationFontSize(13)), this.themeTextStrong(), false)
     }
     .alignItems(VerticalAlign.Center)
   }
@@ -7212,7 +7277,7 @@ struct Index {
     Column() {
       ForEach(this.mathBlockLines(source), (line: string, lineIndex?: number) => {
         Row() {
-          this.formulaNode(this.parseFormula(line), this.conversationFontSize(19), '#0F172A', true)
+          this.formulaNode(this.parseFormula(line), this.conversationFontSize(19), this.themeTextStrong(), true)
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -7362,8 +7427,8 @@ struct Index {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 10 })
-    .backgroundColor('#FDFEFF')
-    .border({ width: 0.5, color: '#BFDBFE' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.eventBorderColor('tool') })
     .borderRadius(8)
     .margin({ top: 5, bottom: 5 })
   }
@@ -7499,9 +7564,9 @@ struct Index {
         Text('Mermaid')
           .copyOption(CopyOptions.None)
           .fontSize(9)
-          .fontColor('#2563EB')
+          .fontColor(this.themeColor('#2563EB', '#93C5FD'))
           .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-          .backgroundColor('#EFF6FF')
+          .backgroundColor(this.eventSoftBackground('tool'))
           .borderRadius(6)
 
         Blank()
@@ -7531,8 +7596,8 @@ struct Index {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 10 })
-    .backgroundColor('#F8FAFC')
-    .border({ width: 0.5, color: '#BFDBFE' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.eventBorderColor('tool') })
     .borderRadius(8)
     .margin({ top: 5, bottom: 5 })
   }
@@ -7659,7 +7724,8 @@ struct Index {
     .constraintSize({ maxWidth: '92%' })
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 9 })
-    .backgroundColor('#F8FAFC')
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(8)
   }
 
@@ -7749,10 +7815,10 @@ struct Index {
             Text('重试压缩')
               .copyOption(CopyOptions.None)
               .fontSize(this.conversationFontSize(10))
-              .fontColor('#4338CA')
+              .fontColor(this.themeColor('#4338CA', '#A5B4FC'))
               .fontWeight(FontWeight.Medium)
               .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-              .backgroundColor('#EEF2FF')
+              .backgroundColor(this.compactionNoticeSoftBackground('completed'))
               .borderRadius(6)
               .margin({ top: 8 })
               .onClick(() => {
@@ -7768,7 +7834,8 @@ struct Index {
     .constraintSize({ maxWidth: '72%' })
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 9, bottom: 9 })
-    .backgroundColor('#F8FAFC')
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(8)
   }
 
@@ -7778,13 +7845,13 @@ struct Index {
       Text(label)
         .copyOption(CopyOptions.None)
         .fontSize(this.conversationFontSize(10))
-        .fontColor('#64748B')
+        .fontColor(this.themeTextSecondary())
         .width(56)
 
       Text(value)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(this.conversationFontSize(10))
-        .fontColor('#0F172A')
+        .fontColor(this.themeTextStrong())
         .fontFamily('monospace')
     }
     .width('100%')
@@ -7880,7 +7947,8 @@ struct Index {
     .constraintSize({ maxWidth: '92%' })
     .alignItems(HorizontalAlign.Start)
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor('#F8FAFC')
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(8)
   }
 
@@ -7912,7 +7980,7 @@ struct Index {
       Text(item.timestamp)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(10)
-        .fontColor('#A1A1AA')
+        .fontColor(this.themeTextMuted())
         .margin({ left: 8 })
     }
     .alignItems(VerticalAlign.Center)
@@ -7947,7 +8015,7 @@ struct Index {
       bottom: this.isUserMessage(item) ? 9 : 4
     })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-    .border({ width: this.isUserMessage(item) ? 0.5 : 0, color: this.isUserMessage(item) ? '#BFDBFE' : 'transparent' })
+    .border({ width: this.isUserMessage(item) ? 0.5 : 0, color: this.isUserMessage(item) ? this.themeColor('#BFDBFE', '#2563EB') : 'transparent' })
     .borderRadius(this.isUserMessage(item) ? 10 : 0)
   }
 
@@ -8149,22 +8217,22 @@ struct Index {
 
   private plainMarkdownRunColor(run: MarkdownTextRun, itemType?: string): string {
     if (run.inlineKind === 'link') {
-      return '#2563EB';
+      return this.themeColor('#2563EB', '#93C5FD');
     }
     if (run.inlineKind === 'code') {
-      return '#0F172A';
+      return this.themeTextStrong();
     }
     if (run.blockKind === 'heading') {
-      return '#0F172A';
+      return this.themeTextStrong();
     }
     if (run.blockKind === 'quote' || run.blockKind === 'quoteMarker') {
-      return '#475569';
+      return this.themeTextSecondary();
     }
     if (run.blockKind === 'listMarker') {
-      return '#64748B';
+      return this.themeTextSecondary();
     }
     if (run.blockKind === 'divider') {
-      return '#94A3B8';
+      return this.themeTextMuted();
     }
     return this.messageContentColor(itemType);
   }
@@ -8766,14 +8834,14 @@ struct Index {
 
   private codeTokenColor(kind: string): string {
     switch (kind) {
-      case 'keyword': return '#7C3AED';
-      case 'builtin': return '#0369A1';
-      case 'string': return '#15803D';
+      case 'keyword': return this.themeColor('#7C3AED', '#C586C0');
+      case 'builtin': return this.themeColor('#0369A1', '#9CDCFE');
+      case 'string': return this.themeColor('#15803D', '#CE9178');
       case 'number':
-      case 'literal': return '#B45309';
-      case 'comment': return '#64748B';
-      case 'operator': return '#BE123C';
-      default: return '#0F172A';
+      case 'literal': return this.themeColor('#B45309', '#B5CEA8');
+      case 'comment': return this.themeColor('#64748B', '#6A9955');
+      case 'operator': return this.themeColor('#BE123C', '#D4D4D4');
+      default: return this.themeTextStrong();
     }
   }
 
@@ -9929,31 +9997,31 @@ struct Index {
 
   private eventSoftBackground(role: string): string {
     switch (role) {
-      case 'reasoning': return '#FFFBEB';
-      case 'command': return '#ECFDF5';
-      case 'tool': return '#EFF6FF';
-      case 'file': return '#F5F3FF';
-      case 'search': return '#F0FDFA';
-      case 'plan': return '#FFF7ED';
-      case 'image': return '#FDF2F8';
-      case 'hook': return '#FEFCE8';
-      case 'review': return '#FEF9C3';
-      default: return '#F8FAFC';
+      case 'reasoning': return this.themeColor('#FFFBEB', '#332D20');
+      case 'command': return this.themeColor('#ECFDF5', '#26342E');
+      case 'tool': return this.themeColor('#EFF6FF', '#263241');
+      case 'file': return this.themeColor('#F5F3FF', '#302A3D');
+      case 'search': return this.themeColor('#F0FDFA', '#243A36');
+      case 'plan': return this.themeColor('#FFF7ED', '#3A2E24');
+      case 'image': return this.themeColor('#FDF2F8', '#3A2633');
+      case 'hook': return this.themeColor('#FEFCE8', '#37321F');
+      case 'review': return this.themeColor('#FEF9C3', '#3A341C');
+      default: return this.themeColor('#F8FAFC', '#2D2D30');
     }
   }
 
   private eventBorderColor(role: string): string {
     switch (role) {
-      case 'reasoning': return '#FDE68A';
-      case 'command': return '#A7F3D0';
-      case 'tool': return '#BFDBFE';
-      case 'file': return '#DDD6FE';
-      case 'search': return '#99F6E4';
-      case 'plan': return '#FED7AA';
-      case 'image': return '#FBCFE8';
-      case 'hook': return '#FDE68A';
-      case 'review': return '#FACC15';
-      default: return '#E2E8F0';
+      case 'reasoning': return this.themeColor('#FDE68A', '#6B5A2A');
+      case 'command': return this.themeColor('#A7F3D0', '#3F6B57');
+      case 'tool': return this.themeColor('#BFDBFE', '#3C5E86');
+      case 'file': return this.themeColor('#DDD6FE', '#5A4D80');
+      case 'search': return this.themeColor('#99F6E4', '#3B7168');
+      case 'plan': return this.themeColor('#FED7AA', '#755538');
+      case 'image': return this.themeColor('#FBCFE8', '#784960');
+      case 'hook': return this.themeColor('#FDE68A', '#6B5A2A');
+      case 'review': return this.themeColor('#FACC15', '#776A24');
+      default: return this.themeBorder();
     }
   }
 
@@ -10018,14 +10086,14 @@ struct Index {
     switch (status) {
       case 'failed':
       case 'timeout':
-        return '#FEF2F2';
+        return this.themeColor('#FEF2F2', '#3A2529');
       case 'starting':
       case 'running':
-        return '#EFF6FF';
+        return this.themeColor('#EFF6FF', '#263241');
       case 'completed':
-        return '#EEF2FF';
+        return this.themeColor('#EEF2FF', '#302A3D');
       default:
-        return '#F8FAFC';
+        return this.themeSubtleBackground();
     }
   }
 
@@ -10033,14 +10101,14 @@ struct Index {
     switch (status) {
       case 'failed':
       case 'timeout':
-        return '#FECACA';
+        return this.themeColor('#FECACA', '#7A3A40');
       case 'starting':
       case 'running':
-        return '#BFDBFE';
+        return this.themeColor('#BFDBFE', '#3C5E86');
       case 'completed':
-        return '#C7D2FE';
+        return this.themeColor('#C7D2FE', '#5A4D80');
       default:
-        return '#CBD5E1';
+        return this.themeStrongBorder();
     }
   }
 
@@ -10099,25 +10167,25 @@ struct Index {
   private statusBgColor(status: string): string {
     switch (status) {
       case 'inProgress':
-        return '#E0F2FE';
+        return this.themeColor('#E0F2FE', '#263241');
       case 'failed':
-        return '#FEE2E2';
+        return this.themeColor('#FEE2E2', '#3A2529');
       case 'declined':
-        return '#FEF3C7';
+        return this.themeColor('#FEF3C7', '#332D20');
       default:
-        return '#F4F4F5';
+        return this.themeSubtleBackground();
     }
   }
 
   private messageContentColor(itemType?: string): string {
     switch (itemType) {
       case 'reasoning':
-        return '#71717A';
+        return this.themeTextSecondary();
       case 'command':
       case 'tool':
-        return '#1E40AF';
+        return this.themeColor('#1E40AF', '#93C5FD');
       default:
-        return '#27272A';
+        return this.themeColor('#27272A', '#E2E8F0');
     }
   }
 
@@ -10128,7 +10196,7 @@ struct Index {
         .copyOption(CopyOptions.LocalDevice)
         .width(28)
         .fontSize(10)
-        .fontColor('#A1A1AA')
+        .fontColor(this.themeTextMuted())
         .fontFamily('monospace')
 
       Text(line.sign)
@@ -10161,14 +10229,14 @@ struct Index {
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(11)
           .fontWeight(this.isDiffFileSelected(file) ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor('#18181B')
+          .fontColor(this.themeTextPrimary())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(file.path)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(9)
-          .fontColor('#A1A1AA')
+          .fontColor(this.themeTextMuted())
           .margin({ top: 4 })
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -10185,13 +10253,13 @@ struct Index {
       Text('↗')
         .copyOption(CopyOptions.None)
         .fontSize(12)
-        .fontColor('#475569')
+        .fontColor(this.themeTextSecondary())
         .textAlign(TextAlign.Center)
         .width(26)
         .height(26)
         .margin({ left: 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: 0.5, color: '#E2E8F0' })
+        .backgroundColor(this.themeElevatedBackground())
+        .border({ width: 0.5, color: this.themeBorder() })
         .borderRadius(7)
         .onClick(() => {
           this.selectDiffFile(file.path);
@@ -10200,8 +10268,8 @@ struct Index {
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor(this.isDiffFileSelected(file) ? '#EFF6FF' : '#FFFFFF')
-    .border({ width: 0.5, color: this.isDiffFileSelected(file) ? '#93C5FD' : '#E4E4E7' })
+    .backgroundColor(this.isDiffFileSelected(file) ? this.themeColor('#EFF6FF', '#333333') : this.themeElevatedBackground())
+    .border({ width: 0.5, color: this.isDiffFileSelected(file) ? this.themeColor('#93C5FD', '#505050') : this.themeBorder() })
     .borderRadius(8)
     .gesture(
       TapGesture({ count: 2 })
@@ -10242,7 +10310,7 @@ struct Index {
       Text(approval.detail)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(this.conversationFontSize(12))
-        .fontColor('#27272A')
+        .fontColor(this.themeTextStrong())
         .lineHeight(this.conversationLineHeight(19))
         .margin({ top: 10 })
 
@@ -10261,10 +10329,10 @@ struct Index {
           .height(34)
           .margin({ left: 8 })
           .fontSize(12)
-          .backgroundColor('#FAFAFA')
-          .fontColor('#27272A')
+          .backgroundColor(this.themePanelBackground())
+          .fontColor(this.themeTextStrong())
           .borderRadius(8)
-          .border({ width: 0.5, color: '#E4E4E7' })
+          .border({ width: 0.5, color: this.themeBorder() })
           .onClick(() => {
             void this.declinePending();
           })
@@ -10276,7 +10344,8 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFFBEB')
+    .backgroundColor(this.eventSoftBackground('reasoning'))
+    .border({ width: 0.5, color: this.eventBorderColor('reasoning') })
     .borderRadius(10)
     .margin({ top: 10 })
   }
@@ -10298,7 +10367,7 @@ struct Index {
         Text(request.detail)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(this.conversationFontSize(12))
-          .fontColor('#27272A')
+          .fontColor(this.themeTextStrong())
           .lineHeight(this.conversationLineHeight(19))
           .margin({ top: 10 })
       }
@@ -10309,11 +10378,11 @@ struct Index {
             Text(question.header)
               .fontSize(this.conversationFontSize(11))
               .fontWeight(FontWeight.Medium)
-              .fontColor('#18181B')
+              .fontColor(this.themeTextPrimary())
 
             Text(question.question)
               .fontSize(this.conversationFontSize(11))
-              .fontColor('#71717A')
+              .fontColor(this.themeTextSecondary())
               .lineHeight(this.conversationLineHeight(18))
               .margin({ top: 4 })
 
@@ -10331,7 +10400,7 @@ struct Index {
                     if (option.description.trim().length > 0) {
                       Text(option.description)
                         .fontSize(this.conversationFontSize(10))
-                        .fontColor('#A1A1AA')
+                        .fontColor(this.themeTextMuted())
                         .lineHeight(this.conversationLineHeight(16))
                     }
                   }
@@ -10352,9 +10421,9 @@ struct Index {
                 .height(40)
                 .margin({ top: 8 })
                 .fontSize(this.conversationFontSize(11))
-                .backgroundColor('#FAFAFA')
+                .backgroundColor(this.themePanelBackground())
                 .borderRadius(8)
-                .border({ width: 0.5, color: '#E4E4E7' })
+                .border({ width: 0.5, color: this.themeBorder() })
                 .padding({ left: 12, right: 12 })
                 .onChange((value: string) => {
                   this.setRequestUserInputAnswer(question.id, value);
@@ -10383,10 +10452,10 @@ struct Index {
           .height(34)
           .margin({ left: 8 })
           .fontSize(12)
-          .backgroundColor('#FAFAFA')
-          .fontColor('#27272A')
+          .backgroundColor(this.themePanelBackground())
+          .fontColor(this.themeTextStrong())
           .borderRadius(8)
-          .border({ width: 0.5, color: '#E4E4E7' })
+          .border({ width: 0.5, color: this.themeBorder() })
           .onClick(() => {
             void this.declineRequestUserInput();
           })
@@ -10398,26 +10467,108 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFFBEB')
+    .backgroundColor(this.eventSoftBackground('plan'))
+    .border({ width: 0.5, color: this.eventBorderColor('plan') })
     .borderRadius(10)
     .margin({ top: 10 })
+  }
+
+  @Builder
+  private sunIcon() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Circle()
+        .width(10)
+        .height(10)
+        .fill('#00000000')
+        .stroke(this.themeColor('#374151', '#D1D5DB'))
+        .strokeWidth(1.4)
+        .position({ x: 7, y: 7 })
+
+      Column().width(1.3).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 11.35, y: 1 })
+      Column().width(1.3).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 11.35, y: 19 })
+      Row().width(4).height(1.3).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 1, y: 11.35 })
+      Row().width(4).height(1.3).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 19, y: 11.35 })
+      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 4.3, y: 4.1 }).rotate({ angle: -45 })
+      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 18.4, y: 4.1 }).rotate({ angle: 45 })
+      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 4.3, y: 16.2 }).rotate({ angle: 45 })
+      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 18.4, y: 16.2 }).rotate({ angle: -45 })
+    }
+    .width(24)
+    .height(24)
+  }
+
+  @Builder
+  private moonIcon() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Circle()
+        .width(18)
+        .height(18)
+        .fill(this.themeColor('#374151', '#E5E7EB'))
+        .position({ x: 3, y: 3 })
+
+      Circle()
+        .width(17)
+        .height(17)
+        .fill(this.themeElevatedBackground())
+        .position({ x: 9, y: 0 })
+    }
+    .width(24)
+    .height(24)
+  }
+
+  @Builder
+  private themeToggleIcon() {
+    if (this.isDarkMode) {
+      this.moonIcon()
+    } else {
+      this.sunIcon()
+    }
+  }
+
+  @Builder
+  private themeToggleButton() {
+    Button() {
+      Row() {
+        this.themeToggleIcon()
+      }
+      .width(28)
+      .height(28)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+    }
+    .type(ButtonType.Normal)
+    .width(32)
+    .height(32)
+    .backgroundColor(this.themeElevatedBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
+    .borderRadius(16)
+    .shadow({ radius: this.isDarkMode ? 0 : 8, color: '#120F172A', offsetY: 2 })
+    .onClick(() => {
+      this.toggleTheme();
+    })
   }
 
   @Builder
   private leftPanel() {
     Column() {
       // Header
-      Text('ArkPilot')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#18181B')
-        .width('100%')
-        .onClick(() => { this.showAboutDialog = true; })
+      Row() {
+        Text('ArkPilot')
+          .copyOption(CopyOptions.LocalDevice)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.themeTextPrimary())
+          .layoutWeight(1)
+          .onClick(() => { this.showAboutDialog = true; })
+
+        this.themeToggleButton()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       Divider()
         .width('100%')
-        .color('#D4D4D8')
+        .color(this.themeStrongBorder())
         .strokeWidth(0.5)
         .margin({ top: 12, bottom: 4 })
 
@@ -10426,14 +10577,14 @@ struct Index {
         Text('项目')
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#18181B')
+          .fontColor(this.themeTextPrimary())
 
         Blank()
           .layoutWeight(1)
 
         Text('+')
           .fontSize(18)
-          .fontColor('#71717A')
+          .fontColor(this.themeTextSecondary())
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .onClick(() => {
             this.openCreateProjectDialog();
@@ -10448,7 +10599,7 @@ struct Index {
           ListItem() {
             Text('暂无项目，点击右上角 + 创建')
               .fontSize(10)
-              .fontColor('#D4D4D8')
+              .fontColor(this.themeTextMuted())
               .margin({ top: 4 })
           }
         } else {
@@ -10471,20 +10622,20 @@ struct Index {
         Row() {
           Text('⚙')
             .fontSize(14)
-            .fontColor('#71717A')
+            .fontColor(this.themeTextSecondary())
 
           Text('设置')
             .fontSize(12)
-            .fontColor('#71717A')
+            .fontColor(this.themeTextSecondary())
             .margin({ left: 6 })
         }
       }
       .height(38)
       .width('100%')
       .margin({ top: 8 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(this.themeElevatedBackground())
       .borderRadius(16)
-      .border({ width: 0.5, color: '#E4E4E7' })
+      .border({ width: 0.5, color: this.themeBorder() })
       .onClick(() => {
         router.pushUrl({ url: 'pages/SettingsPage' });
       })
@@ -10493,8 +10644,8 @@ struct Index {
     .height('100%')
     .width(this.leftPanelWidth)
     .padding(12)
-    .backgroundColor('#FAFAFA')
-    .border({ width: 0.5, color: '#E4E4E7' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(20)
     .onClick(() => {
       this.showProjectMenuId = '';
@@ -10513,12 +10664,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#71717A' })
-                .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
+                .border({ width: 1.5, color: this.themeTextSecondary() })
+                .backgroundColor(this.showLeftDrawer ? this.themeSubtleBackground() : this.themeElevatedBackground())
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#71717A')
+                .backgroundColor(this.themeTextSecondary())
                 .position({ x: 4, y: 2 })
             }
             .width(16)
@@ -10527,9 +10678,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FAFAFA')
+          .backgroundColor(this.themePanelBackground())
           .borderRadius(8)
-          .border({ width: 0.5, color: '#E4E4E7' })
+          .border({ width: 0.5, color: this.themeBorder() })
           .onClick(() => {
             this.toggleLeftDrawer();
           })
@@ -10542,12 +10693,12 @@ struct Index {
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#18181B')
+              .fontColor(this.themeTextPrimary())
 
             Text(this.currentWorkspaceDescription)
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(10)
-              .fontColor('#A1A1AA')
+              .fontColor(this.themeTextMuted())
               .margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.Start)
@@ -10560,27 +10711,27 @@ struct Index {
               Text(this.currentCollaborationModeLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#C2410C')
+                .fontColor(this.themeColor('#C2410C', '#FDBA74'))
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .backgroundColor('#FFF7ED')
+                .backgroundColor(this.eventSoftBackground('plan'))
                 .borderRadius(6)
               Blank()
                 .width(6)
               Text(this.currentModelLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#2563EB')
+                .fontColor(this.themeColor('#2563EB', '#93C5FD'))
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .backgroundColor('#EFF6FF')
+                .backgroundColor(this.eventSoftBackground('tool'))
                 .borderRadius(6)
               Blank()
                 .width(6)
               Text(this.currentEffortLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#71717A')
+                .fontColor(this.themeTextSecondary())
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .backgroundColor('#F4F4F5')
+                .backgroundColor(this.themeSubtleBackground())
                 .borderRadius(6)
               Blank()
                 .width(6)
@@ -10599,12 +10750,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#71717A' })
-                .backgroundColor(this.showRightDrawer ? '#F4F4F5' : '#FFFFFF')
+                .border({ width: 1.5, color: this.themeTextSecondary() })
+                .backgroundColor(this.showRightDrawer ? this.themeSubtleBackground() : this.themeElevatedBackground())
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#71717A')
+                .backgroundColor(this.themeTextSecondary())
                 .position({ x: 10.5, y: 2 })
             }
             .width(16)
@@ -10613,9 +10764,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FAFAFA')
+          .backgroundColor(this.themePanelBackground())
           .borderRadius(8)
-          .border({ width: 0.5, color: '#E4E4E7' })
+          .border({ width: 0.5, color: this.themeBorder() })
           .onClick(() => {
             this.toggleRightDrawer();
           })
@@ -10628,27 +10779,27 @@ struct Index {
             Text(this.currentCollaborationModeLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#C2410C')
+              .fontColor(this.themeColor('#C2410C', '#FDBA74'))
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .backgroundColor('#FFF7ED')
+              .backgroundColor(this.eventSoftBackground('plan'))
               .borderRadius(6)
             Blank()
               .width(6)
             Text(this.currentModelLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#2563EB')
+              .fontColor(this.themeColor('#2563EB', '#93C5FD'))
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .backgroundColor('#EFF6FF')
+              .backgroundColor(this.eventSoftBackground('tool'))
               .borderRadius(6)
             Blank()
               .width(6)
             Text(this.currentEffortLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor('#71717A')
+              .fontColor(this.themeTextSecondary())
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .backgroundColor('#F4F4F5')
+              .backgroundColor(this.themeSubtleBackground())
               .borderRadius(6)
           }
           .width('100%')
@@ -10733,12 +10884,12 @@ struct Index {
               Text('模式')
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#64748B')
+                .fontColor(this.themeTextSecondary())
               Text(this.currentCollaborationModeLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
                 .fontWeight(FontWeight.Medium)
-                .fontColor('#0F172A')
+                .fontColor(this.themeTextStrong())
                 .margin({ left: 6 })
               Text('▾')
                 .copyOption(CopyOptions.None)
@@ -10747,8 +10898,8 @@ struct Index {
                 .margin({ left: 6 })
             }
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .backgroundColor(this.showCollaborationModeOptions ? '#EEF6FF' : '#FFFFFF')
-            .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#93C5FD' : '#E2E8F0' })
+            .backgroundColor(this.showCollaborationModeOptions ? this.themeColor('#EEF6FF', '#1E3A5F') : this.themeElevatedBackground())
+            .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#93C5FD' : this.themeBorder() })
             .borderRadius(12)
             .scale({ x: this.showCollaborationModeOptions ? 1.02 : 1, y: this.showCollaborationModeOptions ? 1.02 : 1 })
             .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
@@ -10767,12 +10918,12 @@ struct Index {
               Text('推理')
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#64748B')
+                .fontColor(this.themeTextSecondary())
 
               Text(this.currentEffortLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#0F172A')
+                .fontColor(this.themeTextStrong())
                 .margin({ left: 6 })
 
               Text('▾')
@@ -10782,8 +10933,8 @@ struct Index {
                 .margin({ left: 6 })
             }
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .backgroundColor(this.showEffortOptions ? '#EEF6FF' : '#FFFFFF')
-            .border({ width: 0.5, color: this.showEffortOptions ? '#93C5FD' : '#E2E8F0' })
+            .backgroundColor(this.showEffortOptions ? this.themeColor('#EEF6FF', '#1E3A5F') : this.themeElevatedBackground())
+            .border({ width: 0.5, color: this.showEffortOptions ? '#93C5FD' : this.themeBorder() })
             .borderRadius(12)
             .scale({ x: this.showEffortOptions ? 1.02 : 1, y: this.showEffortOptions ? 1.02 : 1 })
             .animation({ duration: this.motionFastDuration, curve: Curve.FastOutSlowIn })
@@ -10841,12 +10992,12 @@ struct Index {
             .maxLines(5, { overflowMode: MaxLinesMode.SCROLL })
             .fontSize(this.conversationFontSize(13))
             .lineHeight(this.conversationLineHeight(20))
-            .fontColor('#0F172A')
+            .fontColor(this.themeTextStrong())
             .wordBreak(WordBreak.BREAK_WORD)
-            .placeholderColor('#94A3B8')
-            .backgroundColor('#FFFFFF')
+            .placeholderColor(this.themeTextMuted())
+            .backgroundColor(this.themeInputBackground())
             .borderRadius(14)
-            .border({ width: 0.5, color: '#D7DEE8' })
+            .border({ width: 0.5, color: this.themeStrongBorder() })
             .padding({ left: 14, right: 14 })
             .enterKeyType(EnterKeyType.Send)
             .onChange((value: string) => {
@@ -10896,7 +11047,7 @@ struct Index {
           Text(this.connectionText)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#64748B')
+            .fontColor(this.themeTextSecondary())
             .fontWeight(FontWeight.Medium)
 
           Text(this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
@@ -10914,10 +11065,10 @@ struct Index {
       .width('100%')
       .padding({ left: 14, right: 14, top: 12, bottom: 10 })
       .margin({ top: 10 })
-      .backgroundColor('#FAFAFA')
-      .border({ width: 0.5, color: '#E4E4E7' })
+      .backgroundColor(this.themePanelBackground())
+      .border({ width: 0.5, color: this.themeBorder() })
       .borderRadius(18)
-      .shadow({ radius: 18, color: '#120F172A', offsetY: 6 })
+      .shadow({ radius: this.isDarkMode ? 0 : 18, color: '#120F172A', offsetY: 6 })
     }
     .height('100%')
     .width('100%')
@@ -10938,12 +11089,12 @@ struct Index {
               .width(16)
               .height(12)
               .borderRadius(3)
-              .border({ width: 1.5, color: '#71717A' })
-              .backgroundColor(this.showLeftDrawer ? '#F4F4F5' : '#FFFFFF')
+              .border({ width: 1.5, color: this.themeTextSecondary() })
+              .backgroundColor(this.showLeftDrawer ? this.themeSubtleBackground() : this.themeElevatedBackground())
             Column()
               .width(1.5)
               .height(8)
-              .backgroundColor('#71717A')
+              .backgroundColor(this.themeTextSecondary())
               .position({ x: 4, y: 2 })
           }
           .width(16)
@@ -10952,9 +11103,9 @@ struct Index {
         .type(ButtonType.Normal)
         .width(32)
         .height(28)
-        .backgroundColor('#FAFAFA')
+        .backgroundColor(this.themePanelBackground())
         .borderRadius(8)
-        .border({ width: 0.5, color: '#E4E4E7' })
+        .border({ width: 0.5, color: this.themeBorder() })
         .onClick(() => {
           this.toggleLeftDrawer();
         })
@@ -10966,12 +11117,12 @@ struct Index {
                 .width(16)
                 .height(12)
                 .borderRadius(3)
-                .border({ width: 1.5, color: '#71717A' })
-                .backgroundColor(this.showRightDrawer ? '#F4F4F5' : '#FFFFFF')
+                .border({ width: 1.5, color: this.themeTextSecondary() })
+                .backgroundColor(this.showRightDrawer ? this.themeSubtleBackground() : this.themeElevatedBackground())
               Column()
                 .width(1.5)
                 .height(8)
-                .backgroundColor('#71717A')
+                .backgroundColor(this.themeTextSecondary())
                 .position({ x: 10.5, y: 2 })
             }
             .width(16)
@@ -10980,9 +11131,9 @@ struct Index {
           .type(ButtonType.Normal)
           .width(32)
           .height(28)
-          .backgroundColor('#FAFAFA')
+          .backgroundColor(this.themePanelBackground())
           .borderRadius(8)
-          .border({ width: 0.5, color: '#E4E4E7' })
+          .border({ width: 0.5, color: this.themeBorder() })
           .onClick(() => {
             this.toggleRightDrawer();
           })
@@ -10995,21 +11146,21 @@ struct Index {
             Text('当前暂无项目')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(16)
-              .fontColor('#A1A1AA')
+              .fontColor(this.themeTextMuted())
             Text('请新建项目')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(12)
-              .fontColor('#D4D4D8')
+              .fontColor(this.themeTextMuted())
               .margin({ top: 8 })
           } else {
             Text('当前暂无会话')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(16)
-              .fontColor('#A1A1AA')
+              .fontColor(this.themeTextMuted())
             Text('请在项目中新建会话')
               .copyOption(CopyOptions.LocalDevice)
               .fontSize(12)
-              .fontColor('#D4D4D8')
+              .fontColor(this.themeTextMuted())
               .margin({ top: 8 })
           }
         }
@@ -11022,8 +11173,8 @@ struct Index {
     .height('100%')
     .layoutWeight(1)
     .padding(12)
-    .backgroundColor('#FAFAFA')
-    .border({ width: 0.5, color: '#E4E4E7' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(12)
   }
 
@@ -11039,9 +11190,9 @@ struct Index {
         Text(`${this.diffFiles.length.toString()} 个文件`)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#1D4ED8')
+          .fontColor(this.themeColor('#1D4ED8', '#93C5FD'))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor('#EFF6FF')
+          .backgroundColor(this.eventSoftBackground('tool'))
           .borderRadius(6)
       }
       .width('100%')
@@ -11051,7 +11202,7 @@ struct Index {
           Text('文件列表')
             .copyOption(CopyOptions.None)
             .fontSize(10)
-            .fontColor('#71717A')
+            .fontColor(this.themeTextSecondary())
 
           Blank()
             .layoutWeight(1)
@@ -11080,12 +11231,12 @@ struct Index {
           Text('当前')
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#A1A1AA')
+            .fontColor(this.themeTextMuted())
 
           Text(this.currentDiffFilePath())
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(10)
-            .fontColor('#27272A')
+            .fontColor(this.themeTextStrong())
             .layoutWeight(1)
             .margin({ left: 8 })
             .maxLines(1)
@@ -11099,13 +11250,13 @@ struct Index {
           Text('↗')
             .copyOption(CopyOptions.None)
             .fontSize(12)
-            .fontColor('#475569')
+            .fontColor(this.themeTextSecondary())
             .textAlign(TextAlign.Center)
             .width(26)
             .height(26)
             .margin({ left: 8 })
-            .backgroundColor('#FFFFFF')
-            .border({ width: 0.5, color: '#E2E8F0' })
+            .backgroundColor(this.themeElevatedBackground())
+            .border({ width: 0.5, color: this.themeBorder() })
             .borderRadius(7)
             .onClick(() => {
               this.openSelectedDiffFileWithSystem();
@@ -11114,15 +11265,15 @@ struct Index {
         .width('100%')
         .padding({ left: 8, right: 8, top: 8, bottom: 8 })
         .margin({ top: 10 })
-        .backgroundColor('#F8FAFC')
-        .border({ width: 0.5, color: '#E2E8F0' })
+        .backgroundColor(this.themePanelBackground())
+        .border({ width: 0.5, color: this.themeBorder() })
         .borderRadius(8)
       } else {
         Column() {
           Text(NO_FILE_CHANGES_TEXT)
             .copyOption(CopyOptions.None)
             .fontSize(13)
-            .fontColor('#71717A')
+            .fontColor(this.themeTextSecondary())
         }
         .layoutWeight(1)
         .width('100%')
@@ -11134,7 +11285,7 @@ struct Index {
         Text('Diff')
           .copyOption(CopyOptions.None)
           .fontSize(10)
-          .fontColor('#71717A')
+          .fontColor(this.themeTextSecondary())
           .margin({ top: 12 })
 
         List({ space: 6 }) {
@@ -11172,8 +11323,8 @@ struct Index {
     .height('100%')
     .width(this.rightPanelWidth)
     .padding(12)
-    .backgroundColor('#FAFAFA')
-    .border({ width: 0.5, color: '#E4E4E7' })
+    .backgroundColor(this.themePanelBackground())
+    .border({ width: 0.5, color: this.themeBorder() })
     .borderRadius(20)
   }
 
@@ -11197,13 +11348,13 @@ struct Index {
             Column()
               .width(2)
               .height('60%')
-              .backgroundColor('#CBD5E1')
+              .backgroundColor(this.themeStrongBorder())
               .borderRadius(1)
           }
           .width(8)
           .height('100%')
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#F4F4F5')
+          .backgroundColor(this.themeSubtleBackground())
           .borderRadius(4)
           .hitTestBehavior(HitTestMode.Block)
           .gesture(
@@ -11250,13 +11401,13 @@ struct Index {
             Column()
               .width(2)
               .height('60%')
-              .backgroundColor('#CBD5E1')
+              .backgroundColor(this.themeStrongBorder())
               .borderRadius(1)
           }
           .width(8)
           .height('100%')
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#F4F4F5')
+          .backgroundColor(this.themeSubtleBackground())
           .borderRadius(4)
           .hitTestBehavior(HitTestMode.Block)
           .gesture(
@@ -11295,13 +11446,13 @@ struct Index {
             Column()
               .width(2)
               .height('60%')
-              .backgroundColor('#CBD5E1')
+              .backgroundColor(this.themeStrongBorder())
               .borderRadius(1)
           }
           .width(8)
           .height('100%')
           .justifyContent(FlexAlign.Center)
-          .backgroundColor('#F4F4F5')
+          .backgroundColor(this.themeSubtleBackground())
           .borderRadius(4)
           .hitTestBehavior(HitTestMode.Block)
           .gesture(
@@ -11883,11 +12034,11 @@ struct Index {
     Row() {
       Text(label)
         .fontSize(11)
-        .fontColor('#A1A1AA')
+        .fontColor(this.themeTextMuted())
         .flexShrink(0)
       Text(value)
         .fontSize(11)
-        .fontColor('#18181B')
+        .fontColor(this.themeTextPrimary())
         .fontWeight(FontWeight.Medium)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -11982,15 +12133,15 @@ struct Index {
         Row() {
           Text('▼')
             .fontSize(10)
-            .fontColor('#A1A1AA')
+            .fontColor(this.themeTextMuted())
         }
         .width('100%')
         .height(16)
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor(this.themeElevatedBackground())
         .borderRadius({ topLeft: 10, topRight: 10 })
-        .border({ width: 0.5, color: '#E4E4E7' })
+        .border({ width: 0.5, color: this.themeBorder() })
         .margin({ bottom: -1 })
         .hitTestBehavior(HitTestMode.Block)
         .gesture(
@@ -12023,18 +12174,18 @@ struct Index {
           Row() {
             Text(this.tokenMiniText())
               .fontSize(11)
-              .fontColor('#71717A')
+              .fontColor(this.themeTextSecondary())
               .maxLines(1)
             Blank()
             Text('▲')
               .fontSize(10)
-              .fontColor('#A1A1AA')
+              .fontColor(this.themeTextMuted())
           }
           .width('100%')
           .padding({ top: 8, bottom: 8, left: 12, right: 12 })
           .borderRadius({ topLeft: 10, topRight: 10 })
-          .backgroundColor('#FAFAFA')
-          .border({ width: 0.5, color: '#E4E4E7' })
+          .backgroundColor(this.themePanelBackground())
+          .border({ width: 0.5, color: this.themeBorder() })
           .hitTestBehavior(HitTestMode.Block)
           .gesture(
             TapGesture()
@@ -12053,21 +12204,21 @@ struct Index {
                 Row() {
                   Text('上下文窗口')
                     .fontSize(12)
-                    .fontColor('#18181B')
+                    .fontColor(this.themeTextPrimary())
                     .fontWeight(FontWeight.Medium)
                   Blank()
                   Text(this.contextText())
                     .fontSize(12)
-                    .fontColor('#18181B')
+                    .fontColor(this.themeTextPrimary())
                     .fontWeight(FontWeight.Medium)
                   if (this.compacting || this.compactError.length > 0 || this.contextRemainingPct() >= 0) {
                     Text(this.compacting ? '压缩中...' : (this.compactError.length > 0 ? this.compactError : '手动压缩'))
                       .fontSize(10)
-                      .fontColor(this.compactError.length > 0 ? '#EF4444' : '#27272A')
+                      .fontColor(this.compactError.length > 0 ? '#EF4444' : this.themeTextStrong())
                       .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-                      .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : '#E4E4E7' })
+                      .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : this.themeBorder() })
                       .borderRadius(6)
-                      .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : '#FAFAFA')
+                      .backgroundColor(this.compactError.length > 0 ? this.themeColor('#FEF2F2', '#3A1D24') : this.themePanelBackground())
                       .margin({ left: 6 })
                       .onClick(() => {
                         this.retryCurrentCompaction(this.backendActiveThreadId);
@@ -12105,11 +12256,11 @@ struct Index {
                 Text('Token 用量')
                   .fontSize(13)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#18181B')
+                  .fontColor(this.themeTextPrimary())
                 Blank()
                 Text(this.providerName)
                   .fontSize(11)
-                  .fontColor('#A1A1AA')
+                  .fontColor(this.themeTextMuted())
               }
               .width('100%')
               .padding({ bottom: 2 })
@@ -12118,25 +12269,25 @@ struct Index {
           Row() {
             Text('当前轮')
               .fontSize(12)
-              .fontColor(this.tokenTab === 0 ? '#FFFFFF' : '#71717A')
+              .fontColor(this.tokenTab === 0 ? '#FFFFFF' : this.themeTextSecondary())
               .fontWeight(this.tokenTab === 0 ? FontWeight.Medium : FontWeight.Normal)
               .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 0 ? '#27272A' : 'transparent')
+              .backgroundColor(this.tokenTab === 0 ? this.themeColor('#27272A', '#334155') : 'transparent')
               .onClick(() => { this.tokenTab = 0; })
             Text('趋势')
               .fontSize(12)
-              .fontColor(this.tokenTab === 1 ? '#FFFFFF' : '#71717A')
+              .fontColor(this.tokenTab === 1 ? '#FFFFFF' : this.themeTextSecondary())
               .fontWeight(this.tokenTab === 1 ? FontWeight.Medium : FontWeight.Normal)
               .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 1 ? '#27272A' : 'transparent')
+              .backgroundColor(this.tokenTab === 1 ? this.themeColor('#27272A', '#334155') : 'transparent')
               .onClick(() => { this.tokenTab = 1; })
           }
           .margin({ top: 10 })
           .padding(2)
           .borderRadius(8)
-          .backgroundColor('#F4F4F5')
+          .backgroundColor(this.themeSubtleBackground())
           .width('100%')
 
           // 当前轮 tab
@@ -12145,34 +12296,34 @@ struct Index {
               if (this.tokenUsage === null) {
                 Text('等待数据...')
                   .fontSize(11)
-                  .fontColor('#A1A1AA')
+                  .fontColor(this.themeTextMuted())
                   .margin({ top: 12 })
               } else {
                 // 细分数字
                 Column() {
                   Row() {
                     Circle({ width: 6, height: 6 }).fill('#3B82F6')
-                    Text('输入').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
+                    Text('输入').fontSize(11).fontColor(this.themeTextMuted()).margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                    Text(this.formatTokenCount(this.tokenUsage!.last.inputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                   }.width('100%').padding({ top: 6 })
                   Row() {
                     Circle({ width: 6, height: 6 }).fill('#A1A1AA')
-                    Text('缓存').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
+                    Text('缓存').fontSize(11).fontColor(this.themeTextMuted()).margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                    Text(this.formatTokenCount(this.tokenUsage!.last.cachedInputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                   }.width('100%').padding({ top: 6 })
                   Row() {
                     Circle({ width: 6, height: 6 }).fill('#22C55E')
-                    Text('输出').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
+                    Text('输出').fontSize(11).fontColor(this.themeTextMuted()).margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                    Text(this.formatTokenCount(this.tokenUsage!.last.outputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                   }.width('100%').padding({ top: 6 })
                   Row() {
                     Circle({ width: 6, height: 6 }).fill('#A855F7')
-                    Text('推理').fontSize(11).fontColor('#A1A1AA').margin({ left: 6 })
+                    Text('推理').fontSize(11).fontColor(this.themeTextMuted()).margin({ left: 6 })
                     Blank()
-                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                    Text(this.formatTokenCount(this.tokenUsage!.last.reasoningOutputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                   }.width('100%').padding({ top: 6 })
                 }
                 .margin({ top: 4 })
@@ -12188,40 +12339,40 @@ struct Index {
               if (this.tokenAggregate === null) {
                 Text('加载中...')
                   .fontSize(11)
-                  .fontColor('#A1A1AA')
+                  .fontColor(this.themeTextMuted())
                   .margin({ top: 12 })
               } else {
                 // 范围切换按钮
                 Row() {
                   Text('今日')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 0 ? '#FFFFFF' : '#71717A')
+                    .fontColor(this.tokenTrendRange === 0 ? '#FFFFFF' : this.themeTextSecondary())
                     .fontWeight(this.tokenTrendRange === 0 ? FontWeight.Medium : FontWeight.Normal)
                     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
                     .borderRadius(6)
-                    .backgroundColor(this.tokenTrendRange === 0 ? '#27272A' : 'transparent')
+                    .backgroundColor(this.tokenTrendRange === 0 ? this.themeColor('#27272A', '#334155') : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 0; })
                   Text('近7天')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 1 ? '#FFFFFF' : '#71717A')
+                    .fontColor(this.tokenTrendRange === 1 ? '#FFFFFF' : this.themeTextSecondary())
                     .fontWeight(this.tokenTrendRange === 1 ? FontWeight.Medium : FontWeight.Normal)
                     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
                     .borderRadius(6)
-                    .backgroundColor(this.tokenTrendRange === 1 ? '#27272A' : 'transparent')
+                    .backgroundColor(this.tokenTrendRange === 1 ? this.themeColor('#27272A', '#334155') : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 1; })
                   Text('近30天')
                     .fontSize(11)
-                    .fontColor(this.tokenTrendRange === 2 ? '#FFFFFF' : '#71717A')
+                    .fontColor(this.tokenTrendRange === 2 ? '#FFFFFF' : this.themeTextSecondary())
                     .fontWeight(this.tokenTrendRange === 2 ? FontWeight.Medium : FontWeight.Normal)
                     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
                     .borderRadius(6)
-                    .backgroundColor(this.tokenTrendRange === 2 ? '#27272A' : 'transparent')
+                    .backgroundColor(this.tokenTrendRange === 2 ? this.themeColor('#27272A', '#334155') : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 2; })
                 }
                 .margin({ top: 8 })
                 .padding(2)
                 .borderRadius(7)
-                .backgroundColor('#F4F4F5')
+                .backgroundColor(this.themeSubtleBackground())
                 .width('100%')
 
                 // 今日视图：水平堆叠条 + 卡片
@@ -12232,15 +12383,15 @@ struct Index {
                       Text(this.formatTokenCount(this.tokenAggregate!.today.totalTokens))
                         .fontSize(20)
                         .fontWeight(FontWeight.Medium)
-                        .fontColor('#18181B')
+                        .fontColor(this.themeTextPrimary())
                       Text(' tokens')
                         .fontSize(11)
-                        .fontColor('#A1A1AA')
+                        .fontColor(this.themeTextMuted())
                         .margin({ left: 2 })
                       Blank()
                       Text(`${this.tokenAggregate!.today.requestCount} 次请求`)
                         .fontSize(11)
-                        .fontColor('#A1A1AA')
+                        .fontColor(this.themeTextMuted())
                     }
                     .width('100%')
                     .margin({ top: 10 })
@@ -12285,42 +12436,42 @@ struct Index {
                     Column() {
                       Row() {
                         this.trendLegendDot('#3B82F6')
-                        Text('输入').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Text('输入').fontSize(11).fontColor(this.themeTextSecondary()).margin({ left: 6 })
                         Blank()
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.inputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                       }.width('100%').padding({ top: 8, bottom: 8 })
 
-                      Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+                      Row().width('100%').height(0.5).backgroundColor(this.themeSubtleBackground())
 
                       Row() {
                         this.trendLegendDot('#A1A1AA')
-                        Text('缓存').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Text('缓存').fontSize(11).fontColor(this.themeTextSecondary()).margin({ left: 6 })
                         Blank()
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.cachedInputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                       }.width('100%').padding({ top: 8, bottom: 8 })
 
-                      Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+                      Row().width('100%').height(0.5).backgroundColor(this.themeSubtleBackground())
 
                       Row() {
                         this.trendLegendDot('#22C55E')
-                        Text('输出').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Text('输出').fontSize(11).fontColor(this.themeTextSecondary()).margin({ left: 6 })
                         Blank()
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.outputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                       }.width('100%').padding({ top: 8, bottom: 8 })
 
-                      Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
+                      Row().width('100%').height(0.5).backgroundColor(this.themeSubtleBackground())
 
                       Row() {
                         this.trendLegendDot('#A855F7')
-                        Text('推理').fontSize(11).fontColor('#71717A').margin({ left: 6 })
+                        Text('推理').fontSize(11).fontColor(this.themeTextSecondary()).margin({ left: 6 })
                         Blank()
-                        Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens)).fontSize(11).fontColor('#18181B').fontWeight(FontWeight.Medium)
+                        Text(this.formatTokenCount(this.tokenAggregate!.today.reasoningOutputTokens)).fontSize(11).fontColor(this.themeTextPrimary()).fontWeight(FontWeight.Medium)
                       }.width('100%').padding({ top: 8, bottom: 8 })
                     }
                     .width('100%')
                     .margin({ top: 12 })
                     .padding(10)
-                    .backgroundColor('#FAFAFA')
+                    .backgroundColor(this.themePanelBackground())
                     .borderRadius(8)
                   }
                 }
@@ -12333,15 +12484,15 @@ struct Index {
                       Text(this.formatTokenCount(this.getTrendSumTokens()))
                         .fontSize(20)
                         .fontWeight(FontWeight.Medium)
-                        .fontColor('#18181B')
+                        .fontColor(this.themeTextPrimary())
                       Text(' tokens')
                         .fontSize(11)
-                        .fontColor('#A1A1AA')
+                        .fontColor(this.themeTextMuted())
                         .margin({ left: 2 })
                       Blank()
                       Text(`${this.getTrendSumRequests()} 次请求`)
                         .fontSize(11)
-                        .fontColor('#A1A1AA')
+                        .fontColor(this.themeTextMuted())
                     }
                     .width('100%')
                     .margin({ top: 10 })
@@ -12351,9 +12502,9 @@ struct Index {
                     Stack({ alignContent: Alignment.BottomStart }) {
                       // 网格线
                       Column() {
-                        Row().width('100%').height(0.5).backgroundColor('#F4F4F5')
-                        Row().width('100%').height(0.5).backgroundColor('#F4F4F5').margin({ top: 24 })
-                        Row().width('100%').height(0.5).backgroundColor('#F4F4F5').margin({ top: 24 })
+                        Row().width('100%').height(0.5).backgroundColor(this.themeSubtleBackground())
+                        Row().width('100%').height(0.5).backgroundColor(this.themeSubtleBackground()).margin({ top: 24 })
+                        Row().width('100%').height(0.5).backgroundColor(this.themeSubtleBackground()).margin({ top: 24 })
                       }
                       .width('100%')
                       .height(52)
@@ -12386,9 +12537,9 @@ struct Index {
 
                     // X轴日期
                     Row() {
-                      Text(this.getTrendFirstDate()).fontSize(9).fontColor('#A1A1AA')
+                      Text(this.getTrendFirstDate()).fontSize(9).fontColor(this.themeTextMuted())
                       Blank()
-                      Text(this.getTrendLastDate()).fontSize(9).fontColor('#A1A1AA')
+                      Text(this.getTrendLastDate()).fontSize(9).fontColor(this.themeTextMuted())
                     }
                     .width('100%')
                     .margin({ top: 4 })
@@ -12399,16 +12550,16 @@ struct Index {
                         Row() {
                           Text(item.date.substring(5))
                             .fontSize(11)
-                            .fontColor('#71717A')
+                            .fontColor(this.themeTextSecondary())
                             .width(40)
                           Blank()
                           Text(this.formatTokenCount(item.totalTokens))
                             .fontSize(11)
-                            .fontColor('#18181B')
+                            .fontColor(this.themeTextPrimary())
                             .fontWeight(FontWeight.Medium)
                           Text(`  ${item.requestCount}次`)
                             .fontSize(10)
-                            .fontColor('#A1A1AA')
+                            .fontColor(this.themeTextMuted())
                         }
                         .width('100%')
                         .padding({ top: 7, bottom: 7 })
@@ -12417,7 +12568,7 @@ struct Index {
                     .width('100%')
                     .margin({ top: 12 })
                     .padding(10)
-                    .backgroundColor('#FAFAFA')
+                    .backgroundColor(this.themePanelBackground())
                     .borderRadius(8)
                   }
                 }
@@ -12435,9 +12586,9 @@ struct Index {
       }
       .padding(this.tokenCardExpanded ? 12 : 0)
       .width('100%')
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(this.themeElevatedBackground())
       .borderRadius({ bottomLeft: 10, bottomRight: 10 })
-      .border({ width: 0.5, color: '#E4E4E7' })
+      .border({ width: 0.5, color: this.themeBorder() })
       .shadow(this.tokenCardExpanded ? { radius: 12, color: '#0A000000', offsetY: 4 } : undefined)
       .animation({ duration: this.motionNormalDuration, curve: Curve.FastOutSlowIn })
     }
@@ -12450,7 +12601,7 @@ struct Index {
       Column() {}
         .width('100%')
         .height('100%')
-        .backgroundColor('#EEF2F7')
+        .backgroundColor(this.themeRootBackground())
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       Stack({ alignContent: Alignment.BottomEnd }) {
@@ -12478,7 +12629,7 @@ struct Index {
           .width('100%')
           .height('100%')
           .padding({ top: 12, bottom: 12, left: 12, right: 48 })
-          .backgroundColor('#66000000')
+          .backgroundColor(this.themeBackdrop())
           .transition(TransitionEffect.OPACITY.animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             this.showLeftDrawer = false;
@@ -12499,7 +12650,7 @@ struct Index {
           .padding(this.isPhoneBreakpoint()
             ? { left: 28, right: 8, top: 16, bottom: 8 }
             : { left: 24, right: 12, top: 24, bottom: 12 })
-          .backgroundColor('#66000000')
+          .backgroundColor(this.themeBackdrop())
           .transition(TransitionEffect.OPACITY.animation({ duration: this.motionPanelDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             this.showRightDrawer = false;
@@ -12523,7 +12674,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
-          .backgroundColor('#4D000000')
+          .backgroundColor(this.themeColor('#4D000000', '#B3000000'))
           .transition(TransitionEffect.OPACITY.animation({ duration: this.motionNormalDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             // tap backdrop to dismiss — do nothing, user must approve/deny
@@ -12544,14 +12695,14 @@ struct Index {
                 Text('关于我们')
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#18181B')
+                  .fontColor(this.themeTextPrimary())
 
                 Blank()
                   .layoutWeight(1)
 
                 Text('✕')
                   .fontSize(16)
-                  .fontColor('#94A3B8')
+                  .fontColor(this.themeTextMuted())
                   .onClick(() => { this.showAboutDialog = false; })
               }
               .width('100%')
@@ -12565,9 +12716,9 @@ struct Index {
             .width(this.isPhoneBreakpoint() ? '98%' : '1280px')
             .constraintSize({ minHeight: this.isPhoneBreakpoint() ? '80vh' : '80vh' })
             .padding(20)
-            .backgroundColor('#FFFFFF')
+            .backgroundColor(this.themeElevatedBackground())
             .borderRadius(16)
-            .shadow({ radius: 24, color: '#33000000', offsetX: 0, offsetY: 8 })
+            .shadow({ radius: this.isDarkMode ? 0 : 24, color: '#33000000', offsetX: 0, offsetY: 8 })
           }
           .width('100%')
           .height('100%')
