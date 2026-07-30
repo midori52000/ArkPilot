@@ -3047,7 +3047,7 @@ struct Index {
     }
     const model: string = this.manualModel.trim();
     if (model.length === 0) {
-      return 'default';
+      return '未配置 API';
     }
     return model;
   }
@@ -3647,6 +3647,10 @@ struct Index {
   private sendMessage(): void {
     const prompt: string = this.draft.trim();
     if (prompt.length === 0 || this.isWorkspaceRunning(this.activeWorkspaceId)) {
+      return;
+    }
+    if (this.providerApiKey.trim().length === 0) {
+      promptAction.showToast({ message: '尚未配置 API，请到设置界面进行配置', duration: 3000 });
       return;
     }
     this.resumeMessageAutoFollow();
@@ -4766,8 +4770,8 @@ struct Index {
   }
 
   private describeProviderConfig(config: CodexProviderConfig): string {
-    const baseUrl: string = config.baseUrl.trim().length > 0 ? config.baseUrl.trim() : 'https://api.openai.com/v1';
-    const model: string = config.model.trim().length > 0 ? config.model.trim() : 'default';
+    const baseUrl: string = config.baseUrl.trim().length > 0 ? config.baseUrl.trim() : '未配置';
+    const model: string = config.model.trim().length > 0 ? config.model.trim() : '未配置';
     const auth: string = config.apiKey.trim().length > 0 ? 'API key set' : 'No API key';
     return `base_url: ${baseUrl} | model: ${model} | ${auth}`;
   }

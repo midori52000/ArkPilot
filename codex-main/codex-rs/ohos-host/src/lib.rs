@@ -99,9 +99,9 @@ mod skills_hash;
 mod skills_registry;
 
 const DEFAULT_LISTEN_URL: &str = "ws://127.0.0.1:7456";
-const DEFAULT_PROVIDER_BASE_URL: &str = "http://192.168.31.101:8317/v1";
-const DEFAULT_PROVIDER_API_KEY: &str = "midori52000";
-const DEFAULT_PROVIDER_MODEL: &str = "gpt-5.4";
+const DEFAULT_PROVIDER_BASE_URL: &str = "";
+const DEFAULT_PROVIDER_API_KEY: &str = "";
+const DEFAULT_PROVIDER_MODEL: &str = "";
 const DEFAULT_APPROVAL_POLICY: &str = "on-request";
 const DEFAULT_SANDBOX_MODE: &str = "workspace-write";
 const CUSTOM_PROVIDER_ID: &str = "harmony-openai-compatible";
@@ -963,7 +963,7 @@ pub extern "C" fn codex_ohos_host_save_provider_config(
     let settings = ProviderSettings {
         base_url: ffi_string(base_url)
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_PROVIDER_BASE_URL.to_string()),
+            .unwrap_or_default(),
         api_key: ffi_string(api_key).unwrap_or_default(),
         model: ffi_string(model).unwrap_or_default(),
         context_window: ffi_string(context_window)
