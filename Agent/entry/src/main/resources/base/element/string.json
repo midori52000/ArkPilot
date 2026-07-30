@@ -2,11 +2,11 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "ArkPilot 鸿蒙前端模块"
+      "value": "ArkPilot 前端模块"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "ArkPilot 鸿蒙前端入口"
+      "value": "ArkPilot 前端入口"
     },
     {
       "name": "EntryAbility_label",
