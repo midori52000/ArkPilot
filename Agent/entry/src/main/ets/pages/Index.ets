@@ -11048,23 +11048,15 @@ struct Index {
         .margin({ top: 8 })
 
         Row() {
-          Text(this.connectionText)
-            .copyOption(CopyOptions.LocalDevice)
+          Text('⚠ 回答由 AI 生成，可能存在错误，请注意甄别')
             .fontSize(10)
-            .fontColor(this.themeTextSecondary())
-            .fontWeight(FontWeight.Medium)
-
-          Text(this.workspaceRoot.trim().length > 0 ? this.workspaceRoot : '默认 cwd')
-            .copyOption(CopyOptions.LocalDevice)
-            .fontSize(10)
-            .fontColor('#94A3B8')
-            .margin({ left: 10 })
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .fontColor(this.themeTextMuted())
+            .textAlign(TextAlign.Center)
+            .width('100%')
         }
         .width('100%')
-        .margin({ top: 9 })
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 2, bottom: 2 })
       }
       .width('100%')
       .padding({ left: 14, right: 14, top: 12, bottom: 10 })
