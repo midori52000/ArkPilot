@@ -102,6 +102,8 @@ struct SettingsPage {
   @StorageProp('arkPilotBreakpoint')
   @Watch('onBreakpointChange')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
+  @StorageProp('arkPilotThemeMode')
+  themeMode: string = 'light';
   @State private animatedMode: ArkPilotLayoutMode = 'phone';
   @State private activeTab: SettingsTab = 'api';
   @State private pressedKey: string = '';
@@ -129,6 +131,7 @@ struct SettingsPage {
   @State private githubScanResults: DiscoverableSkill[] = [];
   @State private githubScanning: boolean = false;
   @State private installingSkillKeys: string[] = [];
+  @State private skillBusy: boolean = false;
   @State private skillsShQuery: string = '';
   @State private skillsShResults: SkillsShItem[] = [];
   @State private skillsShSearching: boolean = false;
@@ -149,6 +152,7 @@ struct SettingsPage {
   @State private pendingDeleteMcpName: string = '';
   @State private mcpJsonPasteInput: string = '';
   @State private mcpLoading: boolean = false;
+  @State private mcpBusy: boolean = false;
 
   @State private promptsViewModel: PromptsViewModel = new PromptsViewModel(new PromptsBackendService(''));
   @State private prompts: PromptRecord[] = [];
@@ -161,6 +165,7 @@ struct SettingsPage {
   @State private promptDraftContent: string = '';
   @State private promptLiveContent: string = '';
   @State private promptsStatusText: string = '';
+  @State private promptBusy: boolean = false;
 
   @State private showConfigToml: boolean = false;
   @State private configTomlContent: string = '';
@@ -477,11 +482,16 @@ struct SettingsPage {
   }
 
   private confirmUninstallSkill(): void {
+    if (this.skillBusy) {
+      this.triggerFeedback('正在处理 Skill，请稍候。', 'info');
+      return;
+    }
     const skillId = this.pendingDeleteSkillId;
     this.cancelUninstallSkill();
     if (skillId.length === 0) {
       return;
     }
+    this.skillBusy = true;
     skillsVM.uninstall(skillId)
       .then(() => {
         this.syncSkillsStateFromViewModel();
@@ -493,7 +503,8 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.skillsStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.skillsStatusText, 'error');
-      });
+      })
+      .finally(() => { this.skillBusy = false; });
   }
 
   private showSkillDetail(skill: InstalledSkill): void {
@@ -972,11 +983,16 @@ struct SettingsPage {
   }
 
   private saveMcpDraft(): void {
+    if (this.mcpBusy) {
+      this.triggerFeedback('正在保存 MCP 配置，请稍候。', 'info');
+      return;
+    }
     const server = this.selectedMcpServer();
     if (server === null) {
       this.triggerFeedback('当前没有可保存的 MCP 服务。', 'warning');
       return;
     }
+    this.mcpBusy = true;
     codexBackend.saveMcpServerConfig(
       server.name, this.mcpEnabledDraft, this.mcpTransportTypeDraft,
       this.mcpCommandDraft, this.mcpArgsDraft, this.mcpUrlDraft,
@@ -989,14 +1005,20 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.mcpStatusText, 'error');
-      });
+      })
+      .finally(() => { this.mcpBusy = false; });
   }
 
   private toggleMcpEnabled(serverId: string): void {
+    if (this.mcpBusy) {
+      this.triggerFeedback('正在更新 MCP 状态，请稍候。', 'info');
+      return;
+    }
     const server = this.mcpServers.find((s: McpServerRecord) => s.id === serverId);
     if (server === null || server === undefined) {
       return;
     }
+    this.mcpBusy = true;
     codexBackend.saveMcpServerConfig(
       server.name, !server.enabled, server.transportType,
       server.command, server.argsText, server.url,
@@ -1009,7 +1031,8 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.mcpStatusText, 'error');
-      });
+      })
+      .finally(() => { this.mcpBusy = false; });
   }
 
   private revertMcpDraft(): void {
@@ -1129,6 +1152,10 @@ struct SettingsPage {
   }
 
   private confirmMcpAddFromJson(): void {
+    if (this.mcpBusy) {
+      this.triggerFeedback('正在添加 MCP 服务，请稍候。', 'info');
+      return;
+    }
     const parsed: Record<string, Object> | null = this.parseMcpJsonInput(this.mcpJsonPasteInput);
     if (parsed === null) {
       this.triggerFeedback('JSON 格式不正确，请检查后重试。', 'error');
@@ -1162,6 +1189,7 @@ struct SettingsPage {
     const envText: string = envObj !== undefined ? JSON.stringify(envObj) : '{}';
     const headersObj: Object | undefined = parsed['headers'];
     const httpHeadersText: string = headersObj !== undefined ? JSON.stringify(headersObj) : '{}';
+    this.mcpBusy = true;
     codexBackend.addMcpServer(name, transportType, command, argsText, url, envText, httpHeadersText)
       .then(() => {
         this.runMotion(() => {
@@ -1179,7 +1207,8 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.mcpStatusText, 'error');
-      });
+      })
+      .finally(() => { this.mcpBusy = false; });
   }
 
   private openMcpDeleteDialog(): void {
@@ -1202,9 +1231,14 @@ struct SettingsPage {
   }
 
   private confirmMcpDelete(): void {
+    if (this.mcpBusy) {
+      this.triggerFeedback('正在删除 MCP 服务，请稍候。', 'info');
+      return;
+    }
     const name: string = this.pendingDeleteMcpName;
     this.cancelMcpDelete();
     if (name.length === 0) return;
+    this.mcpBusy = true;
     codexBackend.removeMcpServer(name)
       .then(() => {
         this.syncMcpStateFromBackend();
@@ -1213,7 +1247,8 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.mcpStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.mcpStatusText, 'error');
-      });
+      })
+      .finally(() => { this.mcpBusy = false; });
   }
 
   private authLabel(status: string): string {
@@ -1240,9 +1275,9 @@ struct SettingsPage {
 
   private describeRuntimeError(err: Object): string {
     if (err instanceof Error) {
-      return err.message;
+      return err.message.trim().length > 0 ? err.message : '操作失败，请稍后重试。';
     }
-    return JSON.stringify(err);
+    return '操作失败，请稍后重试。';
   }
 
   private showToast(message: string, tone: ToastTone = 'info', duration: number = 1800): void {
@@ -1263,7 +1298,7 @@ struct SettingsPage {
   }
 
   private notePending(action: string): void {
-    this.triggerFeedback(`${action}暂未接入后端，当前仅前端模拟。`, 'warning');
+    this.triggerFeedback(`${action}暂不可用。`, 'warning');
   }
 
   private updatePressed(key: string, event: TouchEvent): void {
@@ -1492,12 +1527,17 @@ struct SettingsPage {
   }
 
   private confirmDeletePrompt(): void {
+    if (this.promptBusy) {
+      this.triggerFeedback('正在删除 Prompt，请稍候。', 'info');
+      return;
+    }
     const promptId: string = this.pendingDeletePromptId;
     const promptName: string = this.pendingDeletePromptName;
     this.cancelDeletePrompt();
     if (promptId.length === 0) {
       return;
     }
+    this.promptBusy = true;
     this.promptsViewModel.deletePrompt(promptId)
       .then(() => {
         this.syncPromptsStateFromViewModel();
@@ -1506,7 +1546,8 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.promptsStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.promptsStatusText, 'error');
-      });
+      })
+      .finally(() => { this.promptBusy = false; });
   }
 
   private createNewPrompt(): void {
@@ -1536,6 +1577,10 @@ struct SettingsPage {
   }
 
   private savePromptDraft(): void {
+    if (this.promptBusy) {
+      this.triggerFeedback('正在保存 Prompt，请稍候。', 'info');
+      return;
+    }
     const prompt = this.selectedPrompt();
     const draft = prompt !== null
       ? new PromptRecord(
@@ -1556,6 +1601,7 @@ struct SettingsPage {
           Date.now(),
           0
         );
+    this.promptBusy = true;
     this.promptsViewModel.savePrompt(draft)
       .then(() => {
         this.syncPromptsStateFromViewModel();
@@ -1564,7 +1610,8 @@ struct SettingsPage {
       .catch((err: Object) => {
         this.promptsStatusText = this.describeRuntimeError(err);
         this.triggerFeedback(this.promptsStatusText, 'error');
-      });
+      })
+      .finally(() => { this.promptBusy = false; });
   }
 
   private selectedApiProvider(): ProviderRecord | null {
@@ -1616,7 +1663,7 @@ struct SettingsPage {
       case 'error':
         return '#B91C1C';
       default:
-        return '#94A3B8';
+        return '#64748B';
     }
   }
 
@@ -1659,7 +1706,7 @@ struct SettingsPage {
 
   private chatProbeColor(probe: ChatProbeResult | null): string {
     if (probe === null) {
-      return '#94A3B8';
+      return '#64748B';
     }
     if (probe.success) {
       return '#166534';
@@ -1856,14 +1903,43 @@ struct SettingsPage {
     if (r.chatProbe !== null && r.chatProbe.success) {
       return '#64748B';
     }
-    return '#94A3B8';
+    return '#475569';
+  }
+
+  private isDarkMode(): boolean {
+    return this.themeMode === 'dark';
+  }
+
+  private themeColor(light: string, dark: string): string {
+    return this.isDarkMode() ? dark : light;
+  }
+
+  private textPrimary(): string {
+    return this.themeColor('#0F172A', '#F8FAFC');
+  }
+
+  private textSecondary(): string {
+    return this.themeColor('#475569', '#CBD5E1');
+  }
+
+  private textMuted(): string {
+    return this.themeColor('#64748B', '#A8B3C2');
+  }
+
+  private surface(): string {
+    return this.themeColor('#FFFFFF', '#1E293B');
+  }
+
+  private elevatedSurface(): string {
+    return this.themeColor('#F8FAFC', '#263449');
+  }
+
+  private pageBackground(): string {
+    return this.themeColor('#F1F3F5', '#0F172A');
   }
 
   private speedProbeDetailSize(r: EndpointSpeedResult): number {
-    if (r.chatProbe !== null && r.chatProbe.success) {
-      return 9;
-    }
-    return 8;
+    return 10;
   }
 
   @Builder
@@ -1883,7 +1959,7 @@ struct SettingsPage {
               .copyOption(CopyOptions.None)
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
 
             Blank()
               .layoutWeight(1)
@@ -1893,10 +1969,18 @@ struct SettingsPage {
               .fontSize(11)
               .fontColor('#2563EB')
 
-            Text('✕')
-              .copyOption(CopyOptions.None)
-              .fontSize(16)
-              .fontColor('#94A3B8')
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32)
+              .height(32)
+              .fontSize(20)
+              .fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155'))
+              .borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
               .margin({ left: 12 })
               .onClick(() => { this.runMotion(() => { this.apiShowSpeedResults = false; }); })
           }
@@ -1911,7 +1995,7 @@ struct SettingsPage {
               Text('正在测速，请稍候...')
                 .copyOption(CopyOptions.None)
                 .fontSize(11)
-                .fontColor('#64748B')
+                .fontColor(this.textMuted())
                 .margin({ left: 8 })
             }
             .width('100%')
@@ -1927,7 +2011,7 @@ struct SettingsPage {
                     Text(r.endpointUrl)
                       .copyOption(CopyOptions.None)
                       .fontSize(11)
-                      .fontColor('#334155')
+                      .fontColor(this.textSecondary())
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .layoutWeight(1)
@@ -1951,11 +2035,11 @@ struct SettingsPage {
                   Row() {
                     Text('对话测试')
                       .copyOption(CopyOptions.None)
-                      .fontSize(9)
-                      .fontColor('#94A3B8')
+                      .fontSize(10)
+                      .fontColor(this.textSecondary())
                     Text(this.chatProbeLabel(r.chatProbe))
                       .copyOption(CopyOptions.None)
-                      .fontSize(9)
+                      .fontSize(10)
                       .fontWeight(FontWeight.Medium)
                       .fontColor(this.chatProbeColor(r.chatProbe))
                       .margin({ left: 6 })
@@ -1991,7 +2075,7 @@ struct SettingsPage {
         }
         .width(this.settingsDialogWidth())
         .padding(22)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' })
         .borderRadius(24)
       }
@@ -2040,13 +2124,13 @@ struct SettingsPage {
           Text('<')
             .copyOption(CopyOptions.None)
             .fontSize(16)
-            .fontColor('#0F172A')
+            .fontColor(this.textPrimary())
             .fontWeight(FontWeight.Bold)
           if (!this.isPhoneBreakpoint()) {
             Text('返回')
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
               .margin({ left: 6 })
           }
         }
@@ -2054,9 +2138,9 @@ struct SettingsPage {
       .width(this.isPhoneBreakpoint() ? 34 : undefined)
       .height(this.isPhoneBreakpoint() ? 34 : 36)
       .padding(this.isPhoneBreakpoint() ? 0 : { left: 12, right: 14 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(this.surface())
       .borderRadius(this.isPhoneBreakpoint() ? 12 : 10)
-      .border({ width: 1, color: '#E5E7EB' })
+      .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
       .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
       .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed('back', event); })
@@ -2066,29 +2150,45 @@ struct SettingsPage {
         .copyOption(CopyOptions.None)
         .fontSize(this.isPhoneBreakpoint() ? 22 : 20)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#0F172A')
+        .fontColor(this.textPrimary())
         .margin({ left: this.isPhoneBreakpoint() ? 12 : 16 })
 
       Blank()
         .layoutWeight(1)
 
-      if (this.isPhoneBreakpoint()) {
-        Button() {
-          Text('config.toml')
-            .copyOption(CopyOptions.None)
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#475569')
+      Row({ space: 8 }) {
+        if (this.isPhoneBreakpoint()) {
+          Button() {
+            Text('config.toml')
+              .copyOption(CopyOptions.None)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.textSecondary())
+          }
+          .height(34)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(this.elevatedSurface())
+          .borderRadius(12)
+          .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+          .scale({ x: this.pressScale('config-toml'), y: this.pressScale('config-toml') })
+          .animation({ duration: 140, curve: Curve.FastOutSlowIn })
+          .onTouch((event: TouchEvent) => { this.updatePressed('config-toml', event); })
+          .onClick(() => { this.openConfigToml(); })
         }
-        .height(34)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor('#F8FAFC')
-        .borderRadius(12)
-        .border({ width: 1, color: '#E5E7EB' })
-        .scale({ x: this.pressScale('config-toml'), y: this.pressScale('config-toml') })
-        .animation({ duration: 140, curve: Curve.FastOutSlowIn })
-        .onTouch((event: TouchEvent) => { this.updatePressed('config-toml', event); })
-        .onClick(() => { this.openConfigToml(); })
+
+        Button(this.isPhoneBreakpoint() ? '×' : '关闭')
+          .height(34)
+          .width(this.isPhoneBreakpoint() ? 34 : 64)
+          .fontSize(this.isPhoneBreakpoint() ? 20 : 12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.textPrimary())
+          .backgroundColor(this.elevatedSurface())
+          .borderRadius(12)
+          .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+          .scale({ x: this.pressScale('settings-close'), y: this.pressScale('settings-close') })
+          .animation({ duration: 140, curve: Curve.FastOutSlowIn })
+          .onTouch((event: TouchEvent) => { this.updatePressed('settings-close', event); })
+          .onClick(() => { router.back(); })
       }
     }
     .width('100%')
@@ -2098,7 +2198,7 @@ struct SettingsPage {
       top: this.topBarTopPadding(),
       bottom: this.topBarBottomPadding()
     })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(this.surface())
   }
 
   @Builder
@@ -2141,8 +2241,8 @@ struct SettingsPage {
       fs.closeSync(file);
       const decoder = new util.TextDecoder('utf-8');
       this.configTomlContent = decoder.decode(new Uint8Array(buf, 0, bytesRead));
-    } catch (e) {
-      this.configTomlContent = '# 读取失败: ' + JSON.stringify(e);
+    } catch (_e) {
+      this.configTomlContent = '# 读取失败，请检查文件权限后重试';
     }
     this.runMotion(() => {
       this.showConfigToml = true;
@@ -2158,10 +2258,10 @@ struct SettingsPage {
       fs.writeSync(file.fd, this.configTomlContent);
       fs.closeSync(file);
       this.runMotion(() => { this.showConfigToml = false; });
-    } catch (e) {
+    } catch (_e) {
       AlertDialog.show({
         title: '保存失败',
-        message: JSON.stringify(e),
+        message: '无法保存配置文件，请检查文件权限后重试。',
         primaryButton: { value: '确定', action: () => {} }
       });
     }
@@ -2184,15 +2284,23 @@ struct SettingsPage {
               .copyOption(CopyOptions.None)
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
 
             Blank()
               .layoutWeight(1)
 
-            Text('✕')
-              .copyOption(CopyOptions.None)
-              .fontSize(16)
-              .fontColor('#94A3B8')
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32)
+              .height(32)
+              .fontSize(20)
+              .fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155'))
+              .borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
               .onClick(() => { this.runMotion(() => { this.showConfigToml = false; }); })
           }
           .width('100%')
@@ -2203,7 +2311,7 @@ struct SettingsPage {
             .margin({ top: this.isPhoneBreakpoint() ? 12 : 14 })
             .fontSize(this.isPhoneBreakpoint() ? 11 : 12)
             .fontFamily('monospace')
-            .backgroundColor('#F8FAFC')
+            .backgroundColor(this.elevatedSurface())
             .border({ width: 1, color: '#E5E7EB' })
             .borderRadius(8)
             .padding(12)
@@ -2225,7 +2333,7 @@ struct SettingsPage {
               .layoutWeight(1)
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#64748B')
+              .fontColor(this.textMuted())
               .backgroundColor('#F1F5F9')
               .borderRadius(14)
               .margin({ left: 10 })
@@ -2236,7 +2344,7 @@ struct SettingsPage {
         }
         .width(this.configTomlDialogWidth())
         .padding(this.configTomlDialogPadding())
-        .backgroundColor('#FFFFFF')
+        .backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' })
         .borderRadius(this.isPhoneBreakpoint() ? 20 : 24)
       }
@@ -2265,21 +2373,21 @@ struct SettingsPage {
             .margin({ right: 6 })
           Text('config.toml')
             .fontSize(12)
-            .fontColor('#64748B')
+            .fontColor(this.textMuted())
         }
       }
       .width('100%')
       .height(36)
-      .backgroundColor('#F8FAFC')
+      .backgroundColor(this.elevatedSurface())
       .borderRadius(10)
-      .border({ width: 1, color: '#E5E7EB' })
+      .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
       .onClick(() => { this.openConfigToml(); })
     }
     .width(260)
     .height('100%')
     .padding(16)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E5E7EB' })
+    .backgroundColor(this.surface())
+    .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
     .borderRadius(16)
   }
 
@@ -2295,8 +2403,8 @@ struct SettingsPage {
     }
     .width('100%')
     .height(56)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E5E7EB' })
+    .backgroundColor(this.surface())
+    .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
     .borderRadius(16)
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
@@ -2310,7 +2418,7 @@ struct SettingsPage {
           .copyOption(CopyOptions.None)
           .fontSize(13)
           .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.activeTab === item.tab ? '#0F172A' : '#64748B')
+          .fontColor(this.activeTab === item.tab ? this.textPrimary() : this.textMuted())
 
         if (this.activeTab === item.tab) {
           Column()
@@ -2325,8 +2433,8 @@ struct SettingsPage {
     }
     .height(42)
     .margin({ right: 6 })
-    .backgroundColor(this.activeTab === item.tab ? '#F8FAFF' : '#FFFFFF')
-    .border({ width: 1, color: this.activeTab === item.tab ? '#E9D5FF' : '#EDF2F7' })
+      .backgroundColor(this.activeTab === item.tab ? this.elevatedSurface() : this.surface())
+      .border({ width: 1, color: this.activeTab === item.tab ? '#93C5FD' : this.themeColor('#EDF2F7', '#334155') })
     .borderRadius(16)
     .scale({ x: this.pressScale(`top-nav-${item.tab}`), y: this.pressScale(`top-nav-${item.tab}`) })
     .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -2343,12 +2451,12 @@ struct SettingsPage {
         .copyOption(CopyOptions.None)
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#0F172A')
+        .fontColor(this.textPrimary())
     }
     .width('100%')
     .padding(18)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#DFE9F5' })
+    .backgroundColor(this.surface())
+    .border({ width: 1, color: this.themeColor('#DFE9F5', '#334155') })
     .borderRadius(24)
   }
 
@@ -2367,12 +2475,12 @@ struct SettingsPage {
             .copyOption(CopyOptions.None)
             .fontSize(14)
             .fontWeight(this.activeTab === item.tab ? FontWeight.Bold : FontWeight.Medium)
-            .fontColor(this.activeTab === item.tab ? '#0F172A' : '#374151')
+            .fontColor(this.activeTab === item.tab ? this.textPrimary() : this.textSecondary())
 
           Text(item.subtitle)
             .copyOption(CopyOptions.None)
             .fontSize(11)
-            .fontColor(this.activeTab === item.tab ? '#4B5563' : '#9CA3AF')
+            .fontColor(this.activeTab === item.tab ? this.textSecondary() : this.textMuted())
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -2383,7 +2491,7 @@ struct SettingsPage {
     }
     .width('100%')
     .margin({ top: 4 })
-    .backgroundColor(this.activeTab === item.tab ? '#F3F4F6' : 'transparent')
+    .backgroundColor(this.activeTab === item.tab ? this.elevatedSurface() : 'transparent')
     .borderRadius(10)
     .scale({ x: this.pressScale(`nav-${item.tab}`), y: this.pressScale(`nav-${item.tab}`) })
     .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -2423,8 +2531,8 @@ struct SettingsPage {
     .layoutWeight(1)
     .height('100%')
     .scrollBar(BarState.Off)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E5E7EB' })
+    .backgroundColor(this.surface())
+    .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
     .borderRadius(16)
     .margin({ left: this.isPhoneBreakpoint() ? 0 : 16, top: this.isPhoneBreakpoint() ? 10 : 0 })
   }
@@ -2460,12 +2568,12 @@ struct SettingsPage {
         .copyOption(CopyOptions.None)
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#0F172A')
+        .fontColor(this.textPrimary())
       if (this.heroSubtitle().length > 0) {
         Text(this.heroSubtitle())
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#6B7280')
+          .fontColor(this.textSecondary())
           .margin({ top: 4 })
       }
     }
@@ -2476,7 +2584,7 @@ struct SettingsPage {
   private heroTitle(): string {
     switch (this.activeTab) {
       case 'mcp':
-        return 'MCP 通道与工具源管理';
+        return 'MCP 服务';
       case 'skills':
         return 'Skills 目录与安装管理';
       case 'prompts':
@@ -2489,7 +2597,7 @@ struct SettingsPage {
   private heroSubtitle(): string {
     switch (this.activeTab) {
       case 'mcp':
-        return '管理 MCP 服务器连接与工具源';
+        return '连接和工具配置';
       case 'skills':
         return '';
       case 'prompts':
@@ -2506,20 +2614,20 @@ struct SettingsPage {
         .copyOption(CopyOptions.None)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
+        .fontColor(this.textPrimary())
       if (subtitle.length > 0) {
         Text(subtitle)
           .copyOption(CopyOptions.None)
           .fontSize(11)
-          .fontColor('#64748B')
+          .fontColor(this.textSecondary())
           .margin({ top: 4 })
       }
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(18)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E2EAF3' })
+    .backgroundColor(this.surface())
+    .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
     .borderRadius(22)
   }
 
@@ -2541,10 +2649,10 @@ struct SettingsPage {
       .height(38)
       .fontSize(12)
       .fontWeight(FontWeight.Medium)
-      .fontColor(primary ? '#FFFFFF' : '#0F172A')
-      .backgroundColor(primary ? '#111827' : '#FFFFFF')
+      .fontColor(primary ? '#FFFFFF' : this.textPrimary())
+      .backgroundColor(primary ? this.themeColor('#111827', '#2563EB') : this.surface())
       .borderRadius(16)
-      .border({ width: primary ? 0 : 1, color: '#D5E0ED' })
+      .border({ width: primary ? 0 : 1, color: this.themeColor('#D5E0ED', '#475569') })
       .padding({ left: 16, right: 16 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
       .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -2554,12 +2662,12 @@ struct SettingsPage {
 
 
   @Builder
-  private formLabel(label: string, color: string = '#000000') {
+  private formLabel(label: string, color: string = '') {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(13)
       .fontWeight(FontWeight.Medium)
-      .fontColor(color)
+      .fontColor(color.length > 0 ? color : this.textPrimary())
       .margin({ top: 12 })
   }
 
@@ -2607,18 +2715,18 @@ struct SettingsPage {
         .copyOption(CopyOptions.None)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#0F172A')
+        .fontColor(this.textPrimary())
       Text(subtitle)
         .copyOption(CopyOptions.None)
         .fontSize(11)
-        .fontColor('#64748B')
+        .fontColor(this.textMuted())
         .lineHeight(17)
         .margin({ top: 6 })
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(18)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(this.surface())
     .border({ width: 1, color: '#E2EAF3' })
     .borderRadius(18)
   }
@@ -2638,13 +2746,13 @@ struct SettingsPage {
                     .copyOption(CopyOptions.None)
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#0F172A')
+                    .fontColor(this.textPrimary())
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                   Text(skill.description)
                     .copyOption(CopyOptions.None)
                     .fontSize(11)
-                    .fontColor('#64748B')
+                    .fontColor(this.textMuted())
                     .lineHeight(17)
                     .maxLines(2)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2664,11 +2772,11 @@ struct SettingsPage {
                 Text(this.skillSourceText(skill))
                   .copyOption(CopyOptions.None)
                   .fontSize(10)
-                  .fontColor('#94A3B8')
+                  .fontColor(this.textMuted())
                 Text(this.skillMetaText(skill))
                   .copyOption(CopyOptions.None)
                   .fontSize(10)
-                  .fontColor('#94A3B8')
+                  .fontColor(this.textMuted())
                   .margin({ left: 10 })
               }
               .width('100%')
@@ -2679,8 +2787,8 @@ struct SettingsPage {
           }
           .width('100%')
           .margin({ top: 8 })
-          .backgroundColor(this.selectedSkillId === skill.id ? '#F0F9FF' : '#FFFFFF')
-          .border({ width: 1, color: this.selectedSkillId === skill.id ? '#93C5FD' : '#E5E7EB' })
+          .backgroundColor(this.selectedSkillId === skill.id ? this.themeColor('#F0F9FF', '#1E3A5F') : this.surface())
+          .border({ width: 1, color: this.selectedSkillId === skill.id ? '#93C5FD' : this.themeColor('#E5E7EB', '#334155') })
           .borderRadius(12)
           .onClick(() => { this.selectSkillForPreview(skill); })
         }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
@@ -2694,10 +2802,10 @@ struct SettingsPage {
     Column() {
       if (this.selectedSkill() === null) {
         Column() {
-          Text('选择一个 Skill 查看详情')
+          Text('请选择 Skill')
             .copyOption(CopyOptions.None)
             .fontSize(14)
-            .fontColor('#9CA3AF')
+            .fontColor(this.textSecondary())
         }
         .width('100%')
         .height(200)
@@ -2708,12 +2816,12 @@ struct SettingsPage {
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
+            .fontColor(this.textPrimary())
             .width('100%')
           Text(this.selectedSkill()!.description)
             .copyOption(CopyOptions.LocalDevice)
             .fontSize(12)
-            .fontColor('#475569')
+            .fontColor(this.textSecondary())
             .lineHeight(20)
             .margin({ top: 12 })
             .width('100%')
@@ -2741,7 +2849,7 @@ struct SettingsPage {
           .width('100%')
           .margin({ top: 16 })
           .padding(14)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(this.elevatedSurface())
           .borderRadius(12)
           Row() {
             this.skillActionButton(
@@ -2755,7 +2863,7 @@ struct SettingsPage {
         }
         .width('100%')
         .padding(18)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor(this.surface())
         .border({ width: 1, color: '#E5E7EB' })
         .borderRadius(14)
       }
@@ -2769,7 +2877,7 @@ struct SettingsPage {
       Text(label)
         .copyOption(CopyOptions.LocalDevice)
         .fontSize(11)
-        .fontColor('#94A3B8')
+        .fontColor(this.textMuted())
         .width(70)
       Text(value)
         .copyOption(CopyOptions.LocalDevice)
@@ -2791,30 +2899,30 @@ struct SettingsPage {
       Row() {
         Column() {
           Text('从 ZIP 安装')
-            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
           Text('选择包含 SKILL.md 的 ZIP 文件')
-            .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+            .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textMuted()).margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start).layoutWeight(1)
         this.actionButton('选择 ZIP 文件', 'zip-install', true, () => { this.pickAndInstallZip(); })
       }
       .width('100%').alignItems(VerticalAlign.Center).padding(18)
-      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .backgroundColor(this.surface()).border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
       .margin({ top: 16 })
 
       // 卡片 2：从本地目录安装
       Row() {
         Column() {
           Text('从本地目录安装')
-            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
           Text('选择包含 SKILL.md 的目录')
-            .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+            .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textMuted()).margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start).layoutWeight(1)
         this.actionButton('选择目录', 'dir-install', true, () => { this.pickAndInstallDirectory(); })
       }
       .width('100%').alignItems(VerticalAlign.Center).padding(18)
-      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .backgroundColor(this.surface()).border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
       .margin({ top: 16 })
 
       // 卡片 3：从 skills.sh 搜索
@@ -2822,16 +2930,16 @@ struct SettingsPage {
         Row() {
           Column() {
             Text('从 skills.sh 搜索')
-              .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+              .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
             Text('搜索公开 Skill 目录')
-              .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+              .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textMuted()).margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.Start)
         }
         .width('100%').alignItems(VerticalAlign.Center).margin({ bottom: 12 })
         Row() {
           TextInput({ text: this.skillsShQuery, placeholder: '搜索 Skill...' })
-            .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .layoutWeight(1).height(40).backgroundColor(this.elevatedSurface()).borderRadius(14)
             .padding({ left: 12, right: 12 })
             .onChange((value: string) => { this.skillsShQuery = value; })
           Column() {
@@ -2847,10 +2955,10 @@ struct SettingsPage {
                 Row() {
                   Column() {
                     Text(item.name)
-                      .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                      .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
                       .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
-                      .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+                      Text(`${item.repoOwner}/${item.repoName} · ${item.installs} 次安装`)
+                        .copyOption(CopyOptions.None).fontSize(10).fontColor(this.textMuted()).margin({ top: 4 })
                   }
                   .alignItems(HorizontalAlign.Start).layoutWeight(1)
                   Column() {
@@ -2863,7 +2971,7 @@ struct SettingsPage {
                   }
                   .margin({ left: 12 })
                 }
-                .width('100%').padding(14).backgroundColor('#FFFFFF')
+                .width('100%').padding(14).backgroundColor(this.surface())
                 .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
               }, (item: SkillsShItem) => `${item.key}`)
             }
@@ -2876,7 +2984,7 @@ struct SettingsPage {
         }
       }
       .width('100%').padding(18)
-      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .backgroundColor(this.surface()).border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
       .margin({ top: 16 })
 
       // 卡片 4：从 GitHub 安装
@@ -2884,16 +2992,16 @@ struct SettingsPage {
         Row() {
           Column() {
             Text('从 GitHub 安装')
-              .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+              .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
             Text('粘贴仓库 URL，扫描并安装 Skill')
-              .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+              .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textMuted()).margin({ top: 4 })
           }
           .alignItems(HorizontalAlign.Start)
         }
         .width('100%').alignItems(VerticalAlign.Center).margin({ bottom: 12 })
         Row() {
           TextInput({ text: this.githubRepoUrl, placeholder: 'https://github.com/owner/repo' })
-            .layoutWeight(1).height(40).backgroundColor('#F8FAFC').borderRadius(14)
+            .layoutWeight(1).height(40).backgroundColor(this.elevatedSurface()).borderRadius(14)
             .padding({ left: 12, right: 12 })
             .onChange((value: string) => { this.githubRepoUrl = value; })
           Column() {
@@ -2908,13 +3016,13 @@ struct SettingsPage {
               Row() {
                 Column() {
                   Text(skill.name)
-                    .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                    .copyOption(CopyOptions.None).fontSize(13).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
                     .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
                   Text(skill.description)
-                    .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').lineHeight(17)
+                    .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textMuted()).lineHeight(17)
                     .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis }).margin({ top: 4 })
                   Text(this.displaySkillDirectory(skill.directory))
-                    .copyOption(CopyOptions.None).fontSize(10).fontColor('#94A3B8').margin({ top: 4 })
+                    .copyOption(CopyOptions.None).fontSize(10).fontColor(this.textMuted()).margin({ top: 4 })
                 }
                 .alignItems(HorizontalAlign.Start).layoutWeight(1)
                 Column() {
@@ -2927,7 +3035,7 @@ struct SettingsPage {
                 }
                 .margin({ left: 12 })
               }
-              .width('100%').padding(14).backgroundColor('#FFFFFF')
+              .width('100%').padding(14).backgroundColor(this.surface())
               .border({ width: 1, color: '#E2EAF3' }).borderRadius(14).margin({ top: 8 })
             }, (skill: DiscoverableSkill) => skill.key)
           }
@@ -2936,7 +3044,7 @@ struct SettingsPage {
         }
       }
       .width('100%').padding(18)
-      .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
+      .backgroundColor(this.surface()).border({ width: 1, color: '#E2EAF3' }).borderRadius(18)
       .margin({ top: 16 })
     }
     .width('100%').alignItems(HorizontalAlign.Start)
@@ -2956,7 +3064,7 @@ struct SettingsPage {
     Column() {
       Row() {
         Button('← 返回列表')
-          .fontSize(12).height(28).backgroundColor('#FFFFFF').fontColor('#334155')
+          .fontSize(12).height(28).backgroundColor(this.surface()).fontColor(this.textPrimary())
           .borderRadius(14).border({ width: 1, color: '#CBD5E1' })
           .onClick(() => { this.runMotion(() => { this.selectedSkillId = ''; this.selectedSkillDetail = null; }, 180); })
       }
@@ -2975,7 +3083,7 @@ struct SettingsPage {
             Text('Skills 管理')
               .fontSize(16)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
             Blank().layoutWeight(1)
             this.actionButton('刷新', 'skill-refresh-current', false, () => { this.refreshActiveSkillsSubTab(); })
           }
@@ -3020,12 +3128,26 @@ struct SettingsPage {
           .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelUninstallSkill(); })
         Column() {
-          Text('确认删除 Skill')
-            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Row() {
+            Text('删除 Skill')
+              .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            Blank().layoutWeight(1)
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32).height(32)
+              .fontSize(20).fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .onClick(() => { this.cancelUninstallSkill(); })
+          }
+          .width('100%')
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
-              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('skill-delete-cancel'), y: this.pressScale('skill-delete-cancel') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3037,11 +3159,12 @@ struct SettingsPage {
               .scale({ x: this.pressScale('skill-delete-confirm'), y: this.pressScale('skill-delete-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-confirm', event); })
+              .enabled(!this.skillBusy)
               .onClick(() => { this.confirmUninstallSkill(); })
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -3059,16 +3182,16 @@ struct SettingsPage {
         Column() {
           Row() {
             Text(this.selectedSkillDetail.name)
-              .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A').layoutWeight(1)
+              .copyOption(CopyOptions.LocalDevice).fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.textPrimary()).layoutWeight(1)
             Text(this.selectedSkillDetail.enabled ? '启用' : '禁用')
               .copyOption(CopyOptions.None).fontSize(11)
-              .fontColor(this.selectedSkillDetail.enabled ? '#16A34A' : '#94A3B8')
+              .fontColor(this.selectedSkillDetail.enabled ? '#16A34A' : '#64748B')
               .padding({ left: 8, right: 8, top: 3, bottom: 3 })
               .backgroundColor(this.selectedSkillDetail.enabled ? '#DCFCE7' : '#F5F7FA').borderRadius(8)
           }
           .width('100%').alignItems(VerticalAlign.Center)
           Text(this.selectedSkillDetail.description)
-            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor('#64748B')
+            .copyOption(CopyOptions.LocalDevice).fontSize(12).fontColor(this.textSecondary())
             .lineHeight(20).margin({ top: 10 }).width('100%')
           Column() {
             this.skillDetailRow('来源', this.skillDetailSourceLabel())
@@ -3089,11 +3212,11 @@ struct SettingsPage {
           }
           .width('100%').margin({ top: 16 })
           .padding({ top: 14, bottom: 14, left: 14, right: 14 })
-          .backgroundColor('#F8FAFC').borderRadius(12)
+          .backgroundColor(this.elevatedSurface()).borderRadius(12)
           Row() {
             Button('关闭')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
-              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('skill-detail-close'), y: this.pressScale('skill-detail-close') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3102,7 +3225,7 @@ struct SettingsPage {
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -3116,9 +3239,9 @@ struct SettingsPage {
       Row() {
         Column() {
           Text(server.name)
-            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+            .copyOption(CopyOptions.None).fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
           Text(server.id)
-            .copyOption(CopyOptions.None).fontSize(10).fontColor('#64748B').margin({ top: 4 })
+            .copyOption(CopyOptions.None).fontSize(10).fontColor(this.textMuted()).margin({ top: 4 })
         }
         .alignItems(HorizontalAlign.Start)
         Blank().layoutWeight(1)
@@ -3136,7 +3259,7 @@ struct SettingsPage {
       }
       .width('100%').margin({ top: 10 }).alignItems(VerticalAlign.Center)
       Text(`${server.toolCount} 个工具 · ${server.resourceCount} 个资源 · ${server.transportType}`)
-        .copyOption(CopyOptions.None).fontSize(10).fontColor('#64748B').margin({ top: 10 })
+        .copyOption(CopyOptions.None).fontSize(10).fontColor(this.textMuted()).margin({ top: 10 })
     }
     .width('100%').padding(16)
     .width('100%').margin({ top: 10 })
@@ -3157,20 +3280,20 @@ struct SettingsPage {
     Column() {
       if (this.selectedMcpServer() === null) {
         Column() {
-          Text('请从左侧选择一个 MCP 服务')
+          Text('请选择服务')
             .copyOption(CopyOptions.None)
-            .fontSize(14).fontColor('#94A3B8').margin({ top: 24 })
+            .fontSize(14).fontColor(this.textSecondary()).margin({ top: 24 })
         }
         .width('100%').height(200).alignItems(HorizontalAlign.Center).justifyContent(FlexAlign.Center)
-        .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(22)
+        .backgroundColor(this.surface()).border({ width: 1, color: '#E2EAF3' }).borderRadius(22)
       } else {
         Column() {
           Row() {
             Column() {
               Text(this.selectedMcpServer()!.name)
-                .copyOption(CopyOptions.None).fontSize(16).fontWeight(FontWeight.Medium).fontColor('#0F172A')
+                .copyOption(CopyOptions.None).fontSize(16).fontWeight(FontWeight.Medium).fontColor(this.textPrimary())
               Text(this.selectedMcpServer()!.id)
-                .copyOption(CopyOptions.None).fontSize(11).fontColor('#64748B').margin({ top: 4 })
+                .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textMuted()).margin({ top: 4 })
             }
             .alignItems(HorizontalAlign.Start).layoutWeight(1)
             this.pill(this.healthLabel(this.selectedMcpServer()!.healthStatus), this.statusChipBackground(this.selectedMcpServer()!.healthStatus), this.statusChipColor(this.selectedMcpServer()!.healthStatus))
@@ -3219,44 +3342,44 @@ struct SettingsPage {
           if (this.mcpTransportTypeDraft === 'stdio') {
             this.formLabel('命令')
             TextInput({ text: this.mcpCommandDraft, placeholder: '例如 npx / node / 可执行文件路径' })
-              .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+              .width('100%').height(40).backgroundColor(this.elevatedSurface()).borderRadius(14)
               .padding({ left: 12, right: 12 }).margin({ top: 6 })
               .onChange((value: string) => { this.mcpCommandDraft = value; })
             this.formLabel('参数 JSON')
             TextInput({ text: this.mcpArgsDraft, placeholder: '["--flag"]' })
-              .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+              .width('100%').height(40).backgroundColor(this.elevatedSurface()).borderRadius(14)
               .padding({ left: 12, right: 12 }).margin({ top: 6 })
               .onChange((value: string) => { this.mcpArgsDraft = value; })
           }
           if (this.mcpTransportTypeDraft === 'http') {
             this.formLabel('URL')
             TextInput({ text: this.mcpUrlDraft, placeholder: 'https://example.com/mcp' })
-              .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+              .width('100%').height(40).backgroundColor(this.elevatedSurface()).borderRadius(14)
               .padding({ left: 12, right: 12 }).margin({ top: 6 })
               .onChange((value: string) => { this.mcpUrlDraft = value; })
             this.formLabel('HTTP 请求头')
             TextArea({ text: this.mcpHttpHeadersDraft, placeholder: '{"Authorization":"Bearer your-token"}' })
-              .width('100%').height(94).backgroundColor('#F8FAFC').borderRadius(16)
+              .width('100%').height(94).backgroundColor(this.elevatedSurface()).borderRadius(16)
               .padding(12).margin({ top: 6 })
               .onChange((value: string) => { this.mcpHttpHeadersDraft = value; })
           }
           this.formLabel('环境变量')
           TextArea({ text: this.mcpEnvDraft, placeholder: '{"KEY":"VALUE"}' })
-            .width('100%').height(94).backgroundColor('#F8FAFC').borderRadius(16)
+            .width('100%').height(94).backgroundColor(this.elevatedSurface()).borderRadius(16)
             .padding(12).margin({ top: 6 })
             .onChange((value: string) => { this.mcpEnvDraft = value; })
           Divider().margin({ top: 16 }).color('#F1F5F9')
-          Row() {
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.End }) {
             this.actionButton('删除服务', 'mcp-delete', false, () => { this.openMcpDeleteDialog(); })
             this.actionButton('OAuth 登录', 'mcp-oauth', false, () => { this.startSelectedMcpOauth(); })
-            Blank()
             this.actionButton('放弃更改', 'mcp-revert', false, () => { this.revertMcpDraft(); })
             this.actionButton('保存配置', 'mcp-save', true, () => { this.saveMcpDraft(); })
           }
-          .width('100%').margin({ top: 16 })
+          .width('100%')
+          .margin({ top: 16 })
         }
         .width('100%').padding(18)
-        .backgroundColor('#FFFFFF').border({ width: 1, color: '#E2EAF3' }).borderRadius(22)
+        .backgroundColor(this.surface()).border({ width: 1, color: '#E2EAF3' }).borderRadius(22)
       }
     }
     .width('100%')
@@ -3276,13 +3399,13 @@ struct SettingsPage {
     Column() {
       Row() {
         Button('← 返回列表')
-          .fontSize(12).height(28).backgroundColor('#FFFFFF').fontColor('#334155')
+          .fontSize(12).height(28).backgroundColor(this.surface()).fontColor(this.textPrimary())
           .borderRadius(14).border({ width: 1, color: '#CBD5E1' })
           .onClick(() => { this.runMotion(() => { this.selectedMcpServerId = ''; }, 180); })
         Blank().layoutWeight(1)
         Button('重载 MCP')
           .height(28).fontSize(11).fontWeight(FontWeight.Medium)
-          .fontColor('#475569').backgroundColor('#F8FAFC')
+          .fontColor(this.textSecondary()).backgroundColor(this.elevatedSurface())
           .borderRadius(12).border({ width: 1, color: '#DCE5EF' })
           .padding({ left: 12, right: 12 })
           .onClick(() => { this.reloadMcpDraft(); })
@@ -3301,10 +3424,10 @@ struct SettingsPage {
           LoadingProgress()
             .width(48)
             .height(48)
-          Text('加载 MCP 配置中...')
+          Text('加载 MCP...')
             .copyOption(CopyOptions.None)
             .fontSize(14)
-            .fontColor('#94A3B8')
+            .fontColor(this.textSecondary())
             .margin({ top: 12 })
         }
         .width('100%')
@@ -3313,13 +3436,11 @@ struct SettingsPage {
       } else {
       Row() {
         Column() {
-          this.sectionCard('服务器', '左侧快速切换工具通道，右侧编辑真实 MCP 配置。')
+          this.sectionCard('服务器', '选择服务，编辑配置')
           if (this.mcpServers.length === 0) {
             Column() {
-              Text('暂无 MCP 服务')
-                .copyOption(CopyOptions.None).fontSize(14).fontColor('#94A3B8').margin({ top: 24 })
-              Text('点击下方按钮添加第一个 MCP 服务')
-                .copyOption(CopyOptions.None).fontSize(12).fontColor('#CBD5E1').margin({ top: 8 })
+              Text('暂无服务')
+                .copyOption(CopyOptions.None).fontSize(14).fontColor(this.textSecondary()).margin({ top: 24 })
             }
             .width('100%').alignItems(HorizontalAlign.Center)
           }
@@ -3329,7 +3450,7 @@ struct SettingsPage {
             }, (server: McpServerRecord) => server.id)
           }
           .width('100%').margin({ top: 12 })
-          Button('+ 添加服务')
+          Button('添加服务')
             .width('100%').height(40).margin({ top: 10 }).fontSize(13).fontWeight(FontWeight.Medium)
             .fontColor('#0A84FF').backgroundColor('#F0F7FF').borderRadius(16)
             .border({ width: 1, color: '#BDD7FF' })
@@ -3346,7 +3467,7 @@ struct SettingsPage {
               Blank()
               Button('重载 MCP')
                 .height(32).fontSize(12).fontWeight(FontWeight.Medium)
-                .fontColor('#475569').backgroundColor('#F8FAFC')
+                .fontColor(this.textSecondary()).backgroundColor(this.elevatedSurface())
                 .borderRadius(12).border({ width: 1, color: '#DCE5EF' })
                 .padding({ left: 12, right: 12 })
                 .onClick(() => { this.reloadMcpDraft(); })
@@ -3372,28 +3493,42 @@ struct SettingsPage {
           .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelMcpAdd(); })
         Column() {
-          Text('新增 MCP 服务')
-            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-          Text('粘贴 JSON 配置即可添加，兼容 Claude Desktop / Cursor 格式。')
-            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
-          TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选，JSON 含 name 字段时自动识别）' })
-            .width('100%').height(40).backgroundColor('#F8FAFC').borderRadius(14)
+          Row() {
+            Text('新增 MCP 服务')
+              .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            Blank().layoutWeight(1)
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32).height(32)
+              .fontSize(20).fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .onClick(() => { this.cancelMcpAdd(); })
+          }
+          .width('100%')
+          Text('粘贴 JSON 配置添加服务')
+            .copyOption(CopyOptions.None).fontSize(12).fontColor(this.textMuted()).lineHeight(20).margin({ top: 10 })
+            TextInput({ text: this.mcpNewServerName, placeholder: '名称（可选）' })
+            .width('100%').height(40).backgroundColor(this.elevatedSurface()).borderRadius(14)
             .padding({ left: 12, right: 12 }).margin({ top: 12 })
             .onChange((value: string) => { this.mcpNewServerName = value; })
-          TextArea({ text: this.mcpJsonPasteInput, placeholder: '{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer xxx"}}' })
-            .width('100%').height(150).backgroundColor('#F8FAFC').borderRadius(16)
+          TextArea({ text: this.mcpJsonPasteInput, placeholder: '粘贴 MCP JSON 配置' })
+            .width('100%').height(150).backgroundColor(this.elevatedSurface()).borderRadius(16)
             .padding(12).margin({ top: 10 })
             .onChange((value: string) => { this.mcpJsonPasteInput = value; })
           Column() {
             Text(this.mcpAddPreviewText())
-              .copyOption(CopyOptions.None).fontSize(11).fontColor('#475569').lineHeight(18)
+              .copyOption(CopyOptions.None).fontSize(11).fontColor(this.textSecondary()).lineHeight(18)
           }
           .width('100%').padding(10).margin({ top: 8 })
           .backgroundColor('#F1F5F9').borderRadius(12)
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
-              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('mcp-add-cancel'), y: this.pressScale('mcp-add-cancel') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3405,11 +3540,12 @@ struct SettingsPage {
               .scale({ x: this.pressScale('mcp-add-confirm'), y: this.pressScale('mcp-add-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-confirm', event); })
+              .enabled(!this.mcpBusy)
               .onClick(() => { this.confirmMcpAdd(); })
           }
           .width('100%').margin({ top: 14 })
         }
-        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -3425,14 +3561,28 @@ struct SettingsPage {
           .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelMcpDelete(); })
         Column() {
-          Text('确认删除 MCP 服务')
-            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-          Text(`将从配置中移除 "${this.pendingDeleteMcpName}"，此操作不可撤销。`)
-            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+          Row() {
+            Text('删除 MCP 服务')
+              .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            Blank().layoutWeight(1)
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32).height(32)
+              .fontSize(20).fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .onClick(() => { this.cancelMcpDelete(); })
+          }
+          .width('100%')
+          Text(`移除 "${this.pendingDeleteMcpName}"，且无法恢复。`)
+            .copyOption(CopyOptions.None).fontSize(12).fontColor(this.textMuted()).lineHeight(20).margin({ top: 10 })
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
-              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('mcp-delete-cancel'), y: this.pressScale('mcp-delete-cancel') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3444,11 +3594,12 @@ struct SettingsPage {
               .scale({ x: this.pressScale('mcp-delete-confirm'), y: this.pressScale('mcp-delete-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-confirm', event); })
+              .enabled(!this.mcpBusy)
               .onClick(() => { this.confirmMcpDelete(); })
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -3464,14 +3615,28 @@ struct SettingsPage {
           .width('100%').height('100%').backgroundColor('#0F172A').opacity(0.18).animation({ duration: 220, curve: Curve.FastOutSlowIn })
           .onClick(() => { this.cancelDeletePrompt(); })
         Column() {
-          Text('确认删除 Prompt')
-            .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#0F172A')
+          Row() {
+            Text('删除 Prompt')
+              .copyOption(CopyOptions.None).fontSize(18).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            Blank().layoutWeight(1)
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32).height(32)
+              .fontSize(20).fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .onClick(() => { this.cancelDeletePrompt(); })
+          }
+          .width('100%')
           Text(`确认删除 "${this.pendingDeletePromptName}" 吗？`)
-            .copyOption(CopyOptions.None).fontSize(12).fontColor('#64748B').lineHeight(20).margin({ top: 10 })
+            .copyOption(CopyOptions.None).fontSize(12).fontColor(this.textMuted()).lineHeight(20).margin({ top: 10 })
           Row() {
             Button('取消')
               .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
-              .fontColor('#475569').backgroundColor('#FFFFFF').borderRadius(14)
+              .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('prompt-delete-cancel'), y: this.pressScale('prompt-delete-cancel') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3483,11 +3648,12 @@ struct SettingsPage {
               .scale({ x: this.pressScale('prompt-delete-confirm'), y: this.pressScale('prompt-delete-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
               .onTouch((event: TouchEvent) => { this.updatePressed('prompt-delete-confirm', event); })
+              .enabled(!this.promptBusy)
               .onClick(() => { this.confirmDeletePrompt(); })
           }
           .width('100%').margin({ top: 20 })
         }
-        .width(this.settingsDialogWidth()).padding(22).backgroundColor('#FFFFFF')
+        .width(this.settingsDialogWidth()).padding(22).backgroundColor(this.surface())
         .border({ width: 1, color: '#E2EAF3' }).borderRadius(24)
       }
       .width('100%').height('100%')
@@ -3511,8 +3677,8 @@ struct SettingsPage {
         Button('← 返回列表')
           .fontSize(12)
           .height(28)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#334155')
+          .backgroundColor(this.surface())
+          .fontColor(this.textSecondary())
           .borderRadius(14)
           .border({ width: 1, color: '#CBD5E1' })
           .onClick(() => {
@@ -3538,7 +3704,7 @@ struct SettingsPage {
             Button('刷新')
               .fontSize(12)
               .height(28)
-              .backgroundColor('#FFFFFF')
+              .backgroundColor(this.surface())
               .fontColor('#334155')
               .borderRadius(14)
               .border({ width: 1, color: '#CBD5E1' })
@@ -3605,11 +3771,11 @@ struct SettingsPage {
               .copyOption(CopyOptions.None)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
             Text(prompt.description)
               .copyOption(CopyOptions.None)
               .fontSize(11)
-              .fontColor('#64748B')
+              .fontColor(this.textMuted())
               .lineHeight(18)
               .margin({ top: 6 })
           }
@@ -3624,7 +3790,7 @@ struct SettingsPage {
           Text(`更新于 ${this.formatTimestamp(prompt.updatedAt > 0 ? prompt.updatedAt : prompt.createdAt)}`)
             .copyOption(CopyOptions.None)
             .fontSize(10)
-            .fontColor('#64748B')
+            .fontColor(this.textMuted())
             .layoutWeight(1)
 
           Button(prompt.enabled ? '禁用' : '启用')
@@ -3679,7 +3845,7 @@ struct SettingsPage {
   @Builder
   private promptEditor() {
     Column() {
-      this.sectionCard('Prompt 编辑器', '草稿区直接绑定 Prompt 注册表，启用后会同步更新 AGENTS.md。')
+      this.sectionCard('Prompt 编辑器', '编辑内容并启用')
 
       Column() {
         Row() {
@@ -3693,7 +3859,7 @@ struct SettingsPage {
         Text(this.promptsStatusText)
           .copyOption(CopyOptions.None)
           .fontSize(11)
-          .fontColor('#64748B')
+          .fontColor(this.textMuted())
           .margin({ top: 10 })
           .width('100%')
 
@@ -3701,7 +3867,7 @@ struct SettingsPage {
         TextInput({ text: this.promptDraftName, placeholder: 'Prompt 名称' })
           .width('100%')
           .height(40)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(this.elevatedSurface())
           .borderRadius(14)
           .padding({ left: 12, right: 12 })
           .margin({ top: 6 })
@@ -3711,7 +3877,7 @@ struct SettingsPage {
         TextInput({ text: this.promptDraftSummary, placeholder: '一句话说明这个 Prompt 的作用' })
           .width('100%')
           .height(40)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(this.elevatedSurface())
           .borderRadius(14)
           .padding({ left: 12, right: 12 })
           .margin({ top: 6 })
@@ -3721,7 +3887,7 @@ struct SettingsPage {
         TextArea({ text: this.promptDraftContent, placeholder: 'Prompt 内容' })
           .width('100%')
           .height(220)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(this.elevatedSurface())
           .borderRadius(18)
           .padding(14)
           .margin({ top: 6 })
@@ -3733,10 +3899,10 @@ struct SettingsPage {
             .copyOption(CopyOptions.None)
             .width('100%')
             .fontSize(11)
-            .fontColor('#475569')
+            .fontColor(this.textSecondary())
             .lineHeight(18)
             .padding(14)
-            .backgroundColor('#F8FAFC')
+            .backgroundColor(this.elevatedSurface())
             .borderRadius(18)
             .margin({ top: 6 })
             .maxLines(10)
@@ -3759,7 +3925,7 @@ struct SettingsPage {
       .width('100%')
       .margin({ top: 12 })
       .padding(18)
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(this.surface())
       .border({ width: 1, color: '#E2EAF3' })
       .borderRadius(22)
     }
@@ -3908,14 +4074,14 @@ struct SettingsPage {
               .copyOption(CopyOptions.None)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#111827')
+              .fontColor(this.textPrimary())
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
             if (provider.isActive) {
               Text('当前')
                 .copyOption(CopyOptions.None)
-                .fontSize(9)
+                .fontSize(10)
                 .fontWeight(FontWeight.Medium)
                 .fontColor('#2563EB')
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -3929,7 +4095,7 @@ struct SettingsPage {
           Text(this.apiProviderSecondaryText(provider))
             .copyOption(CopyOptions.None)
             .fontSize(11)
-            .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#9CA3AF')
+            .fontColor(provider.baseUrl.trim().length > 0 ? '#2563EB' : '#64748B')
             .margin({ top: 2 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4005,11 +4171,11 @@ struct SettingsPage {
             .copyOption(CopyOptions.None)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#111827')
-          Text('长按卡片拖动可调整顺序')
+            .fontColor(this.textPrimary())
+          Text('长按拖动排序')
             .copyOption(CopyOptions.None)
             .fontSize(11)
-            .fontColor('#9CA3AF')
+            .fontColor(this.textSecondary())
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -4051,7 +4217,7 @@ struct SettingsPage {
           Column()
             .width(38)
             .height(38)
-            .backgroundColor('#F8FAFC')
+            .backgroundColor(this.elevatedSurface())
             .border({ width: 1, color: '#E2E8F0' })
             .borderRadius(19)
 
@@ -4068,7 +4234,7 @@ struct SettingsPage {
             .copyOption(CopyOptions.None)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#0F172A')
+            .fontColor(this.textPrimary())
           Text(preset.baseUrl)
             .copyOption(CopyOptions.None)
             .fontSize(11)
@@ -4079,7 +4245,7 @@ struct SettingsPage {
           Text(preset.description)
             .copyOption(CopyOptions.None)
             .fontSize(11)
-            .fontColor('#64748B')
+            .fontColor(this.textMuted())
             .lineHeight(18)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4116,8 +4282,8 @@ struct SettingsPage {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(16)
-    .backgroundColor('#FFFFFF')
-    .border({ width: 1, color: '#E2EAF3' })
+    .backgroundColor(this.surface())
+    .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
     .borderRadius(20)
     .margin({ top: 12 })
   }
@@ -4125,8 +4291,8 @@ struct SettingsPage {
   @Builder
   private apiPresetsPanel() {
     Column() {
-      this.sectionCard('服务商预设库', '选一个预设作为起点，再回到服务商视图补齐前端草稿。')
-      Row() {
+      this.sectionCard('服务商预设库', '选择预设开始配置')
+      Flex({ wrap: FlexWrap.Wrap }) {
         this.apiFilterChip('全部', 'all')
         this.apiFilterChip('官方', 'official')
         this.apiFilterChip('第三方', 'third_party')
@@ -4157,7 +4323,7 @@ struct SettingsPage {
               .copyOption(CopyOptions.None)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#0F172A')
+                    .fontColor(this.textPrimary())
             if (apiManagementVM.state.errorText.trim().length > 0) {
               Text(apiManagementVM.state.errorText)
                 .copyOption(CopyOptions.None)
@@ -4223,7 +4389,7 @@ struct SettingsPage {
           Text(toast.message)
             .copyOption(CopyOptions.None)
             .fontSize(11)
-            .fontColor('#0F172A')
+            .fontColor(this.textPrimary())
             .margin({ left: 10 })
             .layoutWeight(1)
             .maxLines(2)
@@ -4301,10 +4467,18 @@ struct SettingsPage {
             Blank()
               .layoutWeight(1)
 
-            Text('✕')
-              .copyOption(CopyOptions.None)
-              .fontSize(16)
-              .fontColor('#94A3B8')
+            Button() {
+              Text('×').fontSize(20).fontWeight(FontWeight.Bold).fontColor(this.textPrimary())
+            }
+              .type(ButtonType.Normal)
+              .accessibilityText('关闭')
+              .width(32)
+              .height(32)
+              .fontSize(20)
+              .fontColor(this.textSecondary())
+              .backgroundColor(this.themeColor('#E2E8F0', '#334155'))
+              .borderRadius(10)
+              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
               .onClick(() => { this.runMotion(() => { this.showValidationDialog = false; }); })
           }
           .width('100%')
@@ -4314,12 +4488,12 @@ struct SettingsPage {
             Text('状态码')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#64748B')
+                    .fontColor(this.textMuted())
               .width(80)
             Text(this.validationStatusCodeText())
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -4329,12 +4503,12 @@ struct SettingsPage {
             Text('延迟')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#64748B')
+                  .fontColor(this.textMuted())
               .width(80)
             Text(this.validationLatencyText())
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -4344,12 +4518,12 @@ struct SettingsPage {
             Text('模型数')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#64748B')
+                  .fontColor(this.textMuted())
               .width(80)
             Text(this.validationModelsText().length > 0 ? this.validationModelsText() : '—')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
               .fontWeight(FontWeight.Medium)
           }
           .width('100%')
@@ -4359,12 +4533,12 @@ struct SettingsPage {
             Text('账户')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#64748B')
+              .fontColor(this.textMuted())
               .width(80)
             Text(this.validationAccountText().length > 0 ? this.validationAccountText() : '—')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#0F172A')
+              .fontColor(this.textPrimary())
               .fontWeight(FontWeight.Medium)
               .layoutWeight(1)
           }
@@ -4375,12 +4549,12 @@ struct SettingsPage {
             Text('错误')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor('#64748B')
+              .fontColor(this.textMuted())
               .width(80)
             Text(this.validationErrorText().length > 0 ? this.validationErrorText() : '无')
               .copyOption(CopyOptions.None)
               .fontSize(12)
-              .fontColor(this.validationErrorText().length > 0 ? '#DC2626' : '#94A3B8')
+              .fontColor(this.validationErrorText().length > 0 ? '#DC2626' : '#64748B')
               .layoutWeight(1)
           }
           .width('100%')
@@ -4402,7 +4576,7 @@ struct SettingsPage {
       }
       .width(this.settingsDialogWidth())
       .padding(22)
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(this.surface())
       .border({ width: 1, color: '#E2EAF3' })
       .borderRadius(24)
     }
@@ -4438,6 +4612,6 @@ struct SettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F1F3F5')
+    .backgroundColor(this.pageBackground())
   }
 }
