@@ -1616,6 +1616,7 @@ struct Index {
   private messageUserScrollActive: boolean = false;
   private messageUserScrollTimerId: number = -1;
   private messageZoomWheelActiveUntil: number = 0;
+  private lastAppliedMessagesSignature: string = '';
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -2317,6 +2318,7 @@ struct Index {
         '刚刚'
       )
     ];
+    this.lastAppliedMessagesSignature = '';
     this.codeLines = [
       new CodeDiffLine('placeholder-1', '1', ' ', '等待 turn/diff/updated 通知。', 'context')
     ];
@@ -3548,6 +3550,16 @@ struct Index {
     return visible;
   }
 
+  private chatMessagesSignature(messages: ChatMessage[]): string {
+    const count: number = messages.length;
+    let signature: string = `${count}`;
+    for (let index: number = 0; index < count; index += 1) {
+      const message: ChatMessage = messages[index];
+      signature += `|${message.id}|${message.content.length}|${message.status ?? ''}`;
+    }
+    return signature;
+  }
+
   private precomputeRenderableAfterFlags(hasPendingTailMessage: boolean): boolean[] {
     const flags: boolean[] = new Array<boolean>(this.messages.length);
     let seenRenderableAfter: boolean = hasPendingTailMessage;
@@ -4225,9 +4237,14 @@ struct Index {
       ? this.preserveStableMessageTimestamps(this.mergeStreamingDisplayMessages(rawMessages, result))
       : rawMessages;
     this.updateLiveThinking(result, displayMessages);
-    this.messages = displayMessages.filter((item: ChatMessage) => {
+    const nextMessages: ChatMessage[] = displayMessages.filter((item: ChatMessage) => {
       return !this.isReasoningMessage(item);
     });
+    const messagesSignature: string = this.chatMessagesSignature(nextMessages);
+    if (messagesSignature !== this.lastAppliedMessagesSignature) {
+      this.messages = nextMessages;
+      this.lastAppliedMessagesSignature = messagesSignature;
+    }
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
           return new CodeDiffLine(line.lineId, line.lineNumber, line.sign, line.content, line.kind, line.filePath);
