@@ -18,7 +18,10 @@
 /Agent/.hvigor/
 /Agent/oh_modules/
 /Agent/.preview/
+
+# Local caches
 /Agent/.cache/
+/.cache/
 
 # DevEco Code local tooling
 /.deveco/
