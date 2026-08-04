@@ -29,9 +29,9 @@ struct WebPreviewPage {
 
   private describeError(err: Object): string {
     if (err instanceof Error) {
-      return err.message;
+      return err.message.length > 0 ? err.message : '操作失败，请稍后重试';
     }
-    return JSON.stringify(err);
+    return '操作失败，请稍后重试';
   }
 
   private currentAbilityContext(): common.UIAbilityContext | null {

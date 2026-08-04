@@ -49,6 +49,10 @@ const FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.App
 const LEGACY_FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.File.Environment.FolderObtain';
 const ARK_PILOT_THEME_MODE_KEY: string = 'arkPilotThemeMode';
 
+function indexThemeColor(light: string, dark: string): string {
+  return AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) === 'dark' ? dark : light;
+}
+
 class ChatMessage {
   id: string;
   author: string;
@@ -707,7 +711,7 @@ struct ArkPilotProjectCreateDialog {
   }
 
   private sourceFolderColor(): ResourceColor {
-    return this.sourceUri.length > 0 ? '#182431' : '#7A869A';
+    return this.sourceUri.length > 0 ? '#182431' : '#475569';
   }
 
   private shouldShowSourceInfo(): boolean {
@@ -765,17 +769,35 @@ struct ArkPilotProjectCreateDialog {
 
   build() {
     Column() {
-      Text('新建项目')
-        .copyOption(CopyOptions.None)
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#182431')
-        .width('100%')
+      Row() {
+        Text('新建项目')
+          .copyOption(CopyOptions.None)
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .layoutWeight(1)
+        Button('×')
+          .type(ButtonType.Normal)
+          .accessibilityText('关闭')
+          .width(32)
+          .height(32)
+          .fontSize(20)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .borderRadius(10)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+      }
+      .width('100%')
 
       Text('运行目录将自动创建在应用内项目目录。')
         .copyOption(CopyOptions.None)
         .fontSize(14)
-        .fontColor('#7A869A')
+        .fontColor(indexThemeColor('#475569', '#CBD5E1'))
         .lineHeight(20)
         .width('100%')
         .margin({ top: 8 })
@@ -784,9 +806,9 @@ struct ArkPilotProjectCreateDialog {
         .width('100%')
         .height(48)
         .fontSize(15)
-        .fontColor('#182431')
-        .placeholderColor('#9EA7B3')
-        .backgroundColor('#F7F8FA')
+        .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+        .placeholderColor('#64748B')
+        .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
         .borderRadius(12)
         .padding({ left: 14, right: 14 })
         .margin({ top: 22 })
@@ -800,7 +822,7 @@ struct ArkPilotProjectCreateDialog {
           Text('同步文件夹')
             .copyOption(CopyOptions.None)
             .fontSize(12)
-            .fontColor('#7A869A')
+            .fontColor(indexThemeColor('#475569', '#CBD5E1'))
 
           Blank()
             .layoutWeight(1)
@@ -809,7 +831,7 @@ struct ArkPilotProjectCreateDialog {
             .copyOption(CopyOptions.None)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
-            .fontColor(this.shouldShowSourceInfo() ? '#18181B' : '#4E5969')
+            .fontColor(indexThemeColor(this.shouldShowSourceInfo() ? '#18181B' : '#4E5969', '#E2E8F0'))
             .textAlign(TextAlign.Center)
             .width(22)
             .height(22)
@@ -931,18 +953,36 @@ struct ArkPilotNameDialog {
 
   build() {
     Column() {
-      Text(this.title)
-        .copyOption(CopyOptions.None)
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#182431')
-        .width('100%')
+      Row() {
+        Text(this.title)
+          .copyOption(CopyOptions.None)
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .layoutWeight(1)
+        Button('×')
+          .type(ButtonType.Normal)
+          .accessibilityText('关闭')
+          .width(32)
+          .height(32)
+          .fontSize(20)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .borderRadius(10)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+      }
+      .width('100%')
 
       if (this.subtitle.length > 0) {
         Text(this.subtitle)
           .copyOption(CopyOptions.None)
           .fontSize(14)
-          .fontColor('#7A869A')
+          .fontColor(indexThemeColor('#475569', '#CBD5E1'))
           .lineHeight(20)
           .width('100%')
           .margin({ top: 8 })
@@ -952,9 +992,9 @@ struct ArkPilotNameDialog {
         .width('100%')
         .height(48)
         .fontSize(15)
-        .fontColor('#182431')
-        .placeholderColor('#9EA7B3')
-        .backgroundColor('#F7F8FA')
+        .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+        .placeholderColor('#64748B')
+        .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
         .borderRadius(12)
         .padding({ left: 14, right: 14 })
         .margin({ top: 22 })
@@ -969,8 +1009,8 @@ struct ArkPilotNameDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor('#182431')
-          .backgroundColor('#F2F3F5')
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -997,7 +1037,7 @@ struct ArkPilotNameDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
     .borderRadius(24)
   }
 }
@@ -1014,12 +1054,30 @@ struct ArkPilotDeleteDialog {
 
   build() {
     Column() {
-      Text(this.title)
-        .copyOption(CopyOptions.None)
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#182431')
-        .width('100%')
+      Row() {
+        Text(this.title)
+          .copyOption(CopyOptions.None)
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .layoutWeight(1)
+        Button('×')
+          .type(ButtonType.Normal)
+          .accessibilityText('关闭')
+          .width(32)
+          .height(32)
+          .fontSize(20)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .borderRadius(10)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+      }
+      .width('100%')
 
       Text(`确认删除${this.targetType}「${this.targetName}」？`)
         .copyOption(CopyOptions.None)
@@ -1033,7 +1091,7 @@ struct ArkPilotDeleteDialog {
         Text(this.description)
           .copyOption(CopyOptions.None)
           .fontSize(13)
-          .fontColor('#7A869A')
+          .fontColor(indexThemeColor('#475569', '#CBD5E1'))
           .lineHeight(19)
           .width('100%')
           .margin({ top: 8 })
@@ -1045,8 +1103,8 @@ struct ArkPilotDeleteDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor('#182431')
-          .backgroundColor('#F2F3F5')
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -1073,7 +1131,7 @@ struct ArkPilotDeleteDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
     .borderRadius(24)
   }
 }
@@ -1403,7 +1461,7 @@ struct Index {
         this.confirmDeleteProjectDialog();
       }
     }),
-    autoCancel: true,
+    autoCancel: false,
     alignment: DialogAlignment.Center,
     customStyle: false,
     cornerRadius: 24,
@@ -1453,7 +1511,7 @@ struct Index {
         this.confirmDeleteSessionDialog();
       }
     }),
-    autoCancel: true,
+    autoCancel: false,
     alignment: DialogAlignment.Center,
     customStyle: false,
     cornerRadius: 24,
@@ -2531,7 +2589,7 @@ struct Index {
   }
 
   private themeTextMuted(): string {
-    return this.themeColor('#A1A1AA', '#858585');
+    return this.themeColor('#64748B', '#858585');
   }
 
   private themeBorder(): string {
@@ -2654,11 +2712,11 @@ struct Index {
     if (targetIndex < 0) {
       return;
     }
-    // Archive backend session data
+    let archiveFailed: boolean = false;
     try {
       await codexBackend.archiveSession(sessionId);
     } catch (_err) {
-      // ignore archive errors
+      archiveFailed = true;
     }
     this.workspaces.splice(targetIndex, 1);
     if (this.workspaces.length === 0) {
@@ -2669,6 +2727,9 @@ struct Index {
     }
     this.syncRecentWorkspaces();
     this.persistWorkspaceBindings();
+    if (archiveFailed) {
+      promptAction.showToast({ message: '会话已从列表移除，但后台归档未完成。', duration: 2800 });
+    }
   }
 
   private deleteProjectFolder(projectPath: string): void {
@@ -2715,14 +2776,14 @@ struct Index {
     const projectPath: string = this.projects[targetIndex].path;
     projectStore.addDeletedPath(projectPath);
 
-    // Archive all backend sessions belonging to this project
+    let archiveFailed: boolean = false;
     for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
       if (this.workspaces[i].projectId === projectId) {
         const sessionId: string = this.ensureWorkspaceBinding(this.workspaces[i]);
         try {
           await codexBackend.archiveSession(sessionId);
         } catch (_err) {
-          // ignore archive errors
+          archiveFailed = true;
         }
       }
     }
@@ -2743,6 +2804,9 @@ struct Index {
     }
     this.syncRecentWorkspaces();
     this.persistWorkspaceBindings();
+    if (archiveFailed) {
+      promptAction.showToast({ message: '项目已删除，但部分会话后台归档未完成。', duration: 3200 });
+    }
   }
 
   private relativeTime(updatedAt: string): string {
@@ -4908,9 +4972,9 @@ struct Index {
 
   private describeError(err: Object): string {
     if (err instanceof Error) {
-      return err.message;
+      return err.message.trim().length > 0 ? err.message : '操作失败，请稍后重试。';
     }
-    return JSON.stringify(err);
+    return '操作失败，请稍后重试。';
   }
 
   private normalizedDirectoryUri(rawUri: string): string {
@@ -6399,21 +6463,21 @@ struct Index {
                 this.renameProjectText = value;
               })
 
-            Text('✓')
-              .fontSize(14)
-              .fontColor('#16A34A')
-              .padding({ left: 8 })
-              .onClick(() => {
-                this.confirmRenameProject();
-              })
+            Button('✓')
+              .type(ButtonType.Normal)
+              .width(28).height(28)
+              .fontSize(14).fontColor('#15803D')
+              .backgroundColor('#DCFCE7').borderRadius(8)
+              .margin({ left: 6 })
+              .onClick(() => { this.confirmRenameProject(); })
 
-            Text('✕')
-              .fontSize(14)
-              .fontColor('#DC2626')
-              .padding({ left: 4 })
-              .onClick(() => {
-                this.cancelRenameProject();
-              })
+            Button('×')
+              .type(ButtonType.Normal)
+              .width(28).height(28)
+              .fontSize(18).fontColor('#B91C1C')
+              .backgroundColor('#FEE2E2').borderRadius(8)
+              .margin({ left: 4 })
+              .onClick(() => { this.cancelRenameProject(); })
           }
           .width('100%')
           .padding({ left: 24, right: 8, bottom: 6 })
@@ -6550,21 +6614,21 @@ struct Index {
                 this.renameSessionText = value;
               })
 
-            Text('✓')
-              .fontSize(12)
-              .fontColor('#16A34A')
-              .padding({ left: 6 })
-              .onClick(() => {
-                this.confirmRenameSession();
-              })
+            Button('✓')
+              .type(ButtonType.Normal)
+              .width(26).height(26)
+              .fontSize(13).fontColor('#15803D')
+              .backgroundColor('#DCFCE7').borderRadius(7)
+              .margin({ left: 4 })
+              .onClick(() => { this.confirmRenameSession(); })
 
-            Text('✕')
-              .fontSize(12)
-              .fontColor('#DC2626')
-              .padding({ left: 4 })
-              .onClick(() => {
-                this.cancelRenameSession();
-              })
+            Button('×')
+              .type(ButtonType.Normal)
+              .width(26).height(26)
+              .fontSize(17).fontColor('#B91C1C')
+              .backgroundColor('#FEE2E2').borderRadius(7)
+              .margin({ left: 4 })
+              .onClick(() => { this.cancelRenameSession(); })
           }
           .width('100%')
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -6587,7 +6651,7 @@ struct Index {
 
                 Text('运行中')
                   .copyOption(CopyOptions.None)
-                  .fontSize(8)
+                  .fontSize(10)
                   .fontColor('#15803D')
                   .margin({ left: 4 })
               }
@@ -6598,7 +6662,7 @@ struct Index {
             }
 
             Text(this.relativeTime(this.findSessionUpdatedAt(item)))
-              .fontSize(9)
+              .fontSize(10)
               .fontColor(this.themeTextMuted())
               .margin({ right: 4 })
 
@@ -7653,7 +7717,7 @@ struct Index {
         Text('刚刚')
           .copyOption(CopyOptions.None)
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor(this.themeTextMuted())
           .margin({ left: 8 })
 
         Text('进行中')
@@ -7782,7 +7846,7 @@ struct Index {
         Text(notice.timestamp)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(this.conversationFontSize(10))
-          .fontColor('#94A3B8')
+          .fontColor(this.themeTextMuted())
           .margin({ left: 10 })
       }
       .alignItems(VerticalAlign.Center)
@@ -7897,7 +7961,7 @@ struct Index {
         Text(item.timestamp)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor('#94A3B8')
+          .fontColor(this.themeTextMuted())
           .margin({ left: 8 })
 
         if (item.status && item.status !== 'completed') {
@@ -10898,7 +10962,7 @@ struct Index {
               Text('▾')
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#94A3B8')
+                .fontColor(this.themeTextMuted())
                 .margin({ left: 6 })
             }
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
@@ -10933,7 +10997,7 @@ struct Index {
               Text('▾')
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor('#94A3B8')
+                .fontColor(this.themeTextMuted())
                 .margin({ left: 6 })
             }
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
@@ -11028,6 +11092,7 @@ struct Index {
               .fontColor('#FFFFFF')
               .copyOption(CopyOptions.None)
           }
+            .accessibilityText(this.isRunning ? '停止生成' : '发送消息')
             .width(66)
             .height(42)
             .margin({ left: 9 })
@@ -12696,21 +12761,31 @@ struct Index {
                 Blank()
                   .layoutWeight(1)
 
-                Text('✕')
-                  .fontSize(16)
-                  .fontColor(this.themeTextMuted())
+                Button('×')
+                  .type(ButtonType.Normal)
+                  .accessibilityText('关闭关于页面')
+                  .width(32).height(32)
+                  .fontSize(20)
+                  .fontColor(this.themeTextStrong())
+                  .backgroundColor(this.themeSubtleBackground())
+                  .borderRadius(10)
                   .onClick(() => { this.showAboutDialog = false; })
               }
               .width('100%')
 
-              Image($r('app.media.splash_bg'))
-                .width('100%')
-                .margin({ top: 12 })
-                .borderRadius(12)
-                .objectFit(ImageFit.Contain)
+              Scroll() {
+                Image($r('app.media.splash_bg'))
+                  .width('100%')
+                  .borderRadius(12)
+                  .objectFit(ImageFit.Contain)
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .margin({ top: 12 })
+              .scrollBar(BarState.Auto)
             }
-            .width(this.isPhoneBreakpoint() ? '98%' : '1280px')
-            .constraintSize({ minHeight: this.isPhoneBreakpoint() ? '80vh' : '80vh' })
+            .width(this.isPhoneBreakpoint() ? '98%' : '92%')
+            .constraintSize({ minHeight: '80vh', maxHeight: '92vh' })
             .padding(20)
             .backgroundColor(this.themeElevatedBackground())
             .borderRadius(16)
