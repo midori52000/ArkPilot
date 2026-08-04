@@ -51,8 +51,21 @@ const FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.App
 const LEGACY_FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.File.Environment.FolderObtain';
 const ARK_PILOT_THEME_MODE_KEY: string = 'arkPilotThemeMode';
 
+let cachedThemeMode: string = '';
+
+function cachedThemeModeValue(): string {
+  if (cachedThemeMode.length === 0) {
+    cachedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
+  }
+  return cachedThemeMode;
+}
+
+function invalidateCachedThemeMode(): void {
+  cachedThemeMode = '';
+}
+
 function indexThemeColor(light: string, dark: string): string {
-  return AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) === 'dark' ? dark : light;
+  return cachedThemeModeValue() === 'dark' ? dark : light;
 }
 
 // ================================================================
@@ -1868,6 +1881,7 @@ struct Index {
     const savedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
     this.isDarkMode = savedThemeMode === 'dark';
     AppStorage.setOrCreate<string>(ARK_PILOT_THEME_MODE_KEY, this.isDarkMode ? 'dark' : 'light');
+    invalidateCachedThemeMode();
     const mediaQuery = this.getUIContext().getMediaQuery();
     breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
     this.applyResponsiveLayoutProfile(true);
@@ -2952,6 +2966,7 @@ struct Index {
       this.isDarkMode = nextDark;
     });
     AppStorage.set<string>(ARK_PILOT_THEME_MODE_KEY, nextDark ? 'dark' : 'light');
+    invalidateCachedThemeMode();
   }
 
   private toggleProjectExpanded(projectId: string): void {
@@ -3787,7 +3802,7 @@ struct Index {
       this.thinkingPulseIndex = (this.thinkingPulseIndex + 1) % 144;
       this.refreshThinkingNormalPhrase();
       this.refreshThinkingFunPhrase();
-    }, 500);
+    }, 1000);
   }
 
   private shouldTrackIdleThinking(): boolean {
