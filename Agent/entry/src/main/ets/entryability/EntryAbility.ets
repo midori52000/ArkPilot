@@ -44,8 +44,14 @@ export default class EntryAbility extends UIAbility {
         hilog.warn(DOMAIN, TAG, 'Prompt auto import failed: %{public}s', JSON.stringify(err));
       });
 
-      // 首次启动安装预设 bundled skills
-      installBundledSkills(codexHome);
+      // 首次启动安装预设 bundled skills（延迟到首帧之后执行，避免阻塞 onCreate）
+      setTimeout(() => {
+        try {
+          installBundledSkills(codexHome);
+        } catch (err) {
+          hilog.error(DOMAIN, TAG, 'Failed to install bundled skills: %{public}s', JSON.stringify(err));
+        }
+      }, 0);
 
       // Skill 一致性检查：修复 registry 与 SSOT 目录的不一致
       const skillsService = new SkillsBackendService(codexHome);
