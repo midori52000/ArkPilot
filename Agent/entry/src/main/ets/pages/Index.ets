@@ -8597,7 +8597,13 @@ struct Index {
     this.selectableMessageIds = [...this.selectableMessageIds, messageId];
   }
 
+  private markdownBlocksCache: Map<string, MarkdownBlock[]> = new Map();
+
   private markdownBlocks(content: string): MarkdownBlock[] {
+    const cached: MarkdownBlock[] | undefined = this.markdownBlocksCache.get(content);
+    if (cached !== undefined) {
+      return cached;
+    }
     const lines: string[] = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
     const blocks: MarkdownBlock[] = [];
     let i = 0;
@@ -8755,6 +8761,10 @@ struct Index {
     if (blocks.length === 0) {
       blocks.push(new MarkdownBlock('md-empty', 'paragraph', content));
     }
+    if (this.markdownBlocksCache.size >= 64) {
+      this.markdownBlocksCache.clear();
+    }
+    this.markdownBlocksCache.set(content, blocks);
     return blocks;
   }
 
@@ -9122,7 +9132,14 @@ struct Index {
     return result;
   }
 
+  private inlineMarkdownSegmentsCache: Map<string, MathSegment[]> = new Map();
+
   private inlineMarkdownSegments(text: string, baseId: string): MathSegment[] {
+    const cacheKey: string = `${baseId}\u0000${text}`;
+    const cached: MathSegment[] | undefined = this.inlineMarkdownSegmentsCache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
     const segments: MathSegment[] = [];
     let cursor: number = 0;
     let serial: number = 0;
@@ -9185,6 +9202,10 @@ struct Index {
     if (segments.length === 0) {
       segments.push(new MathSegment(`${baseId}:text:0`, 'text', this.normalizeInlineMarkdownText(text)));
     }
+    if (this.inlineMarkdownSegmentsCache.size >= 128) {
+      this.inlineMarkdownSegmentsCache.clear();
+    }
+    this.inlineMarkdownSegmentsCache.set(cacheKey, segments);
     return segments;
   }
 
