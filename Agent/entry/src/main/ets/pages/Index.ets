@@ -3309,9 +3309,13 @@ struct Index {
   private visibleMessages(): ChatMessage[] {
     const hasPendingTailMessage: boolean = (this.isRunning && this.pendingUserPrompt.trim().length > 0) ||
       this.pendingRequestUserInput !== null;
-    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage, index: number) => {
-      return this.shouldRenderMessageAt(index, hasPendingTailMessage);
-    });
+    const renderableAfter: boolean[] = this.precomputeRenderableAfterFlags(hasPendingTailMessage);
+    let visible: ChatMessage[] = [];
+    for (let index: number = 0; index < this.messages.length; index += 1) {
+      if (this.shouldRenderMessageAt(index, hasPendingTailMessage, renderableAfter)) {
+        visible.push(this.messages[index]);
+      }
+    }
     if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
       visible = [...visible, this.pendingUserMessage()];
     }
@@ -3330,13 +3334,25 @@ struct Index {
     return visible;
   }
 
-  private shouldRenderMessageAt(index: number, hasPendingTailMessage: boolean): boolean {
+  private precomputeRenderableAfterFlags(hasPendingTailMessage: boolean): boolean[] {
+    const flags: boolean[] = new Array<boolean>(this.messages.length);
+    let seenRenderableAfter: boolean = hasPendingTailMessage;
+    for (let index: number = this.messages.length - 1; index >= 0; index -= 1) {
+      flags[index] = seenRenderableAfter;
+      if (this.shouldRenderMessage(this.messages[index])) {
+        seenRenderableAfter = true;
+      }
+    }
+    return flags;
+  }
+
+  private shouldRenderMessageAt(index: number, hasPendingTailMessage: boolean, renderableAfter: boolean[]): boolean {
     const item: ChatMessage = this.messages[index];
     if (!this.shouldRenderMessage(item)) {
       return false;
     }
     if (this.isReasoningMessage(item)) {
-      return !this.hasRenderableMessageAfter(index, hasPendingTailMessage);
+      return !this.hasRenderableMessageAfter(index, hasPendingTailMessage, renderableAfter);
     }
     return true;
   }
@@ -3348,14 +3364,12 @@ struct Index {
     return !this.isEmptyReasoningMessage(item);
   }
 
-  private hasRenderableMessageAfter(index: number, hasPendingTailMessage: boolean): boolean {
+  private hasRenderableMessageAfter(index: number, hasPendingTailMessage: boolean, renderableAfter: boolean[]): boolean {
     if (hasPendingTailMessage) {
       return true;
     }
-    for (let nextIndex = index + 1; nextIndex < this.messages.length; nextIndex += 1) {
-      if (this.shouldRenderMessage(this.messages[nextIndex])) {
-        return true;
-      }
+    if (index + 1 < renderableAfter.length) {
+      return renderableAfter[index + 1];
     }
     return false;
   }
