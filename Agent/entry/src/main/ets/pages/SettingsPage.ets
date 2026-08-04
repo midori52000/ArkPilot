@@ -110,6 +110,7 @@ struct SettingsPage {
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
+  private toastTimerId: number = -1;
 
   @State private showValidationDialog: boolean = false;
   @State private validationResult: ApiValidationResult | null = null;
@@ -235,6 +236,14 @@ struct SettingsPage {
     this.syncPromptsStateFromViewModel();
     this.syncSkillsStateFromViewModel();
     this.syncMcpStateFromBackend();
+  }
+
+  aboutToDisappear(): void {
+    this.stopMcpPolling();
+    if (this.toastTimerId >= 0) {
+      clearTimeout(this.toastTimerId);
+      this.toastTimerId = -1;
+    }
   }
 
   private isPhoneBreakpoint(): boolean {
@@ -1286,9 +1295,13 @@ struct SettingsPage {
     this.runMotion(() => {
       this.toasts = [...this.toasts, new UiToastItem(toastId, tone, message)];
     }, 180);
-    setTimeout(() => {
+    const timerId: number = setTimeout(() => {
+      if (this.toastTimerId === timerId) {
+        this.toastTimerId = -1;
+      }
       this.dismissToast(toastId);
     }, duration);
+    this.toastTimerId = timerId;
   }
 
   private dismissToast(toastId: number): void {

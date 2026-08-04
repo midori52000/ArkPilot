@@ -21,6 +21,8 @@ struct LoginPage {
 
   private loginController: loginComponentManager.LoginWithHuaweiIDButtonController = new loginComponentManager.LoginWithHuaweiIDButtonController();
   private switchPanelController: loginComponentManager.LoginPanelController = new loginComponentManager.LoginPanelController();
+  private loginCallbackRegistered: boolean = false;
+  private switchPanelCallbackRegistered: boolean = false;
 
   private loginParams: loginComponentManager.LoginWithHuaweiIDButtonParams = {
     style: loginComponentManager.Style.BUTTON_RED,
@@ -57,9 +59,15 @@ struct LoginPage {
   aboutToDisappear(): void {
     this.loginBusy = false;
     this.showSwitchPanel = false;
+    this.unregisterLoginCallback();
+    this.unregisterSwitchPanelCallback();
   }
 
   private registerLoginCallback(): void {
+    if (this.loginCallbackRegistered) {
+      return;
+    }
+    this.loginCallbackRegistered = true;
     this.loginController.onClickLoginWithHuaweiIDButton((err: BusinessError, credential: loginComponentManager.HuaweiIDCredential) => {
       if (this.loginBusy) {
         return;
@@ -73,7 +81,15 @@ struct LoginPage {
     });
   }
 
+  private unregisterLoginCallback(): void {
+    this.loginCallbackRegistered = false;
+  }
+
   private registerSwitchPanelCallback(): void {
+    if (this.switchPanelCallbackRegistered) {
+      return;
+    }
+    this.switchPanelCallbackRegistered = true;
     this.switchPanelController.onClickLoginWithHuaweiIDButton((err: BusinessError, credential: loginComponentManager.HuaweiIDCredential) => {
       if (this.loginBusy) {
         return;
@@ -87,6 +103,10 @@ struct LoginPage {
       this.showSwitchPanel = false;
       this.handleLoginSuccess(credential);
     });
+  }
+
+  private unregisterSwitchPanelCallback(): void {
+    this.switchPanelCallbackRegistered = false;
   }
 
   private handleLoginSuccess(credential: loginComponentManager.HuaweiIDCredential): void {
