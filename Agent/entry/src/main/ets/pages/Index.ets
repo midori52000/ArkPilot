@@ -36,6 +36,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileShare, fileUri, picker } from '@kit.CoreFileKit';
 import fileIo from '@ohos.file.fs';
 import uri from '@ohos.uri';
+import taskpool from '@ohos.taskpool';
 import { huaweiAccountService } from '../account/HuaweiAccountService';
 
 const INDEX_DOMAIN = 0x0000;
@@ -52,6 +53,237 @@ const ARK_PILOT_THEME_MODE_KEY: string = 'arkPilotThemeMode';
 
 function indexThemeColor(light: string, dark: string): string {
   return AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) === 'dark' ? dark : light;
+}
+
+// ================================================================
+// TaskPool 卸载：项目目录拷贝 / 镜像 / 删除（迭代式，避免 UI 线程递归同步 I/O）
+// @Concurrent 函数必须是顶层、不可捕获外部变量、参数与返回值必须可序列化
+// ================================================================
+
+function copyStandaloneFileChunk(sourcePath: string, targetPath: string): void {
+  let source: fileIo.File | null = null;
+  let target: fileIo.File | null = null;
+  try {
+    source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+  } catch (err) {
+    throw new Error(`打开源文件失败: ${sourcePath}`);
+  }
+  try {
+    target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+  } catch (err) {
+    fileIo.closeSync(source);
+    throw new Error(`打开目标文件失败: ${targetPath}`);
+  }
+  try {
+    const stat = fileIo.statSync(sourcePath);
+    const chunkSize: number = 64 * 1024;
+    let offset: number = 0;
+    while (offset < stat.size) {
+      const readLength: number = Math.min(chunkSize, stat.size - offset);
+      const buffer = new ArrayBuffer(readLength);
+      const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
+      if (bytesRead <= 0) {
+        break;
+      }
+      const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
+      fileIo.writeSync(target.fd, data);
+      offset += bytesRead;
+    }
+  } finally {
+    fileIo.closeSync(source);
+    fileIo.closeSync(target);
+  }
+}
+
+@Concurrent
+function copyProjectDirectoryTask(sourceRoot: string, targetRootPath: string): string {
+  try {
+    const sourceStat = fileIo.statSync(sourceRoot);
+    if (!sourceStat.isDirectory()) {
+      return JSON.stringify({ error: '源路径不是目录' });
+    }
+  } catch (err) {
+    return JSON.stringify({ error: `读取源目录失败: ${sourceRoot}` });
+  }
+  try {
+    fileIo.mkdirSync(targetRootPath, true);
+  } catch (_err) {
+  }
+  let copiedCount: number = 0;
+  const pendingSources: string[] = [];
+  const pendingTargets: string[] = [];
+  let headIndex: number = 0;
+  pendingSources.push(sourceRoot);
+  pendingTargets.push(targetRootPath);
+  while (headIndex < pendingSources.length) {
+    const currentSource: string = pendingSources[headIndex];
+    const currentTarget: string = pendingTargets[headIndex];
+    headIndex += 1;
+    let entries: string[];
+    try {
+      entries = fileIo.listFileSync(currentSource) as string[];
+    } catch (err) {
+      return JSON.stringify({ error: `列出源目录失败: ${currentSource}` });
+    }
+    for (let index: number = 0; index < entries.length; index += 1) {
+      const entry: string = entries[index];
+      const sourcePath: string = `${currentSource}/${entry}`;
+      const targetPath: string = `${currentTarget}/${entry}`;
+      try {
+        const stat = fileIo.statSync(sourcePath);
+        if (stat.isDirectory()) {
+          fileIo.mkdirSync(targetPath, true);
+          pendingSources.push(sourcePath);
+          pendingTargets.push(targetPath);
+        } else if (stat.isFile()) {
+          copyStandaloneFileChunk(sourcePath, targetPath);
+          copiedCount += 1;
+        }
+      } catch (err) {
+        return JSON.stringify({ error: `同步条目失败: ${sourcePath} -> ${targetPath}` });
+      }
+    }
+  }
+  return JSON.stringify({ copiedCount });
+}
+
+@Concurrent
+function deletePathTask(rootPath: string): string {
+  let deletedCount: number = 0;
+  const pending: string[] = [];
+  pending.push(rootPath);
+  while (pending.length > 0) {
+    const current: string = pending.pop() as string;
+    let stat: fileIo.Stat;
+    try {
+      stat = fileIo.statSync(current);
+    } catch (err) {
+      return JSON.stringify({ error: `删除路径失败: ${current}` });
+    }
+    if (stat.isDirectory()) {
+      let entries: string[];
+      try {
+        entries = fileIo.listFileSync(current) as string[];
+      } catch (err) {
+        return JSON.stringify({ error: `删除路径失败: ${current}` });
+      }
+      for (let index: number = 0; index < entries.length; index += 1) {
+        pending.push(`${current}/${entries[index]}`);
+      }
+      try {
+        fileIo.rmdirSync(current);
+      } catch (err) {
+        return JSON.stringify({ error: `删除路径失败: ${current}` });
+      }
+    } else {
+      try {
+        fileIo.unlinkSync(current);
+      } catch (err) {
+        return JSON.stringify({ error: `删除路径失败: ${current}` });
+      }
+    }
+    deletedCount += 1;
+  }
+  return JSON.stringify({ deletedCount });
+}
+
+@Concurrent
+function mirrorDirectoryTask(sourceRoot: string, targetRoot: string): string {
+  try {
+    const sourceStat = fileIo.statSync(sourceRoot);
+    if (!sourceStat.isDirectory()) {
+      return JSON.stringify({ error: '同步文件夹不是目录' });
+    }
+  } catch (err) {
+    return JSON.stringify({ error: `读取同步文件夹失败: ${sourceRoot}` });
+  }
+  try {
+    const targetStat = fileIo.statSync(targetRoot);
+    if (!targetStat.isDirectory()) {
+      const parsedDelete: string = deletePathTask(targetRoot);
+      const parsedDeleteObj: Record<string, Object> = JSON.parse(parsedDelete) as Record<string, Object>;
+      if (typeof parsedDeleteObj['error'] === 'string') {
+        return parsedDelete;
+      }
+    }
+  } catch (_err) {
+  }
+  try {
+    fileIo.mkdirSync(targetRoot, true);
+  } catch (err) {
+    return JSON.stringify({ error: `创建项目目录失败: ${targetRoot}` });
+  }
+  let sourceEntries: string[];
+  let targetEntries: string[];
+  try {
+    sourceEntries = fileIo.listFileSync(sourceRoot) as string[];
+  } catch (err) {
+    return JSON.stringify({ error: `列出同步文件夹失败: ${sourceRoot}` });
+  }
+  try {
+    targetEntries = fileIo.listFileSync(targetRoot) as string[];
+  } catch (err) {
+    return JSON.stringify({ error: `列出项目目录失败: ${targetRoot}` });
+  }
+  let copiedFiles: number = 0;
+  let deletedEntries: number = 0;
+  for (let index: number = 0; index < targetEntries.length; index += 1) {
+    const entry: string = targetEntries[index];
+    if (sourceEntries.indexOf(entry) < 0) {
+      const parsedDelete: string = deletePathTask(`${targetRoot}/${entry}`);
+      const parsedDeleteObj: Record<string, Object> = JSON.parse(parsedDelete) as Record<string, Object>;
+      if (typeof parsedDeleteObj['error'] === 'string') {
+        return parsedDelete;
+      }
+      deletedEntries += typeof parsedDeleteObj['deletedCount'] === 'number' ? (parsedDeleteObj['deletedCount'] as number) : 0;
+    }
+  }
+  const pendingSources: string[] = [];
+  const pendingTargets: string[] = [];
+  let headIndex: number = 0;
+  for (let index: number = 0; index < sourceEntries.length; index += 1) {
+    pendingSources.push(`${sourceRoot}/${sourceEntries[index]}`);
+    pendingTargets.push(`${targetRoot}/${sourceEntries[index]}`);
+  }
+  while (headIndex < pendingSources.length) {
+    const sourcePath: string = pendingSources[headIndex];
+    const targetPath: string = pendingTargets[headIndex];
+    headIndex += 1;
+    try {
+      const sourceStat = fileIo.statSync(sourcePath);
+      if (sourceStat.isDirectory()) {
+        fileIo.mkdirSync(targetPath, true);
+        let childEntries: string[];
+        try {
+          childEntries = fileIo.listFileSync(sourcePath) as string[];
+        } catch (err) {
+          return JSON.stringify({ error: `列出同步文件夹失败: ${sourcePath}` });
+        }
+        for (let childIndex: number = 0; childIndex < childEntries.length; childIndex += 1) {
+          pendingSources.push(`${sourcePath}/${childEntries[childIndex]}`);
+          pendingTargets.push(`${targetPath}/${childEntries[childIndex]}`);
+        }
+        continue;
+      }
+      try {
+        const targetStat = fileIo.statSync(targetPath);
+        if (targetStat.isDirectory()) {
+          const parsedDelete: string = deletePathTask(targetPath);
+          const parsedDeleteObj: Record<string, Object> = JSON.parse(parsedDelete) as Record<string, Object>;
+          if (typeof parsedDeleteObj['error'] === 'string') {
+            return parsedDelete;
+          }
+          deletedEntries += typeof parsedDeleteObj['deletedCount'] === 'number' ? (parsedDeleteObj['deletedCount'] as number) : 0;
+        }
+      } catch (_err) {
+      }
+      copyStandaloneFileChunk(sourcePath, targetPath);
+      copiedFiles += 1;
+    } catch (err) {
+      return JSON.stringify({ error: `导入条目失败: ${sourcePath} -> ${targetPath}` });
+    }
+  }
+  return JSON.stringify({ copiedFiles, deletedEntries });
 }
 
 class ChatMessage {
@@ -292,16 +524,6 @@ class FormulaParseResult {
   constructor(node: FormulaNode, nextIndex: number) {
     this.node = node;
     this.nextIndex = nextIndex;
-  }
-}
-
-class DirectoryMirrorResult {
-  copiedFiles: number;
-  deletedEntries: number;
-
-  constructor(copiedFiles: number, deletedEntries: number) {
-    this.copiedFiles = copiedFiles;
-    this.deletedEntries = deletedEntries;
   }
 }
 
@@ -2850,7 +3072,7 @@ struct Index {
     }
   }
 
-  private deleteProjectFolder(projectPath: string): void {
+  private async deleteProjectFolder(projectPath: string): Promise<void> {
     const trimmedPath: string = projectPath.trim();
     const context: common.UIAbilityContext | null = this.currentAbilityContext();
     if (trimmedPath.length === 0 || context === null) {
@@ -2860,20 +3082,12 @@ struct Index {
     if (!trimmedPath.startsWith(`${projectsRoot}/`)) {
       return;
     }
-    this.deletePathRecursive(trimmedPath);
-  }
-
-  private deletePathRecursive(path: string): void {
     try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        const entries: string[] = fileIo.listFileSync(path) as string[];
-        for (let index: number = 0; index < entries.length; index += 1) {
-          this.deletePathRecursive(`${path}/${entries[index]}`);
-        }
-        fileIo.rmdirSync(path);
-      } else {
-        fileIo.unlinkSync(path);
+      const task = new taskpool.Task(deletePathTask, trimmedPath);
+      const rawResult: string = await taskpool.execute(task) as string;
+      const parsed: Record<string, Object> = JSON.parse(rawResult) as Record<string, Object>;
+      if (typeof parsed['error'] === 'string') {
+        hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'delete project folder failed: %{public}s', parsed['error'] as string);
       }
     } catch (err) {
       hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'delete project folder failed: %{public}s', this.describeError(err));
@@ -2914,7 +3128,7 @@ struct Index {
     }
     this.projects = next;
     this.saveProjects();
-    this.deleteProjectFolder(projectPath);
+    await this.deleteProjectFolder(projectPath);
     for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
       if (this.workspaces[i].projectId === projectId) {
         this.workspaces.splice(i, 1);
@@ -5185,234 +5399,6 @@ struct Index {
     return `${this.normalizedDirectoryUri(parentUri)}/${this.encodeUriPathSegment(childName)}`;
   }
 
-  private copyProjectFileToUri(sourcePath: string, targetUri: string): void {
-    const targetPath: string = this.fileUriToFsPath(targetUri);
-    let source: fileIo.File | null = null;
-    let target: fileIo.File | null = null;
-    try {
-      source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-    } catch (err) {
-      throw new Error(`打开源文件失败: ${sourcePath}; ${this.describeError(err)}`);
-    }
-    try {
-      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    } catch (err) {
-      fileIo.closeSync(source);
-      throw new Error(`打开目标文件失败: ${targetUri}; ${this.describeError(err)}`);
-    }
-    try {
-      const stat = fileIo.statSync(sourcePath);
-      const chunkSize: number = 64 * 1024;
-      let offset: number = 0;
-      while (offset < stat.size) {
-        const readLength: number = Math.min(chunkSize, stat.size - offset);
-        const buffer = new ArrayBuffer(readLength);
-        const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
-        if (bytesRead <= 0) {
-          break;
-        }
-        const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
-        fileIo.writeSync(target.fd, data);
-        offset += bytesRead;
-      }
-    } catch (err) {
-      throw new Error(`复制文件失败: ${sourcePath} -> ${targetUri}; ${this.describeError(err)}`);
-    } finally {
-      fileIo.closeSync(source);
-      fileIo.closeSync(target);
-    }
-  }
-
-  private copyProjectDirectoryToUri(sourceRoot: string, targetRootUri: string): number {
-    const targetRootPath: string = this.fileUriToFsPath(targetRootUri);
-    try {
-      const sourceStat = fileIo.statSync(sourceRoot);
-      if (!sourceStat.isDirectory()) {
-        throw new Error('源路径不是目录');
-      }
-    } catch (err) {
-      throw new Error(`读取源目录失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    try {
-      fileIo.mkdirSync(targetRootPath, true);
-    } catch (_err) {
-    }
-    let copiedCount: number = 0;
-    let entries: string[] = [];
-    try {
-      entries = fileIo.listFileSync(sourceRoot) as string[];
-    } catch (err) {
-      throw new Error(`列出源目录失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    for (let index: number = 0; index < entries.length; index += 1) {
-      const entry: string = entries[index];
-      const sourcePath: string = `${sourceRoot}/${entry}`;
-      const targetUri: string = this.childUri(targetRootUri, entry);
-      try {
-        const stat = fileIo.statSync(sourcePath);
-        if (stat.isDirectory()) {
-          copiedCount += this.copyProjectDirectoryToUri(sourcePath, targetUri);
-        } else if (stat.isFile()) {
-          this.copyProjectFileToUri(sourcePath, targetUri);
-          copiedCount += 1;
-        }
-      } catch (err) {
-        throw new Error(`同步条目失败: ${sourcePath} -> ${targetUri}; ${this.describeError(err)}`);
-      }
-    }
-    return copiedCount;
-  }
-
-  private copyFileByPath(sourcePath: string, targetPath: string): void {
-    if (sourcePath === targetPath) {
-      return;
-    }
-    let source: fileIo.File | null = null;
-    let target: fileIo.File | null = null;
-    try {
-      source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-    } catch (err) {
-      throw new Error(`打开源文件失败: ${sourcePath}; ${this.describeError(err)}`);
-    }
-    try {
-      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    } catch (err) {
-      fileIo.closeSync(source);
-      throw new Error(`打开目标文件失败: ${targetPath}; ${this.describeError(err)}`);
-    }
-    try {
-      const stat = fileIo.statSync(sourcePath);
-      const chunkSize: number = 64 * 1024;
-      let offset: number = 0;
-      while (offset < stat.size) {
-        const readLength: number = Math.min(chunkSize, stat.size - offset);
-        const buffer = new ArrayBuffer(readLength);
-        const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
-        if (bytesRead <= 0) {
-          break;
-        }
-        const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
-        fileIo.writeSync(target.fd, data);
-        offset += bytesRead;
-      }
-    } catch (err) {
-      throw new Error(`复制文件失败: ${sourcePath} -> ${targetPath}; ${this.describeError(err)}`);
-    } finally {
-      fileIo.closeSync(source);
-      fileIo.closeSync(target);
-    }
-  }
-
-  private deletePathRecursively(path: string): number {
-    try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        let deletedCount: number = 0;
-        const entries: string[] = fileIo.listFileSync(path) as string[];
-        for (let index: number = 0; index < entries.length; index += 1) {
-          deletedCount += this.deletePathRecursively(`${path}/${entries[index]}`);
-        }
-        fileIo.rmdirSync(path);
-        return deletedCount + 1;
-      }
-      fileIo.unlinkSync(path);
-      return 1;
-    } catch (err) {
-      throw new Error(`删除路径失败: ${path}; ${this.describeError(err)}`);
-    }
-  }
-
-  private ensureMirrorTargetDirectory(path: string): void {
-    try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        return;
-      }
-      this.deletePathRecursively(path);
-    } catch (_err) {
-    }
-    try {
-      fileIo.mkdirSync(path, true);
-    } catch (err) {
-      try {
-        const stat = fileIo.statSync(path);
-        if (stat.isDirectory()) {
-          return;
-        }
-      } catch (_statErr) {
-      }
-      throw new Error(`创建项目目录失败: ${path}; ${this.describeError(err)}`);
-    }
-  }
-
-  private mirrorDirectoryByPath(sourceRoot: string, targetRoot: string): DirectoryMirrorResult {
-    try {
-      const sourceStat = fileIo.statSync(sourceRoot);
-      if (!sourceStat.isDirectory()) {
-        throw new Error('同步文件夹不是目录');
-      }
-    } catch (err) {
-      throw new Error(`读取同步文件夹失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    this.ensureMirrorTargetDirectory(targetRoot);
-
-    let sourceEntries: string[] = [];
-    let targetEntries: string[] = [];
-    try {
-      sourceEntries = fileIo.listFileSync(sourceRoot) as string[];
-    } catch (err) {
-      throw new Error(`列出同步文件夹失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    try {
-      targetEntries = fileIo.listFileSync(targetRoot) as string[];
-    } catch (err) {
-      throw new Error(`列出项目目录失败: ${targetRoot}; ${this.describeError(err)}`);
-    }
-
-    let copiedFiles: number = 0;
-    let deletedEntries: number = 0;
-    for (let index: number = 0; index < targetEntries.length; index += 1) {
-      const entry: string = targetEntries[index];
-      if (sourceEntries.indexOf(entry) < 0) {
-        deletedEntries += this.deletePathRecursively(`${targetRoot}/${entry}`);
-      }
-    }
-
-    for (let index: number = 0; index < sourceEntries.length; index += 1) {
-      const entry: string = sourceEntries[index];
-      const sourcePath: string = `${sourceRoot}/${entry}`;
-      const targetPath: string = `${targetRoot}/${entry}`;
-      try {
-        const sourceStat = fileIo.statSync(sourcePath);
-        if (sourceStat.isDirectory()) {
-          try {
-            const targetStat = fileIo.statSync(targetPath);
-            if (!targetStat.isDirectory()) {
-              deletedEntries += this.deletePathRecursively(targetPath);
-            }
-          } catch (_err) {
-          }
-          const childResult: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, targetPath);
-          copiedFiles += childResult.copiedFiles;
-          deletedEntries += childResult.deletedEntries;
-        } else if (sourceStat.isFile()) {
-          try {
-            const targetStat = fileIo.statSync(targetPath);
-            if (targetStat.isDirectory()) {
-              deletedEntries += this.deletePathRecursively(targetPath);
-            }
-          } catch (_err) {
-          }
-          this.copyFileByPath(sourcePath, targetPath);
-          copiedFiles += 1;
-        }
-      } catch (err) {
-        throw new Error(`导入条目失败: ${sourcePath} -> ${targetPath}; ${this.describeError(err)}`);
-      }
-    }
-    return new DirectoryMirrorResult(copiedFiles, deletedEntries);
-  }
-
   private async syncProjectToImportSource(proj: ProjectRecord): Promise<void> {
     const sourceUri: string = proj.sourceUri.trim();
     if (sourceUri.length === 0) {
@@ -5432,7 +5418,14 @@ struct Index {
       } catch (activationErr) {
         hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
       }
-      const copiedCount: number = this.copyProjectDirectoryToUri(projectPath, sourceUri);
+      const targetRootPath: string = this.fileUriToFsPath(sourceUri);
+      const task = new taskpool.Task(copyProjectDirectoryTask, projectPath, targetRootPath);
+      const rawResult: string = await taskpool.execute(task) as string;
+      const parsed: Record<string, Object> = JSON.parse(rawResult) as Record<string, Object>;
+      if (typeof parsed['error'] === 'string') {
+        throw new Error(parsed['error'] as string);
+      }
+      const copiedCount: number = typeof parsed['copiedCount'] === 'number' ? (parsed['copiedCount'] as number) : 0;
       promptAction.showToast({ message: `已同步 ${copiedCount.toString()} 个文件到${targetLabel}`, duration: 2600 });
     } catch (err) {
       hilog.error(INDEX_DOMAIN, INDEX_TAG, 'sync project to import source failed: %{public}s', this.describeError(err));
@@ -5459,8 +5452,15 @@ struct Index {
         hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
       }
       const sourcePath: string = this.fileUriToFsPath(sourceUri);
-      const result: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, projectPath);
-      promptAction.showToast({ message: `已导入 ${result.copiedFiles.toString()} 个文件，删除 ${result.deletedEntries.toString()} 个多余条目`, duration: 3000 });
+      const task = new taskpool.Task(mirrorDirectoryTask, sourcePath, projectPath);
+      const rawResult: string = await taskpool.execute(task) as string;
+      const parsed: Record<string, Object> = JSON.parse(rawResult) as Record<string, Object>;
+      if (typeof parsed['error'] === 'string') {
+        throw new Error(parsed['error'] as string);
+      }
+      const copiedFiles: number = typeof parsed['copiedFiles'] === 'number' ? (parsed['copiedFiles'] as number) : 0;
+      const deletedEntries: number = typeof parsed['deletedEntries'] === 'number' ? (parsed['deletedEntries'] as number) : 0;
+      promptAction.showToast({ message: `已导入 ${copiedFiles.toString()} 个文件，删除 ${deletedEntries.toString()} 个多余条目`, duration: 3000 });
     } catch (err) {
       hilog.error(INDEX_DOMAIN, INDEX_TAG, 'import project from sync folder failed: %{public}s', this.describeError(err));
       promptAction.showToast({ message: `导入失败: ${this.describeError(err)}；同步文件夹可能已被删除或授权失效，请重新选择同步文件夹`, duration: 3600 });
