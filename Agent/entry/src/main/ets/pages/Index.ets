@@ -36,6 +36,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileShare, fileUri, picker } from '@kit.CoreFileKit';
 import fileIo from '@ohos.file.fs';
 import uri from '@ohos.uri';
+import { huaweiAccountService } from '../account/HuaweiAccountService';
 
 const INDEX_DOMAIN = 0x0000;
 const INDEX_TAG = 'IndexProviderDebug';
@@ -1136,6 +1137,94 @@ struct ArkPilotDeleteDialog {
   }
 }
 
+@CustomDialog
+struct ArkPilotLogoutDialog {
+  controller?: CustomDialogController;
+  cancel: () => void = () => {};
+  confirm: () => void = () => {};
+
+  build() {
+    Column() {
+      Row() {
+        Text('退出登录')
+          .copyOption(CopyOptions.None)
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .layoutWeight(1)
+        Button('×')
+          .type(ButtonType.Normal)
+          .accessibilityText('关闭')
+          .width(32)
+          .height(32)
+          .fontSize(20)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .borderRadius(10)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+      }
+      .width('100%')
+
+      Text('确定要退出华为账号登录吗？')
+        .copyOption(CopyOptions.None)
+        .fontSize(15)
+        .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+        .lineHeight(22)
+        .width('100%')
+        .margin({ top: 16 })
+
+      Text('退出后需要重新使用华为账号登录。')
+        .copyOption(CopyOptions.None)
+        .fontSize(13)
+        .fontColor(indexThemeColor('#475569', '#CBD5E1'))
+        .lineHeight(19)
+        .width('100%')
+        .margin({ top: 8 })
+
+      Row() {
+        Button('取消')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .borderRadius(20)
+          .onClick(() => {
+            this.cancel();
+            if (this.controller !== undefined) {
+              this.controller.close();
+            }
+          })
+
+        Button('退出')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#E84026')
+          .borderRadius(20)
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.confirm();
+          })
+      }
+      .width('100%')
+      .margin({ top: 26 })
+    }
+    .width('100%')
+    .padding({ left: 24, right: 24, top: 24, bottom: 20 })
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .borderRadius(24)
+  }
+}
+
 @Entry
 @Component
 struct Index {
@@ -1143,6 +1232,9 @@ struct Index {
   @Watch('onBreakpointChanged')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
   @State private isDarkMode: boolean = false;
+  @StorageProp('arkPilotLoggedIn')
+  @Watch('onLoggedInChanged')
+  accountLoggedIn: boolean = false;
   private readonly thinkingStatusPhrases: string[] = [
     '正在厘清问题',
     '正在读取上下文',
@@ -1523,7 +1615,33 @@ struct Index {
     }
   });
 
+  private logoutDialogController: CustomDialogController | null = new CustomDialogController({
+    builder: ArkPilotLogoutDialog({
+      cancel: () => {
+        this.cancelLogoutDialog();
+      },
+      confirm: () => {
+        this.confirmLogout();
+      }
+    }),
+    autoCancel: false,
+    alignment: DialogAlignment.Center,
+    customStyle: false,
+    cornerRadius: 24,
+    maskColor: '#66000000',
+    backgroundColor: '#FFFFFF',
+    shadow: { radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 },
+    cancel: () => {
+      this.cancelLogoutDialog();
+    }
+  });
+
   aboutToAppear(): void {
+    const loggedIn: boolean = (AppStorage.get<boolean>('arkPilotLoggedIn') ?? false);
+    if (!loggedIn) {
+      router.replaceUrl({ url: 'pages/LoginPage' });
+      return;
+    }
     const savedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
     this.isDarkMode = savedThemeMode === 'dark';
     AppStorage.setOrCreate<string>(ARK_PILOT_THEME_MODE_KEY, this.isDarkMode ? 'dark' : 'light');
@@ -4964,6 +5082,39 @@ struct Index {
 
   private onBreakpointChanged(): void {
     this.applyResponsiveLayoutProfile();
+  }
+
+  private onLoggedInChanged(): void {
+    const loggedIn: boolean = (AppStorage.get<boolean>('arkPilotLoggedIn') ?? false);
+    if (!loggedIn) {
+      this.cancelLogoutDialog();
+      router.replaceUrl({ url: 'pages/LoginPage' });
+    }
+  }
+
+  private accountDisplayName(): string {
+    const masked: string = huaweiAccountService.maskedUnionID();
+    return masked.length > 0 ? masked : '已登录';
+  }
+
+  private openLogoutDialog(): void {
+    if (this.logoutDialogController !== null) {
+      this.logoutDialogController.open();
+    }
+  }
+
+  private confirmLogout(): void {
+    if (this.logoutDialogController !== null) {
+      this.logoutDialogController.close();
+    }
+    huaweiAccountService.logout();
+    router.replaceUrl({ url: 'pages/LoginPage' });
+  }
+
+  private cancelLogoutDialog(): void {
+    if (this.logoutDialogController !== null) {
+      this.logoutDialogController.close();
+    }
   }
 
   private isPhoneBreakpoint(): boolean {
@@ -10684,6 +10835,58 @@ struct Index {
       .layoutWeight(1)
       .width('100%')
       .edgeEffect(EdgeEffect.Spring)
+
+      // Account status row — always above settings
+      if (this.accountLoggedIn) {
+        Row() {
+          Column() {
+            Text('Huawei 账号')
+              .copyOption(CopyOptions.None)
+              .fontSize(10)
+              .fontColor(this.themeTextMuted())
+
+            Text(this.accountDisplayName())
+              .copyOption(CopyOptions.None)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.themeTextPrimary())
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Button('退出登录')
+            .height(28)
+            .padding({ left: 10, right: 10 })
+            .fontSize(10)
+            .fontColor(this.themeTextSecondary())
+            .backgroundColor(this.themeSubtleBackground())
+            .borderRadius(14)
+            .border({ width: 0.5, color: this.themeBorder() })
+            .onClick(() => {
+              this.openLogoutDialog();
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 8, top: 8, bottom: 8 })
+        .backgroundColor(this.themeElevatedBackground())
+        .borderRadius(16)
+        .border({ width: 0.5, color: this.themeBorder() })
+        .margin({ top: 8 })
+      } else {
+        Button('未登录 · 点击登录')
+          .height(38)
+          .width('100%')
+          .fontSize(12)
+          .fontColor(this.themeTextSecondary())
+          .backgroundColor(this.themeElevatedBackground())
+          .borderRadius(16)
+          .border({ width: 0.5, color: this.themeBorder() })
+          .margin({ top: 8 })
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/LoginPage' });
+          })
+      }
 
       // Settings button — always at bottom
       Button() {

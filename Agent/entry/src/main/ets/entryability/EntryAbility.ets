@@ -7,6 +7,7 @@ import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { installBundledSkills } from '../skills/BundledSkills';
 import { SkillsBackendService } from '../skills/SkillsBackendService';
 import { ReconcileResult } from '../skills/SkillTypes';
+import { huaweiAccountService } from '../account/HuaweiAccountService';
 
 const DOMAIN = 0x0000;
 const TAG = 'CodexHost';
@@ -59,6 +60,12 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
     }
+
+    try {
+      huaweiAccountService.init(this.context);
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'Failed to init huawei account service. Cause: %{public}s', JSON.stringify(err));
+    }
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onCreate');
   }
 
@@ -98,7 +105,9 @@ export default class EntryAbility extends UIAbility {
       }
     });
 
-    windowStage.loadContent('pages/Index', (err) => {
+    const loggedIn: boolean = (AppStorage.get<boolean>('arkPilotLoggedIn') ?? false);
+    const initialPage: string = loggedIn ? 'pages/Index' : 'pages/LoginPage';
+    windowStage.loadContent(initialPage, (err) => {
       if (err.code) {
         hilog.error(DOMAIN, TAG, 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;

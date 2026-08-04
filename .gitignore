@@ -18,6 +18,10 @@
 /Agent/.hvigor/
 /Agent/oh_modules/
 /Agent/.preview/
+/Agent/.cache/
+
+# DevEco Code local tooling
+/.deveco/
 
 # Keep design references versioned; ignore generated exports separately if needed later.
 

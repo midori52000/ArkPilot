@@ -12,6 +12,12 @@
     ],
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
+    "metadata": [
+      {
+        "name": "client_id",
+        "value": "6917611807369238550"
+      }
+    ],
     "deviceTypes": [
       "phone",
       "tablet",
