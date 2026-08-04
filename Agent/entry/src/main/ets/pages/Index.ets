@@ -10932,6 +10932,7 @@ struct Index {
       .layoutWeight(1)
       .width('100%')
       .edgeEffect(EdgeEffect.Spring)
+      .cachedCount(6)
 
       // Account status row — always above settings
       if (this.accountLoggedIn) {
@@ -11595,6 +11596,7 @@ struct Index {
         .height(Math.min(230, this.diffFiles.length * 58))
         .margin({ top: 8 })
         .scrollBar(BarState.Off)
+        .cachedCount(6)
 
         Row() {
           Text('当前')
@@ -11668,6 +11670,7 @@ struct Index {
         .width('100%')
         .margin({ top: 8 })
         .scrollBar(BarState.Off)
+        .cachedCount(6)
       }
     }
     .height('100%')
