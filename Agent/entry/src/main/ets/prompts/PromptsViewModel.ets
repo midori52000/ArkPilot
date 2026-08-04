@@ -136,7 +136,9 @@ export class PromptsViewModel {
     } catch (err) {
       const message: string = this.getErrorMessage(err);
       this.showStatus('删除失败: ' + message, 'error');
-      throw new Error(message);
+      // 状态已更新后，再以标准 Error 形式抛出，保证调用方 .catch() 仍能收到错误
+      const normalized: string = message.length > 0 ? message : '未知错误';
+      throw new Error(normalized);
     }
   }
 

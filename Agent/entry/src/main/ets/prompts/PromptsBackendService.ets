@@ -107,8 +107,13 @@ export class PromptsBackendService {
 
   async getPrompts(): Promise<PromptRecord[]> {
     const json: string = getPromptsRegistry(this.codexHome);
-    const parsed: Record<string, Object> = JSON.parse(json) as Record<string, Object>;
-    const promptsArr: Object[] = (parsed['prompts'] as Object[]) ?? [] as Object[];
+    let promptsArr: Object[] = [];
+    try {
+      const parsed: Record<string, Object> = JSON.parse(json) as Record<string, Object>;
+      promptsArr = (parsed['prompts'] as Object[]) ?? [] as Object[];
+    } catch (_) {
+      promptsArr = [];
+    }
     const result: PromptRecord[] = [];
     for (let i: number = 0; i < promptsArr.length; i++) {
       result.push(PromptRecord.fromJSON(promptsArr[i] as Record<string, Object>));

@@ -56,13 +56,22 @@ export class SkillsViewModel {
   }
 
   async installFromGithub(skill: DiscoverableSkill): Promise<void> {
-    const result = await configManagerFacade.installSkill(skill);
-    if (!result.ok || result.data === null) {
-      this.state.errorText = this.describeActionError(result.error);
+    try {
+      const result = await configManagerFacade.installSkill(skill);
+      if (!result.ok || result.data === null) {
+        this.state.errorText = this.describeActionError(result.error);
+        throw new Error(this.state.errorText);
+      }
+      this.state.installed = [...this.state.installed, result.data];
+      this.state.errorText = '';
+    } catch (err) {
+      // 兜底：任何非 ConfigActionResult 异常都不能以原始值逃逸，
+      // 统一写入 error 状态并重新抛出 Error（调用方依赖 .catch() 处理）
+      if (this.state.errorText.length === 0) {
+        this.state.errorText = err instanceof Error ? err.message : String(err);
+      }
       throw new Error(this.state.errorText);
     }
-    this.state.installed = [...this.state.installed, result.data];
-    this.state.errorText = '';
   }
 
   async uninstall(id: string): Promise<void> {
