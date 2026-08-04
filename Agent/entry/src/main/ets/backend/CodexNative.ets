@@ -1026,13 +1026,17 @@ export async function getEmbeddedCodexHostStatusAsync(): Promise<CodexHostStatus
 
 @Concurrent
 function startHostTask(codexHome: string, serverUrl: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{"code":1,"running":false,"serverUrl":"","message":"libentry.so failed to load."}';
+  }
   try {
-    const status: CodexHostStatus = startEmbeddedCodexHost(codexHome, serverUrl);
+    const status: NativeCodexHostStatus = mod.startHost(codexHome, serverUrl);
     return JSON.stringify({
-      code: status.code,
-      running: status.running,
-      serverUrl: status.serverUrl,
-      message: status.message
+      code: status.code ?? 0,
+      running: status.running === true,
+      serverUrl: status.serverUrl ?? '',
+      message: status.message ?? ''
     });
   } catch (_err) {
     return '{"code":1,"running":false,"serverUrl":"","message":"startHost failed"}';

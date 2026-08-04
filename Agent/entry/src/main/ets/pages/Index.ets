@@ -37,6 +37,7 @@ import { fileShare, fileUri, picker } from '@kit.CoreFileKit';
 import fileIo from '@ohos.file.fs';
 import uri from '@ohos.uri';
 import taskpool from '@ohos.taskpool';
+import { copyStandaloneFileChunk, deletePathTask } from '../backend/ProjectDirFileOps';
 import { huaweiAccountService } from '../account/HuaweiAccountService';
 
 const INDEX_DOMAIN = 0x0000;
@@ -70,43 +71,10 @@ function indexThemeColor(light: string, dark: string): string {
 
 // ================================================================
 // TaskPool 卸载：项目目录拷贝 / 镜像 / 删除（迭代式，避免 UI 线程递归同步 I/O）
-// @Concurrent 函数必须是顶层、不可捕获外部变量、参数与返回值必须可序列化
+// @Concurrent 函数必须是顶层、不可捕获外部变量、参数与返回值必须可序列化；
+// 被调用的辅助函数（copyStandaloneFileChunk / deletePathTask）从
+// ../backend/ProjectDirFileOps 以 import 方式引入。
 // ================================================================
-
-function copyStandaloneFileChunk(sourcePath: string, targetPath: string): void {
-  let source: fileIo.File | null = null;
-  let target: fileIo.File | null = null;
-  try {
-    source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-  } catch (err) {
-    throw new Error(`打开源文件失败: ${sourcePath}`);
-  }
-  try {
-    target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-  } catch (err) {
-    fileIo.closeSync(source);
-    throw new Error(`打开目标文件失败: ${targetPath}`);
-  }
-  try {
-    const stat = fileIo.statSync(sourcePath);
-    const chunkSize: number = 64 * 1024;
-    let offset: number = 0;
-    while (offset < stat.size) {
-      const readLength: number = Math.min(chunkSize, stat.size - offset);
-      const buffer = new ArrayBuffer(readLength);
-      const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
-      if (bytesRead <= 0) {
-        break;
-      }
-      const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
-      fileIo.writeSync(target.fd, data);
-      offset += bytesRead;
-    }
-  } finally {
-    fileIo.closeSync(source);
-    fileIo.closeSync(target);
-  }
-}
 
 @Concurrent
 function copyProjectDirectoryTask(sourceRoot: string, targetRootPath: string): string {
@@ -158,46 +126,6 @@ function copyProjectDirectoryTask(sourceRoot: string, targetRootPath: string): s
     }
   }
   return JSON.stringify({ copiedCount });
-}
-
-@Concurrent
-function deletePathTask(rootPath: string): string {
-  let deletedCount: number = 0;
-  const pending: string[] = [];
-  pending.push(rootPath);
-  while (pending.length > 0) {
-    const current: string = pending.pop() as string;
-    let stat: fileIo.Stat;
-    try {
-      stat = fileIo.statSync(current);
-    } catch (err) {
-      return JSON.stringify({ error: `删除路径失败: ${current}` });
-    }
-    if (stat.isDirectory()) {
-      let entries: string[];
-      try {
-        entries = fileIo.listFileSync(current) as string[];
-      } catch (err) {
-        return JSON.stringify({ error: `删除路径失败: ${current}` });
-      }
-      for (let index: number = 0; index < entries.length; index += 1) {
-        pending.push(`${current}/${entries[index]}`);
-      }
-      try {
-        fileIo.rmdirSync(current);
-      } catch (err) {
-        return JSON.stringify({ error: `删除路径失败: ${current}` });
-      }
-    } else {
-      try {
-        fileIo.unlinkSync(current);
-      } catch (err) {
-        return JSON.stringify({ error: `删除路径失败: ${current}` });
-      }
-    }
-    deletedCount += 1;
-  }
-  return JSON.stringify({ deletedCount });
 }
 
 @Concurrent

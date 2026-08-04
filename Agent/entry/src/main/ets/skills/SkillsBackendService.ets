@@ -115,42 +115,6 @@ export const SKILL_ERROR_MESSAGES: Map<SkillErrorCode, string> = new Map([
 // （@Concurrent 函数必须是顶层、不可捕获外部变量、参数与返回值必须可序列化）
 // ================================================================
 
-function parseSkillFrontmatterStandalone(content: string, fallbackName: string): string[] {
-  let clean: string = content;
-  if (content.charCodeAt(0) === 0xFEFF) {
-    clean = content.substring(1);
-  }
-  const parts: string[] = clean.split('---');
-  if (parts.length < 3) {
-    return [fallbackName, ''];
-  }
-  const frontMatter: string = parts[1].trim();
-  const lines: string[] = frontMatter.split('\n');
-  let name: string = fallbackName;
-  let description: string = '';
-  for (let i = 0; i < lines.length; i++) {
-    const colonIdx: number = lines[i].indexOf(':');
-    if (colonIdx === -1) {
-      continue;
-    }
-    const key: string = lines[i].substring(0, colonIdx).trim();
-    let value: string = lines[i].substring(colonIdx + 1).trim();
-    if (value.length >= 2 && (value.startsWith("'") || value.startsWith('"'))) {
-      const quote: string = value.charAt(0);
-      if (value.endsWith(quote)) {
-        value = value.substring(1, value.length - 1);
-      }
-    }
-    if (key === 'name' && value.length > 0) {
-      name = value;
-    }
-    if (key === 'description') {
-      description = value;
-    }
-  }
-  return [name, description];
-}
-
 @Concurrent
 function scanSsotDirectoryTask(ssotDir: string): string {
   const results: ScannedSkillJson[] = [];
@@ -187,9 +151,35 @@ function scanSsotDirectoryTask(ssotDir: string): string {
     let description: string = '';
     try {
       const content: string = fileIo.readTextSync(skillMdPath) as string;
-      const parsed: string[] = parseSkillFrontmatterStandalone(content, entry);
-      name = parsed[0];
-      description = parsed[1];
+      let clean: string = content;
+      if (content.charCodeAt(0) === 0xFEFF) {
+        clean = content.substring(1);
+      }
+      const parts: string[] = clean.split('---');
+      if (parts.length >= 3) {
+        const frontMatter: string = parts[1].trim();
+        const fmLines: string[] = frontMatter.split('\n');
+        for (let j = 0; j < fmLines.length; j++) {
+          const colonIdx: number = fmLines[j].indexOf(':');
+          if (colonIdx === -1) {
+            continue;
+          }
+          const key: string = fmLines[j].substring(0, colonIdx).trim();
+          let value: string = fmLines[j].substring(colonIdx + 1).trim();
+          if (value.length >= 2 && (value.startsWith("'") || value.startsWith('"'))) {
+            const quote: string = value.charAt(0);
+            if (value.endsWith(quote)) {
+              value = value.substring(1, value.length - 1);
+            }
+          }
+          if (key === 'name' && value.length > 0) {
+            name = value;
+          }
+          if (key === 'description') {
+            description = value;
+          }
+        }
+      }
     } catch (_) {
       // 保持 fallback name
     }
