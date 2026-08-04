@@ -2,7 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { startEmbeddedCodexHost } from '../backend/CodexNative';
+import { CodexHostStatus, startEmbeddedCodexHostAsync } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { installBundledSkills } from '../skills/BundledSkills';
 import { SkillsBackendService } from '../skills/SkillsBackendService';
@@ -24,16 +24,19 @@ export default class EntryAbility extends UIAbility {
     try {
       const codexHome: string = `${this.context.filesDir}/codex-home`;
       AppStorage.setOrCreate<string>('codexHome', codexHome);
-      const status = startEmbeddedCodexHost(codexHome, DEFAULT_SERVER_URL);
-      hilog.info(
-        DOMAIN,
-        TAG,
-        'Embedded host start result: code=%{public}d running=%{public}s url=%{public}s message=%{public}s',
-        status.code,
-        status.running ? 'true' : 'false',
-        status.serverUrl,
-        status.message
-      );
+      void startEmbeddedCodexHostAsync(codexHome, DEFAULT_SERVER_URL).then((status: CodexHostStatus) => {
+        hilog.info(
+          DOMAIN,
+          TAG,
+          'Embedded host start result: code=%{public}d running=%{public}s url=%{public}s message=%{public}s',
+          status.code,
+          status.running ? 'true' : 'false',
+          status.serverUrl,
+          status.message
+        );
+      }).catch((err: Error) => {
+        hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
+      });
 
       // 首次启动自动导入已有 AGENTS.md
       const promptsService = new PromptsBackendService(codexHome);

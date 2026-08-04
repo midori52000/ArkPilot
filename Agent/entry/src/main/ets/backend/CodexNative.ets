@@ -1023,3 +1023,34 @@ export async function getEmbeddedCodexHostStatusAsync(): Promise<CodexHostStatus
     return new CodexHostStatus(1, false, '', 'getStatus async failed');
   }
 }
+
+@Concurrent
+function startHostTask(codexHome: string, serverUrl: string): string {
+  try {
+    const status: CodexHostStatus = startEmbeddedCodexHost(codexHome, serverUrl);
+    return JSON.stringify({
+      code: status.code,
+      running: status.running,
+      serverUrl: status.serverUrl,
+      message: status.message
+    });
+  } catch (_err) {
+    return '{"code":1,"running":false,"serverUrl":"","message":"startHost failed"}';
+  }
+}
+
+export async function startEmbeddedCodexHostAsync(codexHome: string, serverUrl: string): Promise<CodexHostStatus> {
+  try {
+    const task = new taskpool.Task(startHostTask, codexHome, serverUrl);
+    const jsonStr: string = await taskpool.execute(task) as string;
+    const parsed: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    return new CodexHostStatus(
+      typeof parsed['code'] === 'number' ? (parsed['code'] as number) : 1,
+      parsed['running'] === true,
+      typeof parsed['serverUrl'] === 'string' ? (parsed['serverUrl'] as string) : '',
+      typeof parsed['message'] === 'string' ? (parsed['message'] as string) : ''
+    );
+  } catch (_err) {
+    return new CodexHostStatus(1, false, '', 'start host async failed');
+  }
+}
