@@ -4559,8 +4559,27 @@ struct Index {
   private messageRenderKey(item: ChatMessage): string {
     const type: string = item.itemType ?? item.role;
     const status: string = item.status ?? '';
-    const metadataText: string = item.metadata !== undefined ? JSON.stringify(item.metadata) : '';
+    const metadataText: string = this.cachedMetadataSignature(item.id, item.metadata);
     return `${item.id}:${type}:${status}:${metadataText.length}:${this.messageContentRenderSignature(item.content)}`;
+  }
+
+  private metadataSignatureCache: Map<string, string> = new Map();
+
+  private cachedMetadataSignature(messageId: string, metadata?: Record<string, Object>): string {
+    if (metadata === undefined) {
+      this.metadataSignatureCache.delete(messageId);
+      return '';
+    }
+    const cached: string | undefined = this.metadataSignatureCache.get(messageId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const signature: string = JSON.stringify(metadata);
+    if (this.metadataSignatureCache.size >= 256) {
+      this.metadataSignatureCache.clear();
+    }
+    this.metadataSignatureCache.set(messageId, signature);
+    return signature;
   }
 
   private messageContentRenderSignature(content: string): string {
@@ -8850,9 +8869,20 @@ struct Index {
     return text.split('|').map((cell: string): string => cell.trim());
   }
 
+  private codeBlockLinesCache: Map<string, string[]> = new Map();
+
   private codeBlockLines(text: string): string[] {
+    const cached: string[] | undefined = this.codeBlockLinesCache.get(text);
+    if (cached !== undefined) {
+      return cached;
+    }
     const lines: string[] = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\t/g, '    ').split('\n');
-    return lines.length > 0 ? lines : [''];
+    const result: string[] = lines.length > 0 ? lines : [''];
+    if (this.codeBlockLinesCache.size >= 64) {
+      this.codeBlockLinesCache.clear();
+    }
+    this.codeBlockLinesCache.set(text, result);
+    return result;
   }
 
   private codeLineTokens(line: string, language: string, baseId: string): CodeToken[] {
