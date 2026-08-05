@@ -1153,14 +1153,15 @@ struct ArkPilotLogoutDialog {
           .fontColor(indexThemeColor('#182431', '#F8FAFC'))
           .layoutWeight(1)
         Button('×')
-          .type(ButtonType.Normal)
+          .type(ButtonType.Circle)
           .accessibilityText('关闭')
           .width(32)
           .height(32)
-          .fontSize(20)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
-          .borderRadius(10)
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(indexThemeColor('#64748B', '#A8B3C2'))
+          .backgroundColor(indexThemeColor('#F1F5F9', '#334155'))
+          .border({ width: 1, color: indexThemeColor('#E2E8F0', '#475569') })
           .onClick(() => {
             this.cancel();
             if (this.controller !== undefined) {
@@ -5097,6 +5098,17 @@ struct Index {
     return masked.length > 0 ? masked : '已登录';
   }
 
+  private openSwitchAccountPage(): void {
+    // 切换账号 = 彻底退出本地登录态并撤销系统级授权，
+    // 回到登录页重新授权（可在授权页重新选择账号/输入密码）。
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext !== undefined) {
+      void huaweiAccountService.logout(hostContext);
+    } else {
+      void huaweiAccountService.logout();
+    }
+  }
+
   private openLogoutDialog(): void {
     if (this.logoutDialogController !== null) {
       this.logoutDialogController.open();
@@ -5107,8 +5119,13 @@ struct Index {
     if (this.logoutDialogController !== null) {
       this.logoutDialogController.close();
     }
-    huaweiAccountService.logout();
-    router.replaceUrl({ url: 'pages/LoginPage' });
+    // logout() 会触发 onLoggedInChanged，自动跳转回 LoginPage
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext !== undefined) {
+      void huaweiAccountService.logout(hostContext);
+    } else {
+      void huaweiAccountService.logout();
+    }
   }
 
   private cancelLogoutDialog(): void {
@@ -10855,6 +10872,18 @@ struct Index {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
+          Button('切换账号')
+            .height(28)
+            .padding({ left: 10, right: 10 })
+            .fontSize(10)
+            .fontColor(this.themeTextSecondary())
+            .backgroundColor(this.themeSubtleBackground())
+            .borderRadius(14)
+            .border({ width: 0.5, color: this.themeBorder() })
+            .onClick(() => {
+              this.openSwitchAccountPage();
+            })
+
           Button('退出登录')
             .height(28)
             .padding({ left: 10, right: 10 })
@@ -10863,6 +10892,7 @@ struct Index {
             .backgroundColor(this.themeSubtleBackground())
             .borderRadius(14)
             .border({ width: 0.5, color: this.themeBorder() })
+            .margin({ left: 6 })
             .onClick(() => {
               this.openLogoutDialog();
             })

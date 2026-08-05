@@ -1,5 +1,5 @@
 import router from '@ohos.router';
-import { LoginPanel, LoginWithHuaweiIDButton, loginComponentManager } from '@kit.AccountKit';
+import { LoginWithHuaweiIDButton, loginComponentManager } from '@kit.AccountKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { huaweiAccountService } from '../account/HuaweiAccountService';
@@ -17,10 +17,8 @@ struct LoginPage {
   @State private capabilitySupported: boolean = true;
   @State private lastAccount: string = '';
   @State private loginBusy: boolean = false;
-  @State private showSwitchPanel: boolean = false;
 
   private loginController: loginComponentManager.LoginWithHuaweiIDButtonController = new loginComponentManager.LoginWithHuaweiIDButtonController();
-  private switchPanelController: loginComponentManager.LoginPanelController = new loginComponentManager.LoginPanelController();
 
   private loginParams: loginComponentManager.LoginWithHuaweiIDButtonParams = {
     style: loginComponentManager.Style.BUTTON_RED,
@@ -28,14 +26,6 @@ struct LoginPage {
     supportDarkMode: true,
     loginType: loginComponentManager.LoginType.ID,
     textAndIconStyle: true
-  };
-
-  private switchPanelParams: loginComponentManager.LoginPanelParams = {
-    appInfo: {
-      appIcon: $r('app.media.layered_image'),
-      appName: 'ArkPilot'
-    },
-    loginType: loginComponentManager.LoginType.ID
   };
 
   aboutToAppear(): void {
@@ -48,7 +38,6 @@ struct LoginPage {
     this.capabilitySupported = canIUse(HUAWEI_ID_LOGIN_SYSCAP);
     this.lastAccount = huaweiAccountService.lastAccountMasked();
     this.registerLoginCallback();
-    this.registerSwitchPanelCallback();
     if (huaweiAccountService.isLoggedIn) {
       router.replaceUrl({ url: 'pages/Index' });
     }
@@ -56,7 +45,6 @@ struct LoginPage {
 
   aboutToDisappear(): void {
     this.loginBusy = false;
-    this.showSwitchPanel = false;
   }
 
   private registerLoginCallback(): void {
@@ -73,34 +61,34 @@ struct LoginPage {
     });
   }
 
-  private registerSwitchPanelCallback(): void {
-    this.switchPanelController.onClickLoginWithHuaweiIDButton((err: BusinessError, credential: loginComponentManager.HuaweiIDCredential) => {
-      if (this.loginBusy) {
-        return;
-      }
-      if (err !== null && err !== undefined) {
-        this.loginBusy = false;
-        this.showSwitchPanel = false;
-        this.errorText = accountErrorMessage(err.code);
-        return;
-      }
-      this.showSwitchPanel = false;
-      this.handleLoginSuccess(credential);
-    });
-  }
-
   private handleLoginSuccess(credential: loginComponentManager.HuaweiIDCredential): void {
     this.loginBusy = true;
     huaweiAccountService.applyCredential(credential);
+    this.leaveLoginPage();
+  }
+
+  private leaveLoginPage(): void {
     router.replaceUrl({ url: 'pages/Index' });
   }
 
-  private openSwitchAccount(): void {
+  private async openSwitchAccount(): Promise<void> {
     if (this.loginBusy) {
       return;
     }
+    this.loginBusy = true;
     this.errorText = '';
-    this.showSwitchPanel = true;
+    const hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined) {
+      this.loginBusy = false;
+      this.errorText = '切换账号失败，请稍后重试';
+      return;
+    }
+    // 切换账号 = 彻底退出本地登录态 + 撤销系统级授权，
+    // 重新登录时必须重新走授权流程（可重新选择账号/输入密码）。
+    await huaweiAccountService.logout(hostContext);
+    this.loginBusy = false;
+    this.lastAccount = '';
+    this.errorText = '';
   }
 
   private isDarkMode(): boolean {
@@ -230,14 +218,6 @@ struct LoginPage {
       .backgroundColor(this.surface())
       .borderRadius(24)
       .shadow({ radius: 24, color: '#26000000', offsetX: 0, offsetY: 8 })
-
-      if (this.showSwitchPanel) {
-        LoginPanel({
-          show: this.showSwitchPanel,
-          params: this.switchPanelParams,
-          controller: this.switchPanelController
-        })
-      }
     }
     .width('100%')
     .height('100%')
