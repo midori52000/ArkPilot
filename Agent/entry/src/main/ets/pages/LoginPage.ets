@@ -19,6 +19,7 @@ struct LoginPage {
   @State private loginBusy: boolean = false;
 
   private loginController: loginComponentManager.LoginWithHuaweiIDButtonController = new loginComponentManager.LoginWithHuaweiIDButtonController();
+  private loginCallbackRegistered: boolean = false;
 
   private loginParams: loginComponentManager.LoginWithHuaweiIDButtonParams = {
     style: loginComponentManager.Style.BUTTON_RED,
@@ -45,9 +46,14 @@ struct LoginPage {
 
   aboutToDisappear(): void {
     this.loginBusy = false;
+    this.unregisterLoginCallback();
   }
 
   private registerLoginCallback(): void {
+    if (this.loginCallbackRegistered) {
+      return;
+    }
+    this.loginCallbackRegistered = true;
     this.loginController.onClickLoginWithHuaweiIDButton((err: BusinessError, credential: loginComponentManager.HuaweiIDCredential) => {
       if (this.loginBusy) {
         return;
@@ -59,6 +65,10 @@ struct LoginPage {
       }
       this.handleLoginSuccess(credential);
     });
+  }
+
+  private unregisterLoginCallback(): void {
+    this.loginCallbackRegistered = false;
   }
 
   private handleLoginSuccess(credential: loginComponentManager.HuaweiIDCredential): void {
