@@ -36,6 +36,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileShare, fileUri, picker } from '@kit.CoreFileKit';
 import fileIo from '@ohos.file.fs';
 import uri from '@ohos.uri';
+import taskpool from '@ohos.taskpool';
+import { copyStandaloneFileChunk, deletePathTask } from '../backend/ProjectDirFileOps';
 import { huaweiAccountService } from '../account/HuaweiAccountService';
 
 const INDEX_DOMAIN = 0x0000;
@@ -50,8 +52,179 @@ const FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.App
 const LEGACY_FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.File.Environment.FolderObtain';
 const ARK_PILOT_THEME_MODE_KEY: string = 'arkPilotThemeMode';
 
+let cachedThemeMode: string = '';
+
+function cachedThemeModeValue(): string {
+  if (cachedThemeMode.length === 0) {
+    cachedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
+  }
+  return cachedThemeMode;
+}
+
+function invalidateCachedThemeMode(): void {
+  cachedThemeMode = '';
+}
+
 function indexThemeColor(light: string, dark: string): string {
-  return AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) === 'dark' ? dark : light;
+  return cachedThemeModeValue() === 'dark' ? dark : light;
+}
+
+// ================================================================
+// TaskPool 卸载：项目目录拷贝 / 镜像 / 删除（迭代式，避免 UI 线程递归同步 I/O）
+// @Concurrent 函数必须是顶层、不可捕获外部变量、参数与返回值必须可序列化；
+// 被调用的辅助函数（copyStandaloneFileChunk / deletePathTask）从
+// ../backend/ProjectDirFileOps 以 import 方式引入。
+// ================================================================
+
+@Concurrent
+function copyProjectDirectoryTask(sourceRoot: string, targetRootPath: string): string {
+  try {
+    const sourceStat = fileIo.statSync(sourceRoot);
+    if (!sourceStat.isDirectory()) {
+      return JSON.stringify({ error: '源路径不是目录' });
+    }
+  } catch (err) {
+    return JSON.stringify({ error: `读取源目录失败: ${sourceRoot}` });
+  }
+  try {
+    fileIo.mkdirSync(targetRootPath, true);
+  } catch (_err) {
+  }
+  let copiedCount: number = 0;
+  const pendingSources: string[] = [];
+  const pendingTargets: string[] = [];
+  let headIndex: number = 0;
+  pendingSources.push(sourceRoot);
+  pendingTargets.push(targetRootPath);
+  while (headIndex < pendingSources.length) {
+    const currentSource: string = pendingSources[headIndex];
+    const currentTarget: string = pendingTargets[headIndex];
+    headIndex += 1;
+    let entries: string[];
+    try {
+      entries = fileIo.listFileSync(currentSource) as string[];
+    } catch (err) {
+      return JSON.stringify({ error: `列出源目录失败: ${currentSource}` });
+    }
+    for (let index: number = 0; index < entries.length; index += 1) {
+      const entry: string = entries[index];
+      const sourcePath: string = `${currentSource}/${entry}`;
+      const targetPath: string = `${currentTarget}/${entry}`;
+      try {
+        const stat = fileIo.statSync(sourcePath);
+        if (stat.isDirectory()) {
+          fileIo.mkdirSync(targetPath, true);
+          pendingSources.push(sourcePath);
+          pendingTargets.push(targetPath);
+        } else if (stat.isFile()) {
+          copyStandaloneFileChunk(sourcePath, targetPath);
+          copiedCount += 1;
+        }
+      } catch (err) {
+        return JSON.stringify({ error: `同步条目失败: ${sourcePath} -> ${targetPath}` });
+      }
+    }
+  }
+  return JSON.stringify({ copiedCount });
+}
+
+@Concurrent
+function mirrorDirectoryTask(sourceRoot: string, targetRoot: string): string {
+  try {
+    const sourceStat = fileIo.statSync(sourceRoot);
+    if (!sourceStat.isDirectory()) {
+      return JSON.stringify({ error: '同步文件夹不是目录' });
+    }
+  } catch (err) {
+    return JSON.stringify({ error: `读取同步文件夹失败: ${sourceRoot}` });
+  }
+  try {
+    const targetStat = fileIo.statSync(targetRoot);
+    if (!targetStat.isDirectory()) {
+      const parsedDelete: string = deletePathTask(targetRoot);
+      const parsedDeleteObj: Record<string, Object> = JSON.parse(parsedDelete) as Record<string, Object>;
+      if (typeof parsedDeleteObj['error'] === 'string') {
+        return parsedDelete;
+      }
+    }
+  } catch (_err) {
+  }
+  try {
+    fileIo.mkdirSync(targetRoot, true);
+  } catch (err) {
+    return JSON.stringify({ error: `创建项目目录失败: ${targetRoot}` });
+  }
+  let sourceEntries: string[];
+  let targetEntries: string[];
+  try {
+    sourceEntries = fileIo.listFileSync(sourceRoot) as string[];
+  } catch (err) {
+    return JSON.stringify({ error: `列出同步文件夹失败: ${sourceRoot}` });
+  }
+  try {
+    targetEntries = fileIo.listFileSync(targetRoot) as string[];
+  } catch (err) {
+    return JSON.stringify({ error: `列出项目目录失败: ${targetRoot}` });
+  }
+  let copiedFiles: number = 0;
+  let deletedEntries: number = 0;
+  for (let index: number = 0; index < targetEntries.length; index += 1) {
+    const entry: string = targetEntries[index];
+    if (sourceEntries.indexOf(entry) < 0) {
+      const parsedDelete: string = deletePathTask(`${targetRoot}/${entry}`);
+      const parsedDeleteObj: Record<string, Object> = JSON.parse(parsedDelete) as Record<string, Object>;
+      if (typeof parsedDeleteObj['error'] === 'string') {
+        return parsedDelete;
+      }
+      deletedEntries += typeof parsedDeleteObj['deletedCount'] === 'number' ? (parsedDeleteObj['deletedCount'] as number) : 0;
+    }
+  }
+  const pendingSources: string[] = [];
+  const pendingTargets: string[] = [];
+  let headIndex: number = 0;
+  for (let index: number = 0; index < sourceEntries.length; index += 1) {
+    pendingSources.push(`${sourceRoot}/${sourceEntries[index]}`);
+    pendingTargets.push(`${targetRoot}/${sourceEntries[index]}`);
+  }
+  while (headIndex < pendingSources.length) {
+    const sourcePath: string = pendingSources[headIndex];
+    const targetPath: string = pendingTargets[headIndex];
+    headIndex += 1;
+    try {
+      const sourceStat = fileIo.statSync(sourcePath);
+      if (sourceStat.isDirectory()) {
+        fileIo.mkdirSync(targetPath, true);
+        let childEntries: string[];
+        try {
+          childEntries = fileIo.listFileSync(sourcePath) as string[];
+        } catch (err) {
+          return JSON.stringify({ error: `列出同步文件夹失败: ${sourcePath}` });
+        }
+        for (let childIndex: number = 0; childIndex < childEntries.length; childIndex += 1) {
+          pendingSources.push(`${sourcePath}/${childEntries[childIndex]}`);
+          pendingTargets.push(`${targetPath}/${childEntries[childIndex]}`);
+        }
+        continue;
+      }
+      try {
+        const targetStat = fileIo.statSync(targetPath);
+        if (targetStat.isDirectory()) {
+          const parsedDelete: string = deletePathTask(targetPath);
+          const parsedDeleteObj: Record<string, Object> = JSON.parse(parsedDelete) as Record<string, Object>;
+          if (typeof parsedDeleteObj['error'] === 'string') {
+            return parsedDelete;
+          }
+          deletedEntries += typeof parsedDeleteObj['deletedCount'] === 'number' ? (parsedDeleteObj['deletedCount'] as number) : 0;
+        }
+      } catch (_err) {
+      }
+      copyStandaloneFileChunk(sourcePath, targetPath);
+      copiedFiles += 1;
+    } catch (err) {
+      return JSON.stringify({ error: `导入条目失败: ${sourcePath} -> ${targetPath}` });
+    }
+  }
+  return JSON.stringify({ copiedFiles, deletedEntries });
 }
 
 class ChatMessage {
@@ -292,16 +465,6 @@ class FormulaParseResult {
   constructor(node: FormulaNode, nextIndex: number) {
     this.node = node;
     this.nextIndex = nextIndex;
-  }
-}
-
-class DirectoryMirrorResult {
-  copiedFiles: number;
-  deletedEntries: number;
-
-  constructor(copiedFiles: number, deletedEntries: number) {
-    this.copiedFiles = copiedFiles;
-    this.deletedEntries = deletedEntries;
   }
 }
 
@@ -726,13 +889,13 @@ struct ArkPilotProjectCreateDialog {
         .copyOption(CopyOptions.None)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#18181B')
+        .fontColor(indexThemeColor('#18181B', '#F8FAFC'))
         .width('100%')
 
       Text('同步文件夹是项目和本地目录之间的交换入口。项目在应用内运行，需要时再手动与该文件夹导入或导出项目文件。')
         .copyOption(CopyOptions.None)
         .fontSize(12)
-        .fontColor('#4E5969')
+        .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
         .lineHeight(18)
         .width('100%')
         .margin({ top: 8 })
@@ -741,14 +904,14 @@ struct ArkPilotProjectCreateDialog {
         Text('• 导出项目内容：创建项目后，可以在项目菜单中，把应用内该项目文件夹内容导出到同步文件夹。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#4E5969')
+          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
           .lineHeight(18)
           .width('100%')
 
         Text('• 导入文件夹内容：可以在项目菜单中，把同步文件夹中的内容导入到项目文件夹内。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#4E5969')
+          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
           .lineHeight(18)
           .width('100%')
           .margin({ top: 6 })
@@ -756,7 +919,7 @@ struct ArkPilotProjectCreateDialog {
         Text('• 未选择时：仅使用应用内项目目录，可以在项目菜单中重新关联同步文件夹。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#4E5969')
+          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
           .lineHeight(18)
           .width('100%')
           .margin({ top: 6 })
@@ -766,6 +929,8 @@ struct ArkPilotProjectCreateDialog {
     }
     .width(292)
     .padding({ left: 14, right: 14, top: 14, bottom: 14 })
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .borderRadius(16)
   }
 
   build() {
@@ -836,8 +1001,8 @@ struct ArkPilotProjectCreateDialog {
             .textAlign(TextAlign.Center)
             .width(22)
             .height(22)
-            .backgroundColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF')
-            .border({ width: 1, color: '#D1D5DB' })
+            .backgroundColor(indexThemeColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF', this.shouldShowSourceInfo() ? '#334155' : '#1E293B'))
+            .border({ width: 1, color: indexThemeColor('#D1D5DB', '#475569') })
             .borderRadius(11)
             .onHover((isHover: boolean) => {
               this.sourceInfoHovering = isHover;
@@ -859,7 +1024,7 @@ struct ArkPilotProjectCreateDialog {
               mask: false,
               autoCancel: true,
               enableArrow: true,
-              popupColor: '#FFFFFF',
+              popupColor: indexThemeColor('#FFFFFF', '#1E293B'),
               shadow: { radius: 16, color: '#26000000', offsetX: 0, offsetY: 6 },
               onStateChange: (event) => {
                 if (!event.isVisible) {
@@ -886,7 +1051,7 @@ struct ArkPilotProjectCreateDialog {
       .width('100%')
       .padding(14)
       .margin({ top: 12 })
-      .backgroundColor('#F7F8FA')
+      .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
       .borderRadius(12)
 
       Button(this.canSelectExternalFolder() ? '选择同步文件夹' : '启用下载目录同步')
@@ -894,8 +1059,8 @@ struct ArkPilotProjectCreateDialog {
         .width('100%')
         .height(40)
         .fontSize(14)
-        .fontColor('#18181B')
-        .backgroundColor('#F2F3F5')
+        .fontColor(indexThemeColor('#18181B', '#F8FAFC'))
+        .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
         .borderRadius(12)
         .margin({ top: 12 })
         .onClick(() => {
@@ -908,8 +1073,8 @@ struct ArkPilotProjectCreateDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor('#182431')
-          .backgroundColor('#F2F3F5')
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -936,7 +1101,7 @@ struct ArkPilotProjectCreateDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
     .borderRadius(24)
   }
 }
@@ -1120,7 +1285,7 @@ struct ArkPilotDeleteDialog {
           .height(40)
           .fontSize(14)
           .fontColor('#FFFFFF')
-          .backgroundColor('#E84026')
+          .backgroundColor('#F97373')
           .borderRadius(20)
           .margin({ left: 12 })
           .onClick(() => {
@@ -1209,7 +1374,7 @@ struct ArkPilotLogoutDialog {
           .height(40)
           .fontSize(14)
           .fontColor('#FFFFFF')
-          .backgroundColor('#E84026')
+          .backgroundColor('#F97373')
           .borderRadius(20)
           .margin({ left: 12 })
           .onClick(() => {
@@ -1395,6 +1560,7 @@ struct Index {
   private messageUserScrollActive: boolean = false;
   private messageUserScrollTimerId: number = -1;
   private messageZoomWheelActiveUntil: number = 0;
+  private lastAppliedMessagesSignature: string = '';
   @State private messages: ChatMessage[] = [
     new ChatMessage(
       'welcome-1',
@@ -1646,6 +1812,7 @@ struct Index {
     const savedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
     this.isDarkMode = savedThemeMode === 'dark';
     AppStorage.setOrCreate<string>(ARK_PILOT_THEME_MODE_KEY, this.isDarkMode ? 'dark' : 'light');
+    invalidateCachedThemeMode();
     const mediaQuery = this.getUIContext().getMediaQuery();
     breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
     this.applyResponsiveLayoutProfile(true);
@@ -2096,6 +2263,7 @@ struct Index {
         '刚刚'
       )
     ];
+    this.lastAppliedMessagesSignature = '';
     this.codeLines = [
       new CodeDiffLine('placeholder-1', '1', ' ', '等待 turn/diff/updated 通知。', 'context')
     ];
@@ -2729,6 +2897,7 @@ struct Index {
       this.isDarkMode = nextDark;
     });
     AppStorage.set<string>(ARK_PILOT_THEME_MODE_KEY, nextDark ? 'dark' : 'light');
+    invalidateCachedThemeMode();
   }
 
   private toggleProjectExpanded(projectId: string): void {
@@ -2851,7 +3020,7 @@ struct Index {
     }
   }
 
-  private deleteProjectFolder(projectPath: string): void {
+  private async deleteProjectFolder(projectPath: string): Promise<void> {
     const trimmedPath: string = projectPath.trim();
     const context: common.UIAbilityContext | null = this.currentAbilityContext();
     if (trimmedPath.length === 0 || context === null) {
@@ -2861,20 +3030,12 @@ struct Index {
     if (!trimmedPath.startsWith(`${projectsRoot}/`)) {
       return;
     }
-    this.deletePathRecursive(trimmedPath);
-  }
-
-  private deletePathRecursive(path: string): void {
     try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        const entries: string[] = fileIo.listFileSync(path) as string[];
-        for (let index: number = 0; index < entries.length; index += 1) {
-          this.deletePathRecursive(`${path}/${entries[index]}`);
-        }
-        fileIo.rmdirSync(path);
-      } else {
-        fileIo.unlinkSync(path);
+      const task = new taskpool.Task(deletePathTask, trimmedPath);
+      const rawResult: string = await taskpool.execute(task) as string;
+      const parsed: Record<string, Object> = JSON.parse(rawResult) as Record<string, Object>;
+      if (typeof parsed['error'] === 'string') {
+        hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'delete project folder failed: %{public}s', parsed['error'] as string);
       }
     } catch (err) {
       hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'delete project folder failed: %{public}s', this.describeError(err));
@@ -2915,7 +3076,7 @@ struct Index {
     }
     this.projects = next;
     this.saveProjects();
-    this.deleteProjectFolder(projectPath);
+    await this.deleteProjectFolder(projectPath);
     for (let i: number = this.workspaces.length - 1; i >= 0; i -= 1) {
       if (this.workspaces[i].projectId === projectId) {
         this.workspaces.splice(i, 1);
@@ -3310,9 +3471,13 @@ struct Index {
   private visibleMessages(): ChatMessage[] {
     const hasPendingTailMessage: boolean = (this.isRunning && this.pendingUserPrompt.trim().length > 0) ||
       this.pendingRequestUserInput !== null;
-    let visible: ChatMessage[] = this.messages.filter((item: ChatMessage, index: number) => {
-      return this.shouldRenderMessageAt(index, hasPendingTailMessage);
-    });
+    const renderableAfter: boolean[] = this.precomputeRenderableAfterFlags(hasPendingTailMessage);
+    let visible: ChatMessage[] = [];
+    for (let index: number = 0; index < this.messages.length; index += 1) {
+      if (this.shouldRenderMessageAt(index, hasPendingTailMessage, renderableAfter)) {
+        visible.push(this.messages[index]);
+      }
+    }
     if (this.isRunning && this.pendingUserPrompt.trim().length > 0) {
       visible = [...visible, this.pendingUserMessage()];
     }
@@ -3331,13 +3496,35 @@ struct Index {
     return visible;
   }
 
-  private shouldRenderMessageAt(index: number, hasPendingTailMessage: boolean): boolean {
+  private chatMessagesSignature(messages: ChatMessage[]): string {
+    const count: number = messages.length;
+    let signature: string = `${count}`;
+    for (let index: number = 0; index < count; index += 1) {
+      const message: ChatMessage = messages[index];
+      signature += `|${message.id}|${message.content.length}|${message.status ?? ''}`;
+    }
+    return signature;
+  }
+
+  private precomputeRenderableAfterFlags(hasPendingTailMessage: boolean): boolean[] {
+    const flags: boolean[] = new Array<boolean>(this.messages.length);
+    let seenRenderableAfter: boolean = hasPendingTailMessage;
+    for (let index: number = this.messages.length - 1; index >= 0; index -= 1) {
+      flags[index] = seenRenderableAfter;
+      if (this.shouldRenderMessage(this.messages[index])) {
+        seenRenderableAfter = true;
+      }
+    }
+    return flags;
+  }
+
+  private shouldRenderMessageAt(index: number, hasPendingTailMessage: boolean, renderableAfter: boolean[]): boolean {
     const item: ChatMessage = this.messages[index];
     if (!this.shouldRenderMessage(item)) {
       return false;
     }
     if (this.isReasoningMessage(item)) {
-      return !this.hasRenderableMessageAfter(index, hasPendingTailMessage);
+      return !this.hasRenderableMessageAfter(index, hasPendingTailMessage, renderableAfter);
     }
     return true;
   }
@@ -3349,14 +3536,12 @@ struct Index {
     return !this.isEmptyReasoningMessage(item);
   }
 
-  private hasRenderableMessageAfter(index: number, hasPendingTailMessage: boolean): boolean {
+  private hasRenderableMessageAfter(index: number, hasPendingTailMessage: boolean, renderableAfter: boolean[]): boolean {
     if (hasPendingTailMessage) {
       return true;
     }
-    for (let nextIndex = index + 1; nextIndex < this.messages.length; nextIndex += 1) {
-      if (this.shouldRenderMessage(this.messages[nextIndex])) {
-        return true;
-      }
+    if (index + 1 < renderableAfter.length) {
+      return renderableAfter[index + 1];
     }
     return false;
   }
@@ -3548,7 +3733,7 @@ struct Index {
       this.thinkingPulseIndex = (this.thinkingPulseIndex + 1) % 144;
       this.refreshThinkingNormalPhrase();
       this.refreshThinkingFunPhrase();
-    }, 500);
+    }, 1000);
   }
 
   private shouldTrackIdleThinking(): boolean {
@@ -3998,9 +4183,14 @@ struct Index {
       ? this.preserveStableMessageTimestamps(this.mergeStreamingDisplayMessages(rawMessages, result))
       : rawMessages;
     this.updateLiveThinking(result, displayMessages);
-    this.messages = displayMessages.filter((item: ChatMessage) => {
+    const nextMessages: ChatMessage[] = displayMessages.filter((item: ChatMessage) => {
       return !this.isReasoningMessage(item);
     });
+    const messagesSignature: string = this.chatMessagesSignature(nextMessages);
+    if (messagesSignature !== this.lastAppliedMessagesSignature) {
+      this.messages = nextMessages;
+      this.lastAppliedMessagesSignature = messagesSignature;
+    }
     this.codeLines = result.diffLines.length > 0
       ? result.diffLines.map((line: CodexDiffLine) => {
           return new CodeDiffLine(line.lineId, line.lineNumber, line.sign, line.content, line.kind, line.filePath);
@@ -4546,8 +4736,27 @@ struct Index {
   private messageRenderKey(item: ChatMessage): string {
     const type: string = item.itemType ?? item.role;
     const status: string = item.status ?? '';
-    const metadataText: string = item.metadata !== undefined ? JSON.stringify(item.metadata) : '';
+    const metadataText: string = this.cachedMetadataSignature(item.id, item.metadata);
     return `${item.id}:${type}:${status}:${metadataText.length}:${this.messageContentRenderSignature(item.content)}`;
+  }
+
+  private metadataSignatureCache: Map<string, string> = new Map();
+
+  private cachedMetadataSignature(messageId: string, metadata?: Record<string, Object>): string {
+    if (metadata === undefined) {
+      this.metadataSignatureCache.delete(messageId);
+      return '';
+    }
+    const cached: string | undefined = this.metadataSignatureCache.get(messageId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const signature: string = JSON.stringify(metadata);
+    if (this.metadataSignatureCache.size >= 256) {
+      this.metadataSignatureCache.clear();
+    }
+    this.metadataSignatureCache.set(messageId, signature);
+    return signature;
   }
 
   private messageContentRenderSignature(content: string): string {
@@ -5169,234 +5378,6 @@ struct Index {
     return `${this.normalizedDirectoryUri(parentUri)}/${this.encodeUriPathSegment(childName)}`;
   }
 
-  private copyProjectFileToUri(sourcePath: string, targetUri: string): void {
-    const targetPath: string = this.fileUriToFsPath(targetUri);
-    let source: fileIo.File | null = null;
-    let target: fileIo.File | null = null;
-    try {
-      source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-    } catch (err) {
-      throw new Error(`打开源文件失败: ${sourcePath}; ${this.describeError(err)}`);
-    }
-    try {
-      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    } catch (err) {
-      fileIo.closeSync(source);
-      throw new Error(`打开目标文件失败: ${targetUri}; ${this.describeError(err)}`);
-    }
-    try {
-      const stat = fileIo.statSync(sourcePath);
-      const chunkSize: number = 64 * 1024;
-      let offset: number = 0;
-      while (offset < stat.size) {
-        const readLength: number = Math.min(chunkSize, stat.size - offset);
-        const buffer = new ArrayBuffer(readLength);
-        const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
-        if (bytesRead <= 0) {
-          break;
-        }
-        const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
-        fileIo.writeSync(target.fd, data);
-        offset += bytesRead;
-      }
-    } catch (err) {
-      throw new Error(`复制文件失败: ${sourcePath} -> ${targetUri}; ${this.describeError(err)}`);
-    } finally {
-      fileIo.closeSync(source);
-      fileIo.closeSync(target);
-    }
-  }
-
-  private copyProjectDirectoryToUri(sourceRoot: string, targetRootUri: string): number {
-    const targetRootPath: string = this.fileUriToFsPath(targetRootUri);
-    try {
-      const sourceStat = fileIo.statSync(sourceRoot);
-      if (!sourceStat.isDirectory()) {
-        throw new Error('源路径不是目录');
-      }
-    } catch (err) {
-      throw new Error(`读取源目录失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    try {
-      fileIo.mkdirSync(targetRootPath, true);
-    } catch (_err) {
-    }
-    let copiedCount: number = 0;
-    let entries: string[] = [];
-    try {
-      entries = fileIo.listFileSync(sourceRoot) as string[];
-    } catch (err) {
-      throw new Error(`列出源目录失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    for (let index: number = 0; index < entries.length; index += 1) {
-      const entry: string = entries[index];
-      const sourcePath: string = `${sourceRoot}/${entry}`;
-      const targetUri: string = this.childUri(targetRootUri, entry);
-      try {
-        const stat = fileIo.statSync(sourcePath);
-        if (stat.isDirectory()) {
-          copiedCount += this.copyProjectDirectoryToUri(sourcePath, targetUri);
-        } else if (stat.isFile()) {
-          this.copyProjectFileToUri(sourcePath, targetUri);
-          copiedCount += 1;
-        }
-      } catch (err) {
-        throw new Error(`同步条目失败: ${sourcePath} -> ${targetUri}; ${this.describeError(err)}`);
-      }
-    }
-    return copiedCount;
-  }
-
-  private copyFileByPath(sourcePath: string, targetPath: string): void {
-    if (sourcePath === targetPath) {
-      return;
-    }
-    let source: fileIo.File | null = null;
-    let target: fileIo.File | null = null;
-    try {
-      source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-    } catch (err) {
-      throw new Error(`打开源文件失败: ${sourcePath}; ${this.describeError(err)}`);
-    }
-    try {
-      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    } catch (err) {
-      fileIo.closeSync(source);
-      throw new Error(`打开目标文件失败: ${targetPath}; ${this.describeError(err)}`);
-    }
-    try {
-      const stat = fileIo.statSync(sourcePath);
-      const chunkSize: number = 64 * 1024;
-      let offset: number = 0;
-      while (offset < stat.size) {
-        const readLength: number = Math.min(chunkSize, stat.size - offset);
-        const buffer = new ArrayBuffer(readLength);
-        const bytesRead: number = fileIo.readSync(source.fd, buffer, { offset, length: readLength });
-        if (bytesRead <= 0) {
-          break;
-        }
-        const data: ArrayBuffer = bytesRead === readLength ? buffer : buffer.slice(0, bytesRead);
-        fileIo.writeSync(target.fd, data);
-        offset += bytesRead;
-      }
-    } catch (err) {
-      throw new Error(`复制文件失败: ${sourcePath} -> ${targetPath}; ${this.describeError(err)}`);
-    } finally {
-      fileIo.closeSync(source);
-      fileIo.closeSync(target);
-    }
-  }
-
-  private deletePathRecursively(path: string): number {
-    try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        let deletedCount: number = 0;
-        const entries: string[] = fileIo.listFileSync(path) as string[];
-        for (let index: number = 0; index < entries.length; index += 1) {
-          deletedCount += this.deletePathRecursively(`${path}/${entries[index]}`);
-        }
-        fileIo.rmdirSync(path);
-        return deletedCount + 1;
-      }
-      fileIo.unlinkSync(path);
-      return 1;
-    } catch (err) {
-      throw new Error(`删除路径失败: ${path}; ${this.describeError(err)}`);
-    }
-  }
-
-  private ensureMirrorTargetDirectory(path: string): void {
-    try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        return;
-      }
-      this.deletePathRecursively(path);
-    } catch (_err) {
-    }
-    try {
-      fileIo.mkdirSync(path, true);
-    } catch (err) {
-      try {
-        const stat = fileIo.statSync(path);
-        if (stat.isDirectory()) {
-          return;
-        }
-      } catch (_statErr) {
-      }
-      throw new Error(`创建项目目录失败: ${path}; ${this.describeError(err)}`);
-    }
-  }
-
-  private mirrorDirectoryByPath(sourceRoot: string, targetRoot: string): DirectoryMirrorResult {
-    try {
-      const sourceStat = fileIo.statSync(sourceRoot);
-      if (!sourceStat.isDirectory()) {
-        throw new Error('同步文件夹不是目录');
-      }
-    } catch (err) {
-      throw new Error(`读取同步文件夹失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    this.ensureMirrorTargetDirectory(targetRoot);
-
-    let sourceEntries: string[] = [];
-    let targetEntries: string[] = [];
-    try {
-      sourceEntries = fileIo.listFileSync(sourceRoot) as string[];
-    } catch (err) {
-      throw new Error(`列出同步文件夹失败: ${sourceRoot}; ${this.describeError(err)}`);
-    }
-    try {
-      targetEntries = fileIo.listFileSync(targetRoot) as string[];
-    } catch (err) {
-      throw new Error(`列出项目目录失败: ${targetRoot}; ${this.describeError(err)}`);
-    }
-
-    let copiedFiles: number = 0;
-    let deletedEntries: number = 0;
-    for (let index: number = 0; index < targetEntries.length; index += 1) {
-      const entry: string = targetEntries[index];
-      if (sourceEntries.indexOf(entry) < 0) {
-        deletedEntries += this.deletePathRecursively(`${targetRoot}/${entry}`);
-      }
-    }
-
-    for (let index: number = 0; index < sourceEntries.length; index += 1) {
-      const entry: string = sourceEntries[index];
-      const sourcePath: string = `${sourceRoot}/${entry}`;
-      const targetPath: string = `${targetRoot}/${entry}`;
-      try {
-        const sourceStat = fileIo.statSync(sourcePath);
-        if (sourceStat.isDirectory()) {
-          try {
-            const targetStat = fileIo.statSync(targetPath);
-            if (!targetStat.isDirectory()) {
-              deletedEntries += this.deletePathRecursively(targetPath);
-            }
-          } catch (_err) {
-          }
-          const childResult: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, targetPath);
-          copiedFiles += childResult.copiedFiles;
-          deletedEntries += childResult.deletedEntries;
-        } else if (sourceStat.isFile()) {
-          try {
-            const targetStat = fileIo.statSync(targetPath);
-            if (targetStat.isDirectory()) {
-              deletedEntries += this.deletePathRecursively(targetPath);
-            }
-          } catch (_err) {
-          }
-          this.copyFileByPath(sourcePath, targetPath);
-          copiedFiles += 1;
-        }
-      } catch (err) {
-        throw new Error(`导入条目失败: ${sourcePath} -> ${targetPath}; ${this.describeError(err)}`);
-      }
-    }
-    return new DirectoryMirrorResult(copiedFiles, deletedEntries);
-  }
-
   private async syncProjectToImportSource(proj: ProjectRecord): Promise<void> {
     const sourceUri: string = proj.sourceUri.trim();
     if (sourceUri.length === 0) {
@@ -5416,7 +5397,14 @@ struct Index {
       } catch (activationErr) {
         hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
       }
-      const copiedCount: number = this.copyProjectDirectoryToUri(projectPath, sourceUri);
+      const targetRootPath: string = this.fileUriToFsPath(sourceUri);
+      const task = new taskpool.Task(copyProjectDirectoryTask, projectPath, targetRootPath);
+      const rawResult: string = await taskpool.execute(task) as string;
+      const parsed: Record<string, Object> = JSON.parse(rawResult) as Record<string, Object>;
+      if (typeof parsed['error'] === 'string') {
+        throw new Error(parsed['error'] as string);
+      }
+      const copiedCount: number = typeof parsed['copiedCount'] === 'number' ? (parsed['copiedCount'] as number) : 0;
       promptAction.showToast({ message: `已同步 ${copiedCount.toString()} 个文件到${targetLabel}`, duration: 2600 });
     } catch (err) {
       hilog.error(INDEX_DOMAIN, INDEX_TAG, 'sync project to import source failed: %{public}s', this.describeError(err));
@@ -5443,8 +5431,15 @@ struct Index {
         hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
       }
       const sourcePath: string = this.fileUriToFsPath(sourceUri);
-      const result: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, projectPath);
-      promptAction.showToast({ message: `已导入 ${result.copiedFiles.toString()} 个文件，删除 ${result.deletedEntries.toString()} 个多余条目`, duration: 3000 });
+      const task = new taskpool.Task(mirrorDirectoryTask, sourcePath, projectPath);
+      const rawResult: string = await taskpool.execute(task) as string;
+      const parsed: Record<string, Object> = JSON.parse(rawResult) as Record<string, Object>;
+      if (typeof parsed['error'] === 'string') {
+        throw new Error(parsed['error'] as string);
+      }
+      const copiedFiles: number = typeof parsed['copiedFiles'] === 'number' ? (parsed['copiedFiles'] as number) : 0;
+      const deletedEntries: number = typeof parsed['deletedEntries'] === 'number' ? (parsed['deletedEntries'] as number) : 0;
+      promptAction.showToast({ message: `已导入 ${copiedFiles.toString()} 个文件，删除 ${deletedEntries.toString()} 个多余条目`, duration: 3000 });
     } catch (err) {
       hilog.error(INDEX_DOMAIN, INDEX_TAG, 'import project from sync folder failed: %{public}s', this.describeError(err));
       promptAction.showToast({ message: `导入失败: ${this.describeError(err)}；同步文件夹可能已被删除或授权失效，请重新选择同步文件夹`, duration: 3600 });
@@ -8581,7 +8576,13 @@ struct Index {
     this.selectableMessageIds = [...this.selectableMessageIds, messageId];
   }
 
+  private markdownBlocksCache: Map<string, MarkdownBlock[]> = new Map();
+
   private markdownBlocks(content: string): MarkdownBlock[] {
+    const cached: MarkdownBlock[] | undefined = this.markdownBlocksCache.get(content);
+    if (cached !== undefined) {
+      return cached;
+    }
     const lines: string[] = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
     const blocks: MarkdownBlock[] = [];
     let i = 0;
@@ -8739,6 +8740,10 @@ struct Index {
     if (blocks.length === 0) {
       blocks.push(new MarkdownBlock('md-empty', 'paragraph', content));
     }
+    if (this.markdownBlocksCache.size >= 64) {
+      this.markdownBlocksCache.clear();
+    }
+    this.markdownBlocksCache.set(content, blocks);
     return blocks;
   }
 
@@ -8853,9 +8858,20 @@ struct Index {
     return text.split('|').map((cell: string): string => cell.trim());
   }
 
+  private codeBlockLinesCache: Map<string, string[]> = new Map();
+
   private codeBlockLines(text: string): string[] {
+    const cached: string[] | undefined = this.codeBlockLinesCache.get(text);
+    if (cached !== undefined) {
+      return cached;
+    }
     const lines: string[] = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\t/g, '    ').split('\n');
-    return lines.length > 0 ? lines : [''];
+    const result: string[] = lines.length > 0 ? lines : [''];
+    if (this.codeBlockLinesCache.size >= 64) {
+      this.codeBlockLinesCache.clear();
+    }
+    this.codeBlockLinesCache.set(text, result);
+    return result;
   }
 
   private codeLineTokens(line: string, language: string, baseId: string): CodeToken[] {
@@ -9095,7 +9111,14 @@ struct Index {
     return result;
   }
 
+  private inlineMarkdownSegmentsCache: Map<string, MathSegment[]> = new Map();
+
   private inlineMarkdownSegments(text: string, baseId: string): MathSegment[] {
+    const cacheKey: string = `${baseId}\u0000${text}`;
+    const cached: MathSegment[] | undefined = this.inlineMarkdownSegmentsCache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
     const segments: MathSegment[] = [];
     let cursor: number = 0;
     let serial: number = 0;
@@ -9158,6 +9181,10 @@ struct Index {
     if (segments.length === 0) {
       segments.push(new MathSegment(`${baseId}:text:0`, 'text', this.normalizeInlineMarkdownText(text)));
     }
+    if (this.inlineMarkdownSegmentsCache.size >= 128) {
+      this.inlineMarkdownSegmentsCache.clear();
+    }
+    this.inlineMarkdownSegmentsCache.set(cacheKey, segments);
     return segments;
   }
 
@@ -10852,6 +10879,7 @@ struct Index {
       .layoutWeight(1)
       .width('100%')
       .edgeEffect(EdgeEffect.Spring)
+      .cachedCount(6)
 
       // Account status row — always above settings
       if (this.accountLoggedIn) {
@@ -11520,6 +11548,7 @@ struct Index {
         .height(Math.min(230, this.diffFiles.length * 58))
         .margin({ top: 8 })
         .scrollBar(BarState.Off)
+        .cachedCount(6)
 
         Row() {
           Text('当前')
@@ -11593,6 +11622,7 @@ struct Index {
         .width('100%')
         .margin({ top: 8 })
         .scrollBar(BarState.Off)
+        .cachedCount(6)
       }
     }
     .height('100%')
@@ -13021,7 +13051,7 @@ struct Index {
             .constraintSize({ minHeight: '80vh', maxHeight: '92vh' })
             .padding(20)
             .backgroundColor(this.themeElevatedBackground())
-            .borderRadius(16)
+            .borderRadius(24)
             .shadow({ radius: this.isDarkMode ? 0 : 24, color: '#33000000', offsetX: 0, offsetY: 8 })
           }
           .width('100%')

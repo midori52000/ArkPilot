@@ -182,9 +182,10 @@ function saveProvidersToStore(providers: ProviderRecord[]): void {
       break;
     }
   }
+  // 先同步 native catalog；若失败则中止，不落盘（避免文件与内存/native 状态不一致）
+  providerConfigStore.syncToNativeCatalog(defs, creds);
   providerConfigStore.saveDefinitions(defs, activeId);
   providerConfigStore.saveCredentials(creds);
-  providerConfigStore.syncToNativeCatalog(defs, creds);
 }
 
 export class ApiManagementService {
@@ -337,10 +338,9 @@ export class ApiManagementService {
     const startTime = Date.now();
 
     // Strategy 1: GET /models
+    const modelsUrl = `${trimmedBaseUrl}/models`;
+    const httpRequest = http.createHttp();
     try {
-      const modelsUrl = `${trimmedBaseUrl}/models`;
-      const httpRequest = http.createHttp();
-
       const modelsResponse = await httpRequest.request(modelsUrl, {
         method: http.RequestMethod.GET,
         header: {
@@ -362,13 +362,14 @@ export class ApiManagementService {
       }
     } catch (e) {
       // /models failed, fall through to strategy 2
+    } finally {
+      httpRequest.destroy();
     }
 
     // Strategy 2: POST /chat/completions minimal probe
+    const chatUrl = `${trimmedBaseUrl}/chat/completions`;
+    const httpRequest2 = http.createHttp();
     try {
-      const chatUrl = `${trimmedBaseUrl}/chat/completions`;
-      const httpRequest = http.createHttp();
-
       const probeMsg: ChatProbeMessage = new ChatProbeMessage();
       probeMsg.role = 'user';
       probeMsg.content = 'hi';
@@ -378,7 +379,7 @@ export class ApiManagementService {
       probeObj.max_tokens = 1;
       const probeBody = JSON.stringify(probeObj);
 
-      const chatResponse = await httpRequest.request(chatUrl, {
+      const chatResponse = await httpRequest2.request(chatUrl, {
         method: http.RequestMethod.POST,
         header: {
           'Authorization': `Bearer ${trimmedApiKey}`,
@@ -422,6 +423,8 @@ export class ApiManagementService {
         `连接失败：${e}`,
         0, ''
       );
+    } finally {
+      httpRequest2.destroy();
     }
   }
 
@@ -465,8 +468,8 @@ export class ApiManagementService {
     }
 
     const startTime: number = Date.now();
+    const httpRequest = http.createHttp();
     try {
-      const httpRequest = http.createHttp();
       let response: http.HttpResponse;
       if (wireApi === 'anthropic') {
         response = await httpRequest.request(chatUrl, {
@@ -516,6 +519,8 @@ export class ApiManagementService {
       return new ChatProbeResult(false, latency, status, errMsg);
     } catch (e) {
       return new ChatProbeResult(false, Date.now() - startTime, 0, `${e}`);
+    } finally {
+      httpRequest.destroy();
     }
   }
 
@@ -540,31 +545,35 @@ export class ApiManagementService {
 
       try {
         const httpRequest = http.createHttp();
-        const response = await httpRequest.request(`${trimmedUrl}/models`, {
-          method: http.RequestMethod.GET,
-          header: {
-            'Authorization': `Bearer ${provider.apiKey}`,
-            'Content-Type': 'application/json'
-          },
-          connectTimeout: 8000,
-          readTimeout: 8000
-        });
+        try {
+          const response = await httpRequest.request(`${trimmedUrl}/models`, {
+            method: http.RequestMethod.GET,
+            header: {
+              'Authorization': `Bearer ${provider.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            connectTimeout: 8000,
+            readTimeout: 8000
+          });
 
-        const latency = Date.now() - startTime;
-        const modelsOk = response.responseCode === 200;
+          const latency = Date.now() - startTime;
+          const modelsOk = response.responseCode === 200;
 
-        // /models 通过后再测真实对话
-        let chatProbe: ChatProbeResult | null = null;
-        if (modelsOk) {
-          chatProbe = await this.probeChatEndpoint(
-            trimmedUrl, provider.apiKey, provider.model, provider.wireApi
-          );
+          // /models 通过后再测真实对话
+          let chatProbe: ChatProbeResult | null = null;
+          if (modelsOk) {
+            chatProbe = await this.probeChatEndpoint(
+              trimmedUrl, provider.apiKey, provider.model, provider.wireApi
+            );
+          }
+
+          results.push(new EndpointSpeedResult(
+            trimmedUrl, latency, response.responseCode,
+            modelsOk, '', Date.now(), chatProbe
+          ));
+        } finally {
+          httpRequest.destroy();
         }
-
-        results.push(new EndpointSpeedResult(
-          trimmedUrl, latency, response.responseCode,
-          modelsOk, '', Date.now(), chatProbe
-        ));
       } catch (e) {
         results.push(new EndpointSpeedResult(
           trimmedUrl, 0, 0, false, `${e}`, Date.now()
@@ -627,40 +636,44 @@ export class ApiManagementService {
 
     try {
       const httpRequest = http.createHttp();
-      const response = await httpRequest.request(modelsUrl, {
-        method: http.RequestMethod.GET,
-        header: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        connectTimeout: DEFAULT_TIMEOUT_MS,
-        readTimeout: DEFAULT_TIMEOUT_MS
-      });
-
-      if (response.responseCode !== 200) {
-        throw new ApiError(ApiErrorCode.MODEL_FETCH_FAILED,
-          `${response.responseCode}`,
-          `获取模型列表失败，HTTP ${response.responseCode}`);
-      }
-
-      const body = response.result as string;
-      const models: string[] = [];
       try {
-        const parsed: ModelsData = JSON.parse(body) as ModelsData;
-        const dataArr: ModelIdEntry[] = parsed.data;
-        for (let i = 0; i < dataArr.length; i++) {
-          const id = dataArr[i].id;
-          if (id.length > 0) {
-            models.push(id);
-            if (models.length >= 100) break;
-          }
-        }
-        models.sort();
-      } catch (e2) {
-        // ignore
-      }
+        const response = await httpRequest.request(modelsUrl, {
+          method: http.RequestMethod.GET,
+          header: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          connectTimeout: DEFAULT_TIMEOUT_MS,
+          readTimeout: DEFAULT_TIMEOUT_MS
+        });
 
-      return models;
+        if (response.responseCode !== 200) {
+          throw new ApiError(ApiErrorCode.MODEL_FETCH_FAILED,
+            `${response.responseCode}`,
+            `获取模型列表失败，HTTP ${response.responseCode}`);
+        }
+
+        const body = response.result as string;
+        const models: string[] = [];
+        try {
+          const parsed: ModelsData = JSON.parse(body) as ModelsData;
+          const dataArr: ModelIdEntry[] = parsed.data;
+          for (let i = 0; i < dataArr.length; i++) {
+            const id = dataArr[i].id;
+            if (id.length > 0) {
+              models.push(id);
+              if (models.length >= 100) break;
+            }
+          }
+          models.sort();
+        } catch (e2) {
+          // ignore
+        }
+
+        return models;
+      } finally {
+        httpRequest.destroy();
+      }
     } catch (e) {
       if (e instanceof ApiError) throw e;
       throw new ApiError(ApiErrorCode.MODEL_FETCH_FAILED,
@@ -692,41 +705,45 @@ export class ApiManagementService {
 
     try {
       const httpRequest = http.createHttp();
-      const response = await httpRequest.request(subscriptionUrl, {
-        method: http.RequestMethod.GET,
-        header: {
-          'Authorization': `Bearer ${provider.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        connectTimeout: DEFAULT_TIMEOUT_MS,
-        readTimeout: DEFAULT_TIMEOUT_MS
-      });
+      try {
+        const response = await httpRequest.request(subscriptionUrl, {
+          method: http.RequestMethod.GET,
+          header: {
+            'Authorization': `Bearer ${provider.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          connectTimeout: DEFAULT_TIMEOUT_MS,
+          readTimeout: DEFAULT_TIMEOUT_MS
+        });
 
-      if (response.responseCode !== 200) {
+        if (response.responseCode !== 200) {
+          return new UsageQueryResult(
+            false, provider.name, '', 0, 0, 0, 'USD', '',
+            Date.now(), `HTTP ${response.responseCode}`
+          );
+        }
+
+        const data: OpenAIUsageData = JSON.parse(response.result as string) as OpenAIUsageData;
+        const planTitle = data.plan.title.length > 0 ? data.plan.title : 'Unknown Plan';
+        const hardLimit: number = data.hard_limit_usd;
+        const totalUsage: number = data.total_usage;
+        const softLimit = data.soft_limit_usd.length > 0 ? data.soft_limit_usd : 'N/A';
+        const hardLimitStr = data.hard_limit_usd.toString();
+
         return new UsageQueryResult(
-          false, provider.name, '', 0, 0, 0, 'USD', '',
-          Date.now(), `HTTP ${response.responseCode}`
+          true, provider.name,
+          planTitle,
+          hardLimit,
+          totalUsage,
+          hardLimit - totalUsage,
+          'USD',
+          `软限制: ${softLimit} / 硬限制: ${hardLimitStr}`,
+          Date.now(),
+          ''
         );
+      } finally {
+        httpRequest.destroy();
       }
-
-      const data: OpenAIUsageData = JSON.parse(response.result as string) as OpenAIUsageData;
-      const planTitle = data.plan.title.length > 0 ? data.plan.title : 'Unknown Plan';
-      const hardLimit: number = data.hard_limit_usd;
-      const totalUsage: number = data.total_usage;
-      const softLimit = data.soft_limit_usd.length > 0 ? data.soft_limit_usd : 'N/A';
-      const hardLimitStr = data.hard_limit_usd.toString();
-
-      return new UsageQueryResult(
-        true, provider.name,
-        planTitle,
-        hardLimit,
-        totalUsage,
-        hardLimit - totalUsage,
-        'USD',
-        `软限制: ${softLimit} / 硬限制: ${hardLimitStr}`,
-        Date.now(),
-        ''
-      );
     } catch (e) {
       return new UsageQueryResult(
         false, provider.name, '', 0, 0, 0, 'USD', '',
