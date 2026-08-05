@@ -63,6 +63,7 @@ export default class EntryAbility extends UIAbility {
 
     try {
       huaweiAccountService.init(this.context);
+      void huaweiAccountService.verifySystemAccountState();
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to init huawei account service. Cause: %{public}s', JSON.stringify(err));
     }
@@ -124,6 +125,11 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     // Ability has brought to foreground
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onForeground');
+    try {
+      void huaweiAccountService.verifySystemAccountState();
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'Failed to verify huawei account state. Cause: %{public}s', JSON.stringify(err));
+    }
   }
 
   onBackground(): void {

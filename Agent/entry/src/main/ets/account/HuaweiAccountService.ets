@@ -1,5 +1,5 @@
 import { authentication, loginComponentManager } from '@kit.AccountKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, commonEventManager } from '@kit.BasicServicesKit';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -19,6 +19,7 @@ export class HuaweiAccountService {
   private prefs: preferences.Preferences | null = null;
   private session: HuaweiAccountSession | null = null;
   private initialized: boolean = false;
+  private subscriber: commonEventManager.CommonEventSubscriber | null = null;
 
   init(context: common.Context): void {
     if (this.initialized) {
@@ -33,6 +34,7 @@ export class HuaweiAccountService {
       hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'init preferences failed: %{public}s', `${err}`);
     }
     this.restoreSession();
+    this.subscribeAccountEvents();
   }
 
   ensureInit(context: common.Context): void {
@@ -174,6 +176,94 @@ export class HuaweiAccountService {
       const bizErr = err as BusinessError;
       hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'cancel authorization failed: %{public}s, code=%{public}d', `${bizErr}`, bizErr.code);
       return false;
+    }
+  }
+
+  /**
+   * Subscribes to the HUAWEI ID account login/logout broadcast events so that
+   * the app follows the system account state. When the user signs out of the
+   * HUAWEI ID on the device, the app automatically signs out locally.
+   */
+  subscribeAccountEvents(): void {
+    if (this.subscriber !== null) {
+      return;
+    }
+    const subscribeInfo: commonEventManager.CommonEventSubscribeInfo = {
+      events: [
+        commonEventManager.Support.COMMON_EVENT_DISTRIBUTED_ACCOUNT_LOGIN,
+        commonEventManager.Support.COMMON_EVENT_DISTRIBUTED_ACCOUNT_LOGOUT
+      ]
+    };
+    try {
+      commonEventManager.createSubscriber(subscribeInfo).then((commonEventSubscriber: commonEventManager.CommonEventSubscriber) => {
+        this.subscriber = commonEventSubscriber;
+        commonEventManager.subscribe(commonEventSubscriber, (err: BusinessError, data: commonEventManager.CommonEventData) => {
+          if (err) {
+            hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'subscribe account event failed: code=%{public}d, msg=%{public}s', err.code, `${err.message}`);
+            return;
+          }
+          if (data.event === commonEventManager.Support.COMMON_EVENT_DISTRIBUTED_ACCOUNT_LOGOUT) {
+            hilog.info(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, '%{public}s', 'HUAWEI ID logged out on system, sign out locally');
+            this.handleSystemAccountLoggedOut();
+          } else if (data.event === commonEventManager.Support.COMMON_EVENT_DISTRIBUTED_ACCOUNT_LOGIN) {
+            hilog.info(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, '%{public}s', 'HUAWEI ID logged in on system');
+          }
+        });
+      }).catch((err: BusinessError) => {
+        hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'create account subscriber failed: code=%{public}d, msg=%{public}s', err.code, `${err.message}`);
+      });
+    } catch (err) {
+      hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'subscribe account events failed: %{public}s', `${err}`);
+    }
+  }
+
+  private handleSystemAccountLoggedOut(): void {
+    if (!this.isLoggedIn) {
+      return;
+    }
+    this.session = null;
+    this.isLoggedIn = false;
+    this.lastErrorCode = 0;
+    if (this.prefs !== null) {
+      try {
+        this.prefs.deleteSync(ACCOUNT_SESSION_KEY);
+        this.prefs.deleteSync(ACCOUNT_LAST_OPENID_KEY);
+        void this.prefs.flush();
+      } catch (err) {
+        hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'system logout clear failed: %{public}s', `${err}`);
+      }
+    }
+    AppStorage.setOrCreate<boolean>(APPSTORAGE_LOGGED_IN_KEY, false);
+  }
+
+  /**
+   * Verifies whether the system HUAWEI ID is still logged in for the locally
+   * stored account. Called at app launch and when returning to foreground.
+   * If the user signed out of the HUAWEI ID on the device, the local session
+   * is cleared so the app returns to the login gate.
+   */
+  async verifySystemAccountState(): Promise<void> {
+    if (!this.isLoggedIn || this.session === null) {
+      return;
+    }
+    const openID: string = this.session.openID;
+    if (openID.length === 0) {
+      return;
+    }
+    try {
+      const provider = new authentication.HuaweiIDProvider();
+      const request: authentication.StateRequest = {
+        idType: authentication.IdType.OPEN_ID,
+        idValue: openID
+      };
+      const result: authentication.StateResult = await provider.getHuaweiIDState(request);
+      if (result.state === authentication.State.UNLOGGED_IN) {
+        hilog.info(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, '%{public}s', 'system HUAWEI ID not logged in, clear local session');
+        this.handleSystemAccountLoggedOut();
+      }
+    } catch (err) {
+      const bizErr = err as BusinessError;
+      hilog.error(ACCOUNT_SERVICE_DOMAIN, ACCOUNT_SERVICE_TAG, 'verify system account state failed: code=%{public}d, msg=%{public}s', bizErr.code, `${bizErr.message}`);
     }
   }
 }
