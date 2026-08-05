@@ -889,13 +889,13 @@ struct ArkPilotProjectCreateDialog {
         .copyOption(CopyOptions.None)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#18181B')
+        .fontColor(indexThemeColor('#18181B', '#F8FAFC'))
         .width('100%')
 
       Text('同步文件夹是项目和本地目录之间的交换入口。项目在应用内运行，需要时再手动与该文件夹导入或导出项目文件。')
         .copyOption(CopyOptions.None)
         .fontSize(12)
-        .fontColor('#4E5969')
+        .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
         .lineHeight(18)
         .width('100%')
         .margin({ top: 8 })
@@ -904,14 +904,14 @@ struct ArkPilotProjectCreateDialog {
         Text('• 导出项目内容：创建项目后，可以在项目菜单中，把应用内该项目文件夹内容导出到同步文件夹。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#4E5969')
+          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
           .lineHeight(18)
           .width('100%')
 
         Text('• 导入文件夹内容：可以在项目菜单中，把同步文件夹中的内容导入到项目文件夹内。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#4E5969')
+          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
           .lineHeight(18)
           .width('100%')
           .margin({ top: 6 })
@@ -919,7 +919,7 @@ struct ArkPilotProjectCreateDialog {
         Text('• 未选择时：仅使用应用内项目目录，可以在项目菜单中重新关联同步文件夹。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor('#4E5969')
+          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
           .lineHeight(18)
           .width('100%')
           .margin({ top: 6 })
@@ -929,6 +929,8 @@ struct ArkPilotProjectCreateDialog {
     }
     .width(292)
     .padding({ left: 14, right: 14, top: 14, bottom: 14 })
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .borderRadius(16)
   }
 
   build() {
@@ -999,8 +1001,8 @@ struct ArkPilotProjectCreateDialog {
             .textAlign(TextAlign.Center)
             .width(22)
             .height(22)
-            .backgroundColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF')
-            .border({ width: 1, color: '#D1D5DB' })
+            .backgroundColor(indexThemeColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF', this.shouldShowSourceInfo() ? '#334155' : '#1E293B'))
+            .border({ width: 1, color: indexThemeColor('#D1D5DB', '#475569') })
             .borderRadius(11)
             .onHover((isHover: boolean) => {
               this.sourceInfoHovering = isHover;
@@ -1022,7 +1024,7 @@ struct ArkPilotProjectCreateDialog {
               mask: false,
               autoCancel: true,
               enableArrow: true,
-              popupColor: '#FFFFFF',
+              popupColor: indexThemeColor('#FFFFFF', '#1E293B'),
               shadow: { radius: 16, color: '#26000000', offsetX: 0, offsetY: 6 },
               onStateChange: (event) => {
                 if (!event.isVisible) {
@@ -1049,7 +1051,7 @@ struct ArkPilotProjectCreateDialog {
       .width('100%')
       .padding(14)
       .margin({ top: 12 })
-      .backgroundColor('#F7F8FA')
+      .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
       .borderRadius(12)
 
       Button(this.canSelectExternalFolder() ? '选择同步文件夹' : '启用下载目录同步')
@@ -1057,8 +1059,8 @@ struct ArkPilotProjectCreateDialog {
         .width('100%')
         .height(40)
         .fontSize(14)
-        .fontColor('#18181B')
-        .backgroundColor('#F2F3F5')
+        .fontColor(indexThemeColor('#18181B', '#F8FAFC'))
+        .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
         .borderRadius(12)
         .margin({ top: 12 })
         .onClick(() => {
@@ -1071,8 +1073,8 @@ struct ArkPilotProjectCreateDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor('#182431')
-          .backgroundColor('#F2F3F5')
+          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -1099,7 +1101,7 @@ struct ArkPilotProjectCreateDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
     .borderRadius(24)
   }
 }
