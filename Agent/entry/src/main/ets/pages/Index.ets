@@ -1285,7 +1285,7 @@ struct ArkPilotDeleteDialog {
           .height(40)
           .fontSize(14)
           .fontColor('#FFFFFF')
-          .backgroundColor('#E84026')
+          .backgroundColor('#F97373')
           .borderRadius(20)
           .margin({ left: 12 })
           .onClick(() => {
@@ -1373,7 +1373,7 @@ struct ArkPilotLogoutDialog {
           .height(40)
           .fontSize(14)
           .fontColor('#FFFFFF')
-          .backgroundColor('#E84026')
+          .backgroundColor('#F97373')
           .borderRadius(20)
           .margin({ left: 12 })
           .onClick(() => {
@@ -13029,7 +13029,7 @@ struct Index {
             .constraintSize({ minHeight: '80vh', maxHeight: '92vh' })
             .padding(20)
             .backgroundColor(this.themeElevatedBackground())
-            .borderRadius(16)
+            .borderRadius(24)
             .shadow({ radius: this.isDarkMode ? 0 : 24, color: '#33000000', offsetX: 0, offsetY: 8 })
           }
           .width('100%')

@@ -894,7 +894,7 @@ struct AddProviderPage {
             .borderRadius(8)
 
           Text(toast.message)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor(this.textPrimary())
             .margin({ left: 10 })
@@ -910,10 +910,10 @@ struct AddProviderPage {
         .margin({ top: 10 })
       }, (toast: UiToastItem) => `${toast.id}`)
     }
+    .width('100%')
+    .padding({ left: 14, right: 14 })
     .alignItems(HorizontalAlign.End)
     .position({ x: 0, y: 28 })
-    .width('100%')
-    .padding({ right: 28 })
   }
 
   build() {
