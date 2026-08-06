@@ -72,6 +72,8 @@ import {
   ReconcileResult
 } from '../skills/SkillTypes';
 import { SkillError, SkillsBackendService } from '../skills/SkillsBackendService';
+import { aigcProvenanceStore, AigcRecordTurnParams } from './AigcProvenanceStore';
+import { AigcCommandRecord } from './AigcProvenance';
 
 export type CodexMessageRole = 'user' | 'assistant' | 'system' | 'reasoning' | 'command' | 'tool' | 'file' | 'search' | 'plan' | 'image' | 'hook' | 'review';
 export type CodexTurnStatus = 'completed' | 'failed' | 'inProgress' | 'interrupted';
@@ -1216,6 +1218,8 @@ class CodexThreadRecord {
   lastCompactionAtMs: number = 0;
   lastCompactionTurnId: string = '';
   updatedAt: string = '';
+  /** AIGC provenance：turn 开始前的工作区快照（relPath → 轻量指纹），用于 turn 结束后对比找文件变化。 */
+  aigcBaselineFiles: Map<string, string> = new Map<string, string>();
 
   constructor(localKey: string, title: string) {
     this.localKey = localKey;
@@ -1476,6 +1480,8 @@ export class CodexBackend {
     approveRequest.turnId = request.turnId;
     approveRequest.itemId = request.itemId;
     approveRequest.kind = request.kind;
+    // AIGC provenance：收集被批准的命令（仅 kind === 'command'）
+    aigcProvenanceStore.collectApproval(request.threadId, request.turnId, request.kind, request.detail);
     approvalApproveNative(JSON.stringify(approveRequest));
     this.notifyListeners();
   }
@@ -2877,7 +2883,25 @@ export class CodexBackend {
     thread.changedFiles = 'å°šæœªäº§ç”Ÿæ–‡ä»¶æ”¹åŠ¨';
     thread.summaryTitle = '';
     thread.summaryPoints = [];
+    // AIGC provenance：turn 开始前对工作区做快照，turn 结束后对比以捕获文件变化
+    // （不依赖 Rust 的 FileChange diff，能覆盖 shell/脚本生成的文件）
+    this.captureAigcBaseline(thread);
     return this.snapshotForThread(thread, 'inProgress');
+  }
+
+  /** AIGC provenance：生成 turn 开始前的工作区快照。 */
+  private captureAigcBaseline(thread: CodexThreadRecord): void {
+    try {
+      const workspaceRoot: string = thread.cwd ?? '';
+      if (workspaceRoot.trim().length === 0) {
+        thread.aigcBaselineFiles = new Map<string, string>();
+        return;
+      }
+      thread.aigcBaselineFiles = aigcProvenanceStore.snapshotWorkspace(workspaceRoot);
+    } catch (err) {
+      this.logInfo(`captureAigcBaseline failed: ${err}`);
+      thread.aigcBaselineFiles = new Map<string, string>();
+    }
   }
 
   private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
@@ -2890,6 +2914,8 @@ export class CodexBackend {
         thread.lastTurnStatus = 'interrupted';
         const interruptedSnapshot: CodexTurnResult = this.snapshotForThread(thread, 'interrupted', pendingTurn.turnId);
         this.emitTurnUpdate(thread, pendingTurn, interruptedSnapshot);
+        // AIGC provenance：取消分支也要落库生成事件
+        this.recordAigcTurn(thread, pendingTurn, 'interrupted');
         thread.activeTurn = null;
         pendingTurn.resolveCompletion(interruptedSnapshot);
         return interruptedSnapshot;
@@ -2902,6 +2928,8 @@ export class CodexBackend {
         timeoutSnapshot.summaryTitle = '轮询超时';
         timeoutSnapshot.summaryPoints = ['API 响应时间过长，已自动中断。请稍后重试或检查网络连接。'];
         this.emitTurnUpdate(thread, pendingTurn, timeoutSnapshot);
+        // AIGC provenance：超时分支也要落库生成事件
+        this.recordAigcTurn(thread, pendingTurn, 'failed');
         thread.activeTurn = null;
         pendingTurn.resolveCompletion(timeoutSnapshot);
         return timeoutSnapshot;
@@ -3110,9 +3138,102 @@ export class CodexBackend {
     if (this.shouldDrainLateTurnUpdates(thread)) {
       finalSnapshot = await this.recoverDiffFromThreadHistory(thread, pendingTurn, finalSnapshot);
     }
+    // AIGC provenance：正常终态统一在此记录生成事件
+    this.recordAigcTurn(thread, pendingTurn, finalSnapshot.status);
     thread.activeTurn = null;
     pendingTurn.resolveCompletion(finalSnapshot);
     return finalSnapshot;
+  }
+
+  /**
+   * AIGC provenance：记录一个 turn 的生成事件（命令 + 文件 diff 归因）。
+   * 主动快照 diff 字段（beginLocalTurn 每次清空），取命令缓冲。
+   */
+  private recordAigcTurn(thread: CodexThreadRecord, pendingTurn: PendingTurnState, status: string): void {
+    try {
+      const workspaceRoot: string = thread.cwd ?? '';
+      if (workspaceRoot.trim().length === 0) {
+        return;
+      }
+      // 合并两个来源的文件变化：
+      // 1. Rust diff（thread.diffLines/changedFiles）—— 覆盖 file_writer/apply_patch 工具写的文件
+      // 2. turn 前后快照对比 —— 覆盖 shell/脚本生成的文件（echo > file 等），不依赖 Rust diff
+      const changedFilePaths: string[] = this.uniqueDiffFilePaths(thread);
+      const snapshotChanges: string[] = this.diffAigcBaseline(thread, workspaceRoot);
+      const merged: string[] = this.mergeChangedFilePaths(changedFilePaths, snapshotChanges);
+      const commands: AigcCommandRecord[] = aigcProvenanceStore.takePendingCommands(
+        thread.remoteThreadId,
+        pendingTurn.turnId
+      );
+      const turnRecord: AigcRecordTurnParams = {
+        workspaceRoot,
+        threadId: thread.remoteThreadId,
+        turnId: pendingTurn.turnId,
+        status,
+        promptTitle: thread.summaryTitle,
+        changedFilePaths: merged,
+        commands
+      };
+      aigcProvenanceStore.recordTurn(turnRecord);
+    } catch (err) {
+      this.logInfo(`recordAigcTurn failed: ${err}`);
+    }
+  }
+
+  /** AIGC provenance：对比 turn 前后工作区快照，返回新增/修改的文件路径。 */
+  private diffAigcBaseline(thread: CodexThreadRecord, workspaceRoot: string): string[] {
+    try {
+      const afterSnapshot: Map<string, string> = aigcProvenanceStore.snapshotWorkspace(workspaceRoot);
+      return aigcProvenanceStore.diffWorkspaceSnapshot(thread.aigcBaselineFiles, afterSnapshot);
+    } catch (err) {
+      this.logInfo(`diffAigcBaseline failed: ${err}`);
+      return [];
+    }
+  }
+
+  /** AIGC provenance：合并两个文件路径列表并去重。 */
+  private mergeChangedFilePaths(first: string[], second: string[]): string[] {
+    const result: string[] = [];
+    const seen: Set<string> = new Set<string>();
+    const all: string[] = first.concat(second);
+    all.forEach((path: string) => {
+      const normalized: string = path.replace(/\\/g, '/');
+      if (normalized.length > 0 && normalized !== '.aigc_list.json' && !seen.has(normalized)) {
+        seen.add(normalized);
+        result.push(normalized);
+      }
+    });
+    return result;
+  }
+
+  /** 从 thread.diffLines 去重提取变更文件相对路径；空则回退 changedFiles 逗号串。 */
+  private uniqueDiffFilePaths(thread: CodexThreadRecord): string[] {
+    const result: string[] = [];
+    const seen: Set<string> = new Set<string>();
+    if (thread.diffLines.length > 0) {
+      thread.diffLines.forEach((line: CodexDiffLine) => {
+        const filePath: string = line.filePath ?? '';
+        if (filePath.length > 0 && !seen.has(filePath)) {
+          seen.add(filePath);
+          result.push(filePath);
+        }
+      });
+    }
+    if (result.length > 0) {
+      return result;
+    }
+    const changedFilesText: string = thread.changedFiles ?? '';
+    if (changedFilesText.length === 0 || changedFilesText === NO_FILE_CHANGES_TEXT || changedFilesText === UNRECOGNIZED_CHANGED_FILES_TEXT) {
+      return [];
+    }
+    changedFilesText.split(',').forEach((part: string) => {
+      const trimmed: string = part.trim();
+      if (trimmed.length > 0 && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        result.push(trimmed);
+      }
+    });
+    return result;
   }
 
   private shouldDrainLateTurnUpdates(thread: CodexThreadRecord): boolean {

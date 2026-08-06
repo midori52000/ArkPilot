@@ -27,6 +27,9 @@ import { providerCatalogService } from '../backend/ProviderCatalogService';
 import { SessionSummary, WorkspaceAccessKind, WorkspacePermissionState, TurnTokenUsage, TokenUsageAggregate, TokenUsageBreakdown, WorkspaceItem, WorkspaceBindingDraft, WorkspaceDirectorySelection, SelectorOption, DailyTokenSnapshot, ProjectRecord, CodexContextManagementSnapshot } from '../backend/ConsoleModels';
 import { StoredWorkspaceItem, workspaceBindingStore } from '../backend/WorkspaceBindingStore';
 import { projectStore } from '../backend/ProjectStore';
+import { AigcExportInjector } from '../backend/AigcInjector';
+import { AIGC_MANIFEST_FILE_NAME } from '../backend/AigcProvenance';
+import { aigcProvenanceStore } from '../backend/AigcProvenanceStore';
 import { common, OpenLinkOptions, Want, wantConstant } from '@kit.AbilityKit';
 import router from '@ohos.router';
 import pasteboard from '@ohos.pasteboard';
@@ -5001,7 +5004,11 @@ struct Index {
     return `${this.normalizedDirectoryUri(parentUri)}/${this.encodeUriPathSegment(childName)}`;
   }
 
-  private copyProjectFileToUri(sourcePath: string, targetUri: string): void {
+  private async copyProjectFileToUri(sourcePath: string, targetUri: string, injector: AigcExportInjector | null = null): Promise<void> {
+    // AIGC provenance：命中清单的文件由注入器写导出副本（源文件不动）
+    if (injector !== null && await injector.injectIfNeeded(sourcePath, targetUri)) {
+      return;
+    }
     const targetPath: string = this.fileUriToFsPath(targetUri);
     let source: fileIo.File | null = null;
     let target: fileIo.File | null = null;
@@ -5039,7 +5046,7 @@ struct Index {
     }
   }
 
-  private copyProjectDirectoryToUri(sourceRoot: string, targetRootUri: string): number {
+  private async copyProjectDirectoryToUri(sourceRoot: string, targetRootUri: string, injector: AigcExportInjector | null = null): Promise<number> {
     const targetRootPath: string = this.fileUriToFsPath(targetRootUri);
     try {
       const sourceStat = fileIo.statSync(sourceRoot);
@@ -5067,9 +5074,9 @@ struct Index {
       try {
         const stat = fileIo.statSync(sourcePath);
         if (stat.isDirectory()) {
-          copiedCount += this.copyProjectDirectoryToUri(sourcePath, targetUri);
+          copiedCount += await this.copyProjectDirectoryToUri(sourcePath, targetUri, injector);
         } else if (stat.isFile()) {
-          this.copyProjectFileToUri(sourcePath, targetUri);
+          await this.copyProjectFileToUri(sourcePath, targetUri, injector);
           copiedCount += 1;
         }
       } catch (err) {
@@ -5248,7 +5255,11 @@ struct Index {
       } catch (activationErr) {
         hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'activate source permission failed: %{public}s', this.describeError(activationErr));
       }
-      const copiedCount: number = this.copyProjectDirectoryToUri(projectPath, sourceUri);
+      // AIGC provenance：构造导出注入器，对清单命中的文件在导出副本上注入隐式标识。
+      // .aigc_list.json 自身由 copyProjectDirectoryToUri 原样导出（injectIfNeeded 对其返回 false）
+      const codexHome: string = (AppStorage.get('codexHome') as string) ?? '';
+      const injector: AigcExportInjector | null = AigcExportInjector.fromSourceRoot(projectPath, codexHome);
+      const copiedCount: number = await this.copyProjectDirectoryToUri(projectPath, sourceUri, injector);
       promptAction.showToast({ message: `已同步 ${copiedCount.toString()} 个文件到${targetLabel}`, duration: 2600 });
     } catch (err) {
       hilog.error(INDEX_DOMAIN, INDEX_TAG, 'sync project to import source failed: %{public}s', this.describeError(err));
@@ -5277,9 +5288,30 @@ struct Index {
       const sourcePath: string = this.fileUriToFsPath(sourceUri);
       const result: DirectoryMirrorResult = this.mirrorDirectoryByPath(sourcePath, projectPath);
       promptAction.showToast({ message: `已导入 ${result.copiedFiles.toString()} 个文件，删除 ${result.deletedEntries.toString()} 个多余条目`, duration: 3000 });
+      // AIGC provenance：导入回流时合并外部清单，保留已标注文件的标识记录
+      this.mergeAigcManifestFromImport(sourcePath, projectPath);
     } catch (err) {
       hilog.error(INDEX_DOMAIN, INDEX_TAG, 'import project from sync folder failed: %{public}s', this.describeError(err));
       promptAction.showToast({ message: `导入失败: ${this.describeError(err)}；同步文件夹可能已被删除或授权失效，请重新选择同步文件夹`, duration: 3600 });
+    }
+  }
+
+  /** AIGC provenance：导入后合并外部清单进项目目录清单。 */
+  private mergeAigcManifestFromImport(sourceRootPath: string, projectPath: string): void {
+    try {
+      const importedManifestPath: string = `${sourceRootPath}/${AIGC_MANIFEST_FILE_NAME}`;
+      let rawText: string = '';
+      try {
+        fileIo.statSync(importedManifestPath);
+        rawText = fileIo.readTextSync(importedManifestPath);
+      } catch (_err) {
+      }
+      if (rawText.trim().length === 0) {
+        return;
+      }
+      aigcProvenanceStore.mergeImportedManifest(projectPath, rawText);
+    } catch (err) {
+      hilog.warn(INDEX_DOMAIN, INDEX_TAG, 'mergeAigcManifestFromImport failed: %{public}s', this.describeError(err));
     }
   }
 
