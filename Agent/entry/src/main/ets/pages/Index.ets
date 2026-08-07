@@ -3879,7 +3879,7 @@ struct Index {
       return new ChatMessage(item.messageId, this.displayBrandText(item.author), item.role, this.displayBrandText(item.content), item.timestamp, item.itemType, item.status, item.metadata);
     });
     const displayMessages: ChatMessage[] = preserveDisplayState
-      ? this.preserveStableMessageTimestamps(this.mergeStreamingDisplayMessages(rawMessages, result))
+      ? this.mergeDisplayMessagesLinear(rawMessages, result)
       : rawMessages;
     this.updateLiveThinking(result, displayMessages);
     this.messages = displayMessages.filter((item: ChatMessage) => {
@@ -3921,156 +3921,56 @@ struct Index {
     this.scheduleMessageScrollToBottom();
   }
 
-  private preserveStableMessageTimestamps(messages: ChatMessage[]): ChatMessage[] {
-    if (this.messages.length === 0 || messages.length === 0) {
-      return messages;
-    }
-    return messages.map((incoming: ChatMessage) => {
-      const existing: ChatMessage | undefined = this.findStableTimestampMessage(incoming);
-      if (existing === undefined || existing.timestamp.trim().length === 0 || existing.timestamp === incoming.timestamp) {
-        return incoming;
-      }
-      return new ChatMessage(
-        incoming.id,
-        incoming.author,
-        incoming.role,
-        incoming.content,
-        existing.timestamp,
-        incoming.itemType,
-        incoming.status,
-        incoming.metadata
-      );
-    });
-  }
-
-  private findStableTimestampMessage(incoming: ChatMessage): ChatMessage | undefined {
-    const exact: ChatMessage | undefined = this.messages.find((message: ChatMessage) => message.id === incoming.id);
-    if (exact !== undefined) {
-      return exact;
-    }
+  /**
+   * O(N) 单遍重建显示消息（替代旧的 O(N²) mergeStreamingDisplayMessages + preserveStableMessageTimestamps）：
+   * 一次构建现有消息 id 索引，保留历史稳定 timestamp，仅对当前轮流式输出做内容合并。
+   */
+  private mergeDisplayMessagesLinear(rawMessages: ChatMessage[], result: CodexTurnResult): ChatMessage[] {
+    const existingById: Map<string, ChatMessage> = new Map<string, ChatMessage>();
     for (let index: number = 0; index < this.messages.length; index += 1) {
-      const existing: ChatMessage = this.messages[index];
-      if (this.isSameStreamingAssistantMessage(existing, incoming)) {
-        return existing;
+      const message: ChatMessage = this.messages[index];
+      if (!existingById.has(message.id)) {
+        existingById.set(message.id, message);
       }
     }
-    return undefined;
-  }
-
-  private mergeStreamingDisplayMessages(rawMessages: ChatMessage[], result: CodexTurnResult): ChatMessage[] {
-    if (result.status !== 'inProgress') {
-      return rawMessages;
-    }
-    const merged: ChatMessage[] = rawMessages.map((item: ChatMessage, index: number) => {
-      if (!this.isCurrentTurnAssistantOutput(item, index)) {
-        return item;
-      }
-      const existing: ChatMessage | undefined = this.findStreamingDisplayMessage(item);
+    const display: ChatMessage[] = [];
+    for (let index: number = 0; index < rawMessages.length; index += 1) {
+      const item: ChatMessage = rawMessages[index];
+      const existing: ChatMessage | undefined = existingById.get(item.id);
       if (existing === undefined) {
-        return item;
+        display.push(item);
+        continue;
       }
-      const mergedContent: string = this.mergeStreamingMessageContent(existing.content, item.content);
-      if (mergedContent === item.content && existing.id === item.id) {
-        return item;
-      }
-      return new ChatMessage(
+      const mergedContent: string = (result.status === 'inProgress' && this.isCurrentTurnAssistantOutput(item, index) && existing.content !== item.content)
+        ? this.mergeStreamingMessageContent(existing.content, item.content)
+        : item.content;
+      display.push(new ChatMessage(
         item.id,
         item.author,
         item.role,
         mergedContent,
-        item.timestamp,
+        existing.timestamp.trim().length > 0 ? existing.timestamp : item.timestamp,
         item.itemType,
         item.status,
         item.metadata
-      );
-    });
-    this.messages.forEach((existing: ChatMessage, index: number) => {
-      if (!this.isCurrentTurnAssistantOutput(existing, index)) {
-        return;
-      }
-      const mergeIndex: number = this.findStreamingDisplayMergeIndex(merged, existing);
-      if (mergeIndex >= 0) {
-        const incoming: ChatMessage = merged[mergeIndex];
-        const mergedContent: string = this.mergeStreamingMessageContent(existing.content, incoming.content);
-        if (mergedContent !== incoming.content) {
-          merged[mergeIndex] = new ChatMessage(
-            incoming.id,
-            incoming.author,
-            incoming.role,
-            mergedContent,
-            incoming.timestamp,
-            incoming.itemType,
-            incoming.status,
-            incoming.metadata
-          );
-        }
-        return;
-      }
-      const insertIndex: number = Math.min(index, merged.length);
-      merged.splice(insertIndex, 0, existing);
-    });
-    return merged;
-  }
-
-  private findStreamingDisplayMessage(incoming: ChatMessage): ChatMessage | undefined {
-    const exact: ChatMessage | undefined = this.messages.find((message: ChatMessage) => message.id === incoming.id);
-    if (exact !== undefined) {
-      return exact;
+      ));
+      existingById.delete(item.id);
     }
-    const startIndex: number = this.currentTurnMessageStartIndex();
-    for (let index: number = startIndex; index < this.messages.length; index += 1) {
+    // 兜底：native 快照暂未包含的当前轮流式消息，按原顺序补插（增量协议下应罕见）。
+    let insertAt: number = this.messages.length;
+    for (let index: number = this.messages.length - 1; index >= 0; index -= 1) {
       const existing: ChatMessage = this.messages[index];
-      if (this.isSameStreamingAssistantMessage(existing, incoming)) {
-        return existing;
+      if (!existingById.has(existing.id)) {
+        continue;
       }
-    }
-    return undefined;
-  }
-
-  private findStreamingDisplayMergeIndex(messages: ChatMessage[], existing: ChatMessage): number {
-    for (let index: number = 0; index < messages.length; index += 1) {
-      if (messages[index].id === existing.id) {
-        return index;
+      if (!this.isCurrentTurnAssistantOutput(existing, index)) {
+        continue;
       }
+      insertAt = Math.min(index, display.length);
+      display.splice(insertAt, 0, existing);
+      existingById.delete(existing.id);
     }
-    for (let index: number = 0; index < messages.length; index += 1) {
-      if (this.isSameStreamingAssistantMessage(existing, messages[index])) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  private isSameStreamingAssistantMessage(left: ChatMessage, right: ChatMessage): boolean {
-    if (!this.isAssistantOutputMessage(left) || !this.isAssistantOutputMessage(right)) {
-      return false;
-    }
-    if (this.currentTurnId.trim().length > 0) {
-      const leftInTurn: boolean = left.id.startsWith(`${this.currentTurnId}:`);
-      const rightInTurn: boolean = right.id.startsWith(`${this.currentTurnId}:`);
-      if ((leftInTurn || rightInTurn) && this.isCompatibleStreamingMessageContent(left.content, right.content)) {
-        return true;
-      }
-    }
-    if (this.streamingMessageAlias(left.id) === this.streamingMessageAlias(right.id)) {
-      return this.isCompatibleStreamingMessageContent(left.content, right.content);
-    }
-    return false;
-  }
-
-  private streamingMessageAlias(messageId: string): string {
-    const separatorIndex: number = messageId.lastIndexOf(':');
-    return separatorIndex >= 0 ? messageId.substring(separatorIndex + 1) : messageId;
-  }
-
-  private isCompatibleStreamingMessageContent(left: string, right: string): boolean {
-    if (left.trim().length === 0 || right.trim().length === 0) {
-      return true;
-    }
-    if (left.indexOf(right) >= 0 || right.indexOf(left) >= 0) {
-      return true;
-    }
-    return this.streamingMessageContentOverlapSize(left, right) > 0 || this.streamingMessageContentOverlapSize(right, left) > 0;
+    return display;
   }
 
   private mergeStreamingMessageContent(existingContent: string, incomingContent: string): string {

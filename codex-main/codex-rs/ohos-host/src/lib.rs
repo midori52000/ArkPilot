@@ -425,6 +425,10 @@ enum NativeTurnEvent {
     Status { status: String, summary_title: String },
     SummaryLine { line: String },
     MessageSnapshot { messages: Vec<NativeMessage> },
+    // 增量事件协议：流式更新按单条消息推送，避免每个 token 克隆/序列化全量历史。
+    MessageStarted { message: NativeMessage },
+    MessageDelta { message_id: String, delta: String },
+    MessageReplaced { message: NativeMessage },
     DiffSnapshot { diff: String },
     TokenUsage { token_usage: serde_json::Value },
 }
@@ -433,6 +437,9 @@ enum NativeTurnEvent {
 struct NativeTurnState {
     thread_id: String,
     status: String,
+    // 用于 Status 事件去重：连续推送相同 status/summary_title 时跳过。
+    last_status: String,
+    last_summary_title: String,
     messages: Vec<NativeMessage>,
     summary: Vec<String>,
     summary_title: String,
@@ -2524,6 +2531,8 @@ pub extern "C" fn codex_ohos_host_turn_start(params_json: *const c_char) -> *con
                 NativeTurnState {
                     thread_id: request.thread_id.clone(),
                     status: map_turn_status(&response.turn.status).to_string(),
+                    last_status: String::new(),
+                    last_summary_title: String::new(),
                     messages: Vec::new(),
                     summary: vec!["正在等待 ArkPilot 响应".to_string()],
                     summary_title: "执行中".to_string(),
@@ -4028,6 +4037,12 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     });
                 }
                 push_turn_status_event(entry);
+                // 终态兜底：把 turn.messages 刷新为 thread 权威状态并推一次全量快照
+                // （每轮仅一次，O(N)），保证 ArkTS 拿到权威终态，覆盖任何增量事件丢失的缝隙。
+                if let Some(thread) = state.threads.get(&entry.thread_id) {
+                    entry.messages = thread.messages.clone();
+                    push_turn_message_snapshot(entry);
+                }
             });
         }
         ServerNotification::TurnDiffUpdated(payload) => {
@@ -4061,6 +4076,11 @@ fn apply_server_notification(notification: &ServerNotification, _target_turn_id:
                     line: payload.error.message.clone(),
                 });
                 push_turn_status_event(entry);
+                // 终态兜底快照：失败分支同样把 turn.messages 刷新为权威终态并推送。
+                if let Some(thread) = state.threads.get(&entry.thread_id) {
+                    entry.messages = thread.messages.clone();
+                    push_turn_message_snapshot(entry);
+                }
             });
         }
         ServerNotification::ThreadTokenUsageUpdated(payload) => {
@@ -4320,6 +4340,13 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
 }
 
 fn push_turn_status_event(turn: &mut NativeTurnState) {
+    // 去重：每个流式 token 都会走到 dispatch 的 status 分支，status/summary_title 未变化则跳过，
+    // 避免每个 token 产生冗余 Status 事件。
+    if turn.last_status == turn.status && turn.last_summary_title == turn.summary_title {
+        return;
+    }
+    turn.last_status = turn.status.clone();
+    turn.last_summary_title = turn.summary_title.clone();
     turn.pending_events.push(NativeTurnEvent::Status {
         status: turn.status.clone(),
         summary_title: turn.summary_title.clone(),
@@ -4330,6 +4357,24 @@ fn push_turn_message_snapshot(turn: &mut NativeTurnState) {
     turn.pending_events.push(NativeTurnEvent::MessageSnapshot {
         messages: turn.messages.clone(),
     });
+}
+
+fn push_turn_message_started(turn: &mut NativeTurnState, message: NativeMessage) {
+    turn.pending_events.push(NativeTurnEvent::MessageStarted { message });
+}
+
+fn push_turn_message_delta(turn: &mut NativeTurnState, message_id: &str, delta: &str) {
+    if delta.is_empty() {
+        return;
+    }
+    turn.pending_events.push(NativeTurnEvent::MessageDelta {
+        message_id: message_id.to_string(),
+        delta: delta.to_string(),
+    });
+}
+
+fn push_turn_message_replaced(turn: &mut NativeTurnState, message: NativeMessage) {
+    turn.pending_events.push(NativeTurnEvent::MessageReplaced { message });
 }
 
 fn push_turn_diff_snapshot(turn: &mut NativeTurnState) {
@@ -4579,7 +4624,9 @@ fn append_assistant_delta(
     item_id: &str,
     delta: &str,
 ) {
-    let thread_messages = {
+    let target_message_id = format!("{turn_id}:{item_id}");
+    let mut started_message: Option<NativeMessage> = None;
+    {
         let thread = state
             .threads
             .entry(thread_id.to_string())
@@ -4590,7 +4637,6 @@ fn append_assistant_delta(
                 latest_token_usage: None,
                 context_management: NativeContextManagementSnapshot::default(),
             });
-        let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
             .messages
             .iter_mut()
@@ -4598,8 +4644,10 @@ fn append_assistant_delta(
         {
             message.content.push_str(delta);
         } else {
-            thread.messages.push(NativeMessage {
-                message_id: target_message_id,
+            // AgentMessage 没有 ItemStarted，首个 delta 才创建消息；
+            // 推 MessageStarted 保证 ArkTS 先收到创建、再收到 delta。
+            let message = NativeMessage {
+                message_id: target_message_id.clone(),
                 author: "ArkPilot".to_string(),
                 role: "assistant".to_string(),
                 content: delta.to_string(),
@@ -4607,14 +4655,19 @@ fn append_assistant_delta(
                 item_type: None,
                 status: None,
                 metadata: None,
-            });
+            };
+            thread.messages.push(message.clone());
+            started_message = Some(message);
         }
-        thread.messages.clone()
-    };
+    }
 
+    // 增量协议下不再同步 turn.messages（流式期间仅作 build_turn_poll_payload 的兜底，thread 恒存在）。
     if let Some(turn) = state.turns.get_mut(turn_id) {
-        turn.messages = thread_messages;
-        push_turn_message_snapshot(turn);
+        if let Some(message) = started_message {
+            push_turn_message_started(turn, message);
+        } else {
+            push_turn_message_delta(turn, &target_message_id, delta);
+        }
     }
 }
 
@@ -4625,7 +4678,9 @@ fn append_reasoning_delta(
     item_id: &str,
     delta: &str,
 ) {
-    let thread_messages = {
+    let target_message_id = format!("{turn_id}:{item_id}");
+    let event: Option<NativeTurnEvent>;
+    {
         let thread = state
             .threads
             .entry(thread_id.to_string())
@@ -4636,13 +4691,13 @@ fn append_reasoning_delta(
                 latest_token_usage: None,
                 context_management: NativeContextManagementSnapshot::default(),
             });
-        let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
             .messages
             .iter_mut()
             .find(|message| message.message_id == target_message_id)
         {
-            if message.content.trim() == REASONING_PENDING_CONTENT {
+            let cleared_placeholder = message.content.trim() == REASONING_PENDING_CONTENT;
+            if cleared_placeholder {
                 message.content.clear();
             }
             message.content.push_str(delta);
@@ -4650,9 +4705,20 @@ fn append_reasoning_delta(
             message.role = "reasoning".to_string();
             message.item_type = Some("reasoning".to_string());
             message.status = Some("inProgress".to_string());
+            if cleared_placeholder {
+                // 首个 delta 整条替换，避免 "正在思考..." 占位与首个 token 前缀拼串。
+                event = Some(NativeTurnEvent::MessageReplaced {
+                    message: message.clone(),
+                });
+            } else {
+                event = Some(NativeTurnEvent::MessageDelta {
+                    message_id: target_message_id.clone(),
+                    delta: delta.to_string(),
+                });
+            }
         } else {
-            thread.messages.push(NativeMessage {
-                message_id: target_message_id,
+            let message = NativeMessage {
+                message_id: target_message_id.clone(),
                 author: "思考过程".to_string(),
                 role: "reasoning".to_string(),
                 content: delta.to_string(),
@@ -4660,14 +4726,17 @@ fn append_reasoning_delta(
                 item_type: Some("reasoning".to_string()),
                 status: Some("inProgress".to_string()),
                 metadata: None,
-            });
+            };
+            thread.messages.push(message.clone());
+            event = Some(NativeTurnEvent::MessageStarted { message });
         }
-        thread.messages.clone()
-    };
+    }
 
+    // 增量协议下不再同步 turn.messages（流式期间 thread 恒存在，见 build_turn_poll_payload 兜底）。
     if let Some(turn) = state.turns.get_mut(turn_id) {
-        turn.messages = thread_messages;
-        push_turn_message_snapshot(turn);
+        if let Some(evt) = event {
+            turn.pending_events.push(evt);
+        }
     }
 }
 
@@ -4677,7 +4746,9 @@ fn append_reasoning_part_separator(
     turn_id: &str,
     item_id: &str,
 ) {
-    let thread_messages = {
+    let target_message_id = format!("{turn_id}:{item_id}");
+    let mut appended = false;
+    {
         let thread = state
             .threads
             .entry(thread_id.to_string())
@@ -4688,7 +4759,6 @@ fn append_reasoning_part_separator(
                 latest_token_usage: None,
                 context_management: NativeContextManagementSnapshot::default(),
             });
-        let target_message_id = format!("{turn_id}:{item_id}");
         if let Some(message) = thread
             .messages
             .iter_mut()
@@ -4697,14 +4767,15 @@ fn append_reasoning_part_separator(
             if has_visible_reasoning_content(&message.content) && !message.content.ends_with("\n\n")
             {
                 message.content.push_str("\n\n");
+                appended = true;
             }
         }
-        thread.messages.clone()
-    };
+    }
 
-    if let Some(turn) = state.turns.get_mut(turn_id) {
-        turn.messages = thread_messages;
-        push_turn_message_snapshot(turn);
+    if appended {
+        if let Some(turn) = state.turns.get_mut(turn_id) {
+            push_turn_message_delta(turn, &target_message_id, "\n\n");
+        }
     }
 }
 
@@ -4715,6 +4786,7 @@ fn sync_thread_from_completed_item(
     item: &codex_app_server_protocol::ThreadItem,
 ) {
     if let codex_app_server_protocol::ThreadItem::AgentMessage { id, text, .. } = item {
+        let message_id = format!("{turn_id}:{id}");
         let thread_messages = {
             let thread = state
                 .threads
@@ -4726,7 +4798,6 @@ fn sync_thread_from_completed_item(
                     latest_token_usage: None,
                     context_management: NativeContextManagementSnapshot::default(),
                 });
-            let message_id = format!("{turn_id}:{id}");
             if let Some(message) = thread
                 .messages
                 .iter_mut()
@@ -4735,7 +4806,7 @@ fn sync_thread_from_completed_item(
                 message.content = text.clone();
             } else {
                 thread.messages.push(NativeMessage {
-                    message_id,
+                    message_id: message_id.clone(),
                     author: "ArkPilot".to_string(),
                     role: "assistant".to_string(),
                     content: text.clone(),
@@ -4749,7 +4820,9 @@ fn sync_thread_from_completed_item(
         };
         if let Some(turn) = state.turns.get_mut(turn_id) {
             turn.messages = thread_messages;
-            push_turn_message_snapshot(turn);
+            if let Some(message) = turn.messages.iter().find(|m| m.message_id == message_id).cloned() {
+                push_turn_message_replaced(turn, message);
+            }
         }
     }
 }
@@ -6283,6 +6356,8 @@ fn upsert_item_started_message(
                 context_management: NativeContextManagementSnapshot::default(),
             });
 
+        // 增量事件协议：新 item 开始推 MessageStarted，已存在消息被重写则推 MessageReplaced。
+        let event: Option<NativeTurnEvent>;
         if let Some(existing) = thread.messages.iter_mut().find(|m| m.message_id == message_id) {
             if is_reasoning && has_visible_reasoning_content(&existing.content) {
                 existing.author = "思考过程".to_string();
@@ -6292,12 +6367,19 @@ fn upsert_item_started_message(
             } else {
                 *existing = msg.clone();
             }
+            event = Some(NativeTurnEvent::MessageReplaced {
+                message: existing.clone(),
+            });
         } else {
             thread.messages.push(msg.clone());
+            event = Some(NativeTurnEvent::MessageStarted { message: msg });
         }
 
         if let Some(turn) = state.turns.get_mut(turn_id) {
             turn.messages = thread.messages.clone();
+            if let Some(evt) = event {
+                turn.pending_events.push(evt);
+            }
         }
     }
 }
@@ -6374,8 +6456,17 @@ fn upsert_item_completed_message(
             thread.messages.push(updated_msg);
         }
 
+        // 增量事件协议：item 完成推整条 MessageReplaced，ArkTS 按 id 收敛到权威内容。
+        let replaced = thread
+            .messages
+            .iter()
+            .find(|m| m.message_id == message_id)
+            .cloned();
         if let Some(turn) = state.turns.get_mut(turn_id) {
             turn.messages = thread.messages.clone();
+            if let Some(message) = replaced {
+                push_turn_message_replaced(turn, message);
+            }
         }
     }
 }
@@ -6590,6 +6681,7 @@ fn can_write_to_directory(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_app_server_protocol::AgentMessageDeltaNotification;
     use codex_app_server_protocol::FileUpdateChange;
     use codex_app_server_protocol::ItemCompletedNotification;
     use codex_app_server_protocol::ItemStartedNotification;
@@ -6723,6 +6815,198 @@ mod tests {
             .messages
             .iter()
             .find(|message| message.message_id == "turn:reason")
+            .expect("reasoning message should be present");
+        assert_eq!(message.content, "先检查现有实现。");
+        assert_eq!(message.status.as_deref(), Some("completed"));
+    }
+
+    fn turn_event_kinds(events: &[NativeTurnEvent]) -> Vec<String> {
+        events
+            .iter()
+            .map(|evt| match evt {
+                NativeTurnEvent::Status { .. } => "status".to_string(),
+                NativeTurnEvent::SummaryLine { .. } => "summaryLine".to_string(),
+                NativeTurnEvent::MessageSnapshot { .. } => "messageSnapshot".to_string(),
+                NativeTurnEvent::MessageStarted { .. } => "messageStarted".to_string(),
+                NativeTurnEvent::MessageDelta { .. } => "messageDelta".to_string(),
+                NativeTurnEvent::MessageReplaced { .. } => "messageReplaced".to_string(),
+                NativeTurnEvent::DiffSnapshot { .. } => "diffSnapshot".to_string(),
+                NativeTurnEvent::TokenUsage { .. } => "tokenUsage".to_string(),
+            })
+            .collect()
+    }
+
+    // 注意：本套件共享全局 NativeConversationState，测试之间会互相干扰。
+    // 这里刻意使用全局唯一的 turn/thread id 且不重置全局状态，避免与其他测试的
+    // "turn"/"thread" 冲突；并行运行时的状态重置竞争是既有的测试设施问题。
+    #[test]
+    fn assistant_delta_emits_started_then_deltas_not_snapshot() {
+        for delta in ["第一段", "第二段", "第三段"] {
+            apply_server_notification(
+                &ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
+                    thread_id: "assist-thread".to_string(),
+                    turn_id: "assist-turn".to_string(),
+                    item_id: "item".to_string(),
+                    delta: delta.to_string(),
+                }),
+                Some("assist-turn"),
+            );
+        }
+
+        let stored = with_native_state(|state| {
+            state
+                .turns
+                .get("assist-turn")
+                .cloned()
+                .expect("turn state should exist after assistant deltas")
+        });
+        let kinds = turn_event_kinds(&stored.pending_events);
+        assert_eq!(
+            kinds,
+            vec![
+                "summaryLine",
+                "messageStarted",
+                "messageDelta",
+                "messageDelta",
+            ]
+        );
+        assert!(
+            !kinds.iter().any(|kind| kind == "messageSnapshot"),
+            "per-delta full MessageSnapshot must not be emitted"
+        );
+
+        let thread = with_native_state(|state| {
+            state
+                .threads
+                .get("assist-thread")
+                .cloned()
+                .expect("thread should exist after assistant deltas")
+        });
+        assert_eq!(thread.messages.len(), 1);
+        assert_eq!(thread.messages[0].message_id, "assist-turn:item");
+        assert_eq!(thread.messages[0].content, "第一段第二段第三段");
+    }
+
+    #[test]
+    fn reasoning_first_delta_emits_message_replaced() {
+        apply_server_notification(
+            &ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id: "reason-thread".to_string(),
+                turn_id: "reason-turn".to_string(),
+                item: ThreadItem::Reasoning {
+                    id: "reason".to_string(),
+                    summary: vec![],
+                    content: vec![],
+                },
+            }),
+            Some("reason-turn"),
+        );
+
+        apply_server_notification(
+            &ServerNotification::ReasoningTextDelta(ReasoningTextDeltaNotification {
+                thread_id: "reason-thread".to_string(),
+                turn_id: "reason-turn".to_string(),
+                item_id: "reason".to_string(),
+                delta: "先检查现有实现。".to_string(),
+                content_index: 0,
+            }),
+            Some("reason-turn"),
+        );
+
+        let stored = with_native_state(|state| {
+            state
+                .turns
+                .get("reason-turn")
+                .cloned()
+                .expect("turn state should exist after reasoning deltas")
+        });
+        let kinds = turn_event_kinds(&stored.pending_events);
+        assert_eq!(kinds.last().map(String::as_str), Some("messageReplaced"));
+        if let Some(NativeTurnEvent::MessageReplaced { message }) = stored.pending_events.last() {
+            assert_eq!(message.message_id, "reason-turn:reason");
+            assert_eq!(message.content, "先检查现有实现。");
+            assert!(
+                !message.content.starts_with("正在思考"),
+                "placeholder prefix must not leak into the first reasoning token"
+            );
+        } else {
+            panic!("last event should be MessageReplaced");
+        }
+
+        let thread = with_native_state(|state| {
+            state
+                .threads
+                .get("reason-thread")
+                .cloned()
+                .expect("thread should exist after reasoning deltas")
+        });
+        let message = thread
+            .messages
+            .iter()
+            .find(|message| message.message_id == "reason-turn:reason")
+            .expect("reasoning message should be present");
+        assert_eq!(message.content, "先检查现有实现。");
+        assert_eq!(message.status.as_deref(), Some("inProgress"));
+    }
+
+    #[test]
+    fn item_completed_emits_message_replaced() {
+        apply_server_notification(
+            &ServerNotification::ItemStarted(ItemStartedNotification {
+                thread_id: "complete-thread".to_string(),
+                turn_id: "complete-turn".to_string(),
+                item: ThreadItem::Reasoning {
+                    id: "reason".to_string(),
+                    summary: vec![],
+                    content: vec![],
+                },
+            }),
+            Some("complete-turn"),
+        );
+        apply_server_notification(
+            &ServerNotification::ReasoningTextDelta(ReasoningTextDeltaNotification {
+                thread_id: "complete-thread".to_string(),
+                turn_id: "complete-turn".to_string(),
+                item_id: "reason".to_string(),
+                delta: "先检查现有实现。".to_string(),
+                content_index: 0,
+            }),
+            Some("complete-turn"),
+        );
+        apply_server_notification(
+            &ServerNotification::ItemCompleted(ItemCompletedNotification {
+                thread_id: "complete-thread".to_string(),
+                turn_id: "complete-turn".to_string(),
+                item: ThreadItem::Reasoning {
+                    id: "reason".to_string(),
+                    summary: vec![],
+                    content: vec![],
+                },
+            }),
+            Some("complete-turn"),
+        );
+
+        let stored = with_native_state(|state| {
+            state
+                .turns
+                .get("complete-turn")
+                .cloned()
+                .expect("turn state should exist after reasoning notifications")
+        });
+        let kinds = turn_event_kinds(&stored.pending_events);
+        assert_eq!(kinds.last().map(String::as_str), Some("messageReplaced"));
+        if let Some(NativeTurnEvent::MessageReplaced { message }) = stored.pending_events.last() {
+            assert_eq!(message.message_id, "complete-turn:reason");
+            assert_eq!(message.status.as_deref(), Some("completed"));
+            assert_eq!(message.content, "先检查现有实现。");
+        } else {
+            panic!("last event should be MessageReplaced");
+        }
+
+        let message = stored
+            .messages
+            .iter()
+            .find(|message| message.message_id == "complete-turn:reason")
             .expect("reasoning message should be present");
         assert_eq!(message.content, "先检查现有实现。");
         assert_eq!(message.status.as_deref(), Some("completed"));

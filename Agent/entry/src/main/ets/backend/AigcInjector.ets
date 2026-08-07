@@ -26,6 +26,7 @@ import {
 } from './AigcProvenance';
 import { zipModifierForExt } from './AigcZipModifiers';
 import { injectPdfIncremental } from './AigcPdfInjector';
+import { buildExplicitMarkerLine, hasExplicitMarker, insertExplicitAfterImplicit, isValidJson, isWellFormedXml } from './AigcExplicitMarker';
 
 const INJECTOR_DOMAIN: number = 0x0ff6;
 const INJECTOR_TAG: string = 'AigcInjector';
@@ -238,6 +239,10 @@ export class AigcExportInjector {
       if (!this.pathExists(`${verifyDir}/${modifier.rootVerifyEntry}`)) {
         return false;
       }
+      // 显式内容条目良构校验：内容条目损坏 → 降级 sidecar（不交付损坏文件）
+      if (!this.verifyContentEntries(verifyDir, modifier.contentVerifyEntries)) {
+        return false;
+      }
       // 5) 原子落目标
       this.copyBinary(outZip, targetPath);
       return true;
@@ -313,6 +318,30 @@ export class AigcExportInjector {
     }
   }
 
+  /** 验证显式内容条目存在且良构（损坏则返回 false → 降级 sidecar）。 */
+  private verifyContentEntries(verifyDir: string, contentVerifyEntries: string[]): boolean {
+    for (let i: number = 0; i < contentVerifyEntries.length; i += 1) {
+      const entry: string = contentVerifyEntries[i];
+      const entryPath: string = `${verifyDir}/${entry}`;
+      if (!this.pathExists(entryPath)) {
+        return false;
+      }
+      try {
+        const text: string = fileIo.readTextSync(entryPath);
+        if (entry.toLowerCase().endsWith('.json')) {
+          if (!isValidJson(text)) {
+            return false;
+          }
+        } else if (!isWellFormedXml(text)) {
+          return false;
+        }
+      } catch (_err) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private extOf(fileName: string): string {
     const lower: string = fileName.toLowerCase();
     const idx: number = lower.lastIndexOf('.');
@@ -351,19 +380,29 @@ export class AigcExportInjector {
         entry.produceId,
         entry.label
       );
+      // 显式标注：隐式标注之后、正文开头插入"本文件由AI生成，请注意甄别"
+      const explicitLine: string = buildExplicitMarkerLine(fileName);
 
       let result: string;
       if (existingProduceId.length > 0) {
         if (existingProduceId === entry.produceId) {
-          // 已有且 ProduceID 一致 → 不重复注入，原样复制
-          result = rawText;
+          // 已有且 ProduceID 一致：幂等。已有显式则原样，否则补显式
+          if (hasExplicitMarker(rawText)) {
+            result = rawText;
+          } else {
+            result = insertExplicitAfterImplicit(rawText, explicitLine);
+          }
         } else {
-          // 已有但 ProduceID 不一致 → 替换首行标记
-          result = this.replaceFirstAigcMarker(rawText, markerLine);
+          // 已有但 ProduceID 不一致 → 替换隐式块；显式补齐
+          if (hasExplicitMarker(rawText)) {
+            result = this.replaceFirstAigcMarker(rawText, markerLine);
+          } else {
+            result = this.replaceFirstAigcMarker(rawText, `${markerLine}\n${explicitLine}`);
+          }
         }
       } else {
-        // 无标记 → 插入首部（处理 shebang/XML 声明/doctype）
-        result = this.insertMarkerAtHead(rawText, markerLine);
+        // 无隐式标记 → 插"隐式+显式"整块（insertMarkerAtHead 处理 shebang/XML 声明/doctype）
+        result = this.insertMarkerAtHead(rawText, `${markerLine}\n${explicitLine}`);
       }
 
       this.writeTextTarget(targetPath, result);

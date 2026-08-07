@@ -98,6 +98,8 @@ const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
 const NO_FILE_CHANGES_TEXT: string = '\u5c1a\u672a\u4ea7\u751f\u6587\u4ef6\u6539\u52a8';
 const UNRECOGNIZED_CHANGED_FILES_TEXT: string = '\u5c1a\u672a\u8bc6\u522b\u53d8\u66f4\u6587\u4ef6';
+/** native \u4fa7 REASONING_PENDING_CONTENT \u7684\u9632\u5fa1\u6027\u955c\u50cf\uff1aappendMessageDelta \u547d\u4e2d\u65f6\u6574\u6761\u66ff\u6362\u800c\u975e\u62fc\u63a5\u3002 */
+const REASONING_PLACEHOLDER_TEXT: string = '\u6b63\u5728\u601d\u8003...';
 const GENERIC_RUNNING_SUMMARY_TEXTS: string[] = ['ArkPilot \u6b63\u5728\u5904\u7406\u8bf7\u6c42', '\u7b49\u5f85\u66f4\u591a\u8f6e\u8be2\u7ed3\u679c', '\u672c\u8f6e\u6267\u884c\u5df2\u7ed3\u675f'];
 
 export type ConfigKind = 'provider' | 'skill';
@@ -2782,26 +2784,38 @@ export class CodexBackend {
 
   private messagesFromPayload(messages: Object[]): CodexChatMessage[] {
     return messages.map((item: Object, index: number) => {
-      const message = item as Record<string, Object>;
-      const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
-      const role: CodexMessageRole = this.mapMessageRole(roleRaw);
-      const itemType: string | undefined = typeof message['itemType'] === 'string' ? (message['itemType'] as string) : undefined;
-      const itemStatus: string | undefined = typeof message['status'] === 'string' ? (message['status'] as string) : undefined;
-      const metadata: Record<string, Object> | undefined = message['metadata'] !== undefined && message['metadata'] !== null
-        ? (message['metadata'] as Record<string, Object>)
-        : undefined;
-      return new CodexChatMessage(
-        typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
-        index + 1,
-        this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
-        role,
-        typeof message['content'] === 'string' ? (message['content'] as string) : '',
-        this.messageTimestampFromPayload(this.messageTimestampSource(message)),
-        itemType,
-        itemStatus,
-        metadata
-      );
+      return this.codexMessageFromRecord(item as Record<string, Object>, index);
     });
+  }
+
+  /** 单条 NativeMessage 解析：messageSnapshot / messageStarted / messageReplaced / turn_poll 共用，保证解析一致。 */
+  private codexMessageFromRecord(message: Record<string, Object>, index: number): CodexChatMessage {
+    const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
+    const role: CodexMessageRole = this.mapMessageRole(roleRaw);
+    const itemType: string | undefined = typeof message['itemType'] === 'string' ? (message['itemType'] as string) : undefined;
+    const itemStatus: string | undefined = typeof message['status'] === 'string' ? (message['status'] as string) : undefined;
+    const metadata: Record<string, Object> | undefined = message['metadata'] !== undefined && message['metadata'] !== null
+      ? (message['metadata'] as Record<string, Object>)
+      : undefined;
+    return new CodexChatMessage(
+      typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
+      index + 1,
+      this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
+      role,
+      typeof message['content'] === 'string' ? (message['content'] as string) : '',
+      this.messageTimestampFromPayload(this.messageTimestampSource(message)),
+      itemType,
+      itemStatus,
+      metadata
+    );
+  }
+
+  /** 事件里的单条消息：解析失败返回 null。 */
+  private codexMessageFromEventPayload(raw: Object): CodexChatMessage | null {
+    if (raw === null || raw === undefined || typeof raw !== 'object') {
+      return null;
+    }
+    return this.codexMessageFromRecord(raw as Record<string, Object>, 1);
   }
 
   private threadTitleFromPayload(payload: Record<string, Object>, fallbackId: string): string {
@@ -3383,6 +3397,28 @@ export class CodexBackend {
         }
         continue;
       }
+      if (kind === 'messageStarted') {
+        const message: CodexChatMessage | null = this.codexMessageFromEventPayload(event['message']);
+        if (message !== null) {
+          this.upsertMessageFromEvent(thread, message, false);
+        }
+        continue;
+      }
+      if (kind === 'messageDelta') {
+        const messageId: string = typeof event['messageId'] === 'string' ? (event['messageId'] as string) : '';
+        const delta: string = typeof event['delta'] === 'string' ? (event['delta'] as string) : '';
+        if (messageId.trim().length > 0 && delta.length > 0) {
+          this.appendMessageDelta(thread, messageId, delta);
+        }
+        continue;
+      }
+      if (kind === 'messageReplaced') {
+        const message: CodexChatMessage | null = this.codexMessageFromEventPayload(event['message']);
+        if (message !== null) {
+          this.upsertMessageFromEvent(thread, message, true);
+        }
+        continue;
+      }
       if (kind === 'messageSnapshot') {
         const messagesRaw: Object[] = Array.isArray(event['messages']) ? (event['messages'] as Object[]) : [];
         thread.messages = this.mergeThreadMessages(thread.messages, this.messagesFromPayload(messagesRaw));
@@ -3422,27 +3458,7 @@ export class CodexBackend {
     const previousDiffLineCount: number = thread.diffLines.length;
     const messages: Object[] = Array.isArray(payload['messages']) ? (payload['messages'] as Object[]) : [];
     if (messages.length > 0) {
-      const nextMessages: CodexChatMessage[] = messages.map((item: Object, index: number) => {
-        const message = item as Record<string, Object>;
-        const roleRaw: string = typeof message['role'] === 'string' ? (message['role'] as string) : 'assistant';
-        const role: CodexMessageRole = this.mapMessageRole(roleRaw);
-        const itemType: string | undefined = typeof message['itemType'] === 'string' ? (message['itemType'] as string) : undefined;
-        const itemStatus: string | undefined = typeof message['status'] === 'string' ? (message['status'] as string) : undefined;
-        const metadata: Record<string, Object> | undefined = message['metadata'] !== undefined && message['metadata'] !== null
-          ? (message['metadata'] as Record<string, Object>)
-          : undefined;
-        return new CodexChatMessage(
-          typeof message['messageId'] === 'string' ? (message['messageId'] as string) : `msg-${index + 1}`,
-          index + 1,
-          this.mapMessageAuthor(role, typeof message['author'] === 'string' ? (message['author'] as string) : ''),
-          role,
-          typeof message['content'] === 'string' ? (message['content'] as string) : '',
-          this.messageTimestampFromPayload(this.messageTimestampSource(message)),
-          itemType,
-          itemStatus,
-          metadata
-        );
-      });
+      const nextMessages: CodexChatMessage[] = this.messagesFromPayload(messages);
       thread.messages = this.mergeThreadMessages(thread.messages, nextMessages);
     }
     const diffText: string = typeof payload['diff'] === 'string' ? (payload['diff'] as string) : '';
@@ -3485,12 +3501,26 @@ export class CodexBackend {
       return incoming.map((message: CodexChatMessage) => this.cloneMessage(message));
     }
     const merged: CodexChatMessage[] = existing.map((message: CodexChatMessage) => this.cloneMessage(message));
+    // O(N) 精确定位：一次构建 messageId→index，避免逐条全表线性扫描（历史长时 O(N²)）。
+    const messageIndex: Map<string, number> = new Map<string, number>();
+    for (let index: number = 0; index < merged.length; index += 1) {
+      const messageId: string = merged[index].messageId;
+      if (!messageIndex.has(messageId)) {
+        messageIndex.set(messageId, index);
+      }
+    }
     for (const message of incoming) {
-      const index: number = this.findMergeThreadMessageIndex(merged, message);
-      if (index >= 0) {
-        merged[index] = this.mergeThreadMessage(merged[index], message);
+      const exactIndex: number | undefined = messageIndex.get(message.messageId);
+      if (exactIndex !== undefined) {
+        merged[exactIndex] = this.mergeThreadMessage(merged[exactIndex], message);
       } else {
-        merged.push(this.cloneMessage(message));
+        const aliasIndex: number = this.findMergeThreadMessageAliasIndex(merged, message);
+        if (aliasIndex >= 0) {
+          merged[aliasIndex] = this.mergeThreadMessage(merged[aliasIndex], message);
+        } else {
+          merged.push(this.cloneMessage(message));
+          messageIndex.set(message.messageId, merged.length - 1);
+        }
       }
     }
     for (let index: number = 0; index < merged.length; index += 1) {
@@ -3510,13 +3540,12 @@ export class CodexBackend {
     return merged;
   }
 
-  private findMergeThreadMessageIndex(messages: CodexChatMessage[], incoming: CodexChatMessage): number {
+  /** 仅精确 id 未命中时的 alias 兜底（id 前缀漂移），仍为线性，但只对个别漏网消息触发。 */
+  private findMergeThreadMessageAliasIndex(messages: CodexChatMessage[], incoming: CodexChatMessage): number {
     for (let index: number = 0; index < messages.length; index += 1) {
       if (messages[index].messageId === incoming.messageId) {
-        return index;
+        continue;
       }
-    }
-    for (let index: number = 0; index < messages.length; index += 1) {
       if (this.isSameThreadMessageAlias(messages[index], incoming)) {
         return index;
       }
@@ -3779,6 +3808,7 @@ export class CodexBackend {
     return value.indexOf('Ã') >= 0 || value.indexOf('å°') >= 0 || value.indexOf('灏') >= 0;
   }
 
+  // 注意：每轮 O(N) 克隆一次全量消息是 CodexTurnResult 携带完整列表的固有下限（线性，可接受）。
   private snapshotForThread(thread: CodexThreadRecord, status: CodexTurnStatus, turnId: string = ''): CodexTurnResult {
     return new CodexTurnResult(
       thread.remoteThreadId,
@@ -3829,6 +3859,135 @@ export class CodexBackend {
       }
     }
     return -1;
+  }
+
+  /**
+   * 增量事件 messageDelta：按 messageId 追加内容（O(1) 精确定位，避免全量合并）。
+   * native 保证任何 delta 前必先有 MessageStarted/MessageReplaced，未知 id 是防御性兜底。
+   */
+  private appendMessageDelta(thread: CodexThreadRecord, messageId: string, delta: string): void {
+    const trimmedMessageId: string = messageId.trim();
+    if (trimmedMessageId.length === 0 || delta.length === 0) {
+      return;
+    }
+    const index: number = this.findMessageIndex(thread, trimmedMessageId);
+    if (index >= 0) {
+      const existing: CodexChatMessage = thread.messages[index];
+      const content: string = existing.content.trim() === REASONING_PLACEHOLDER_TEXT
+        ? delta
+        : `${existing.content}${delta}`;
+      thread.messages[index] = new CodexChatMessage(
+        existing.messageId,
+        existing.sequence,
+        existing.author,
+        existing.role,
+        content,
+        existing.timestamp,
+        existing.itemType,
+        existing.status,
+        existing.metadata
+      );
+      return;
+    }
+    // 精确 id 未命中：仅对助手/推理消息按 item alias 兜底（避免误匹配 user/system）。
+    const targetAlias: string = this.messageItemAlias(trimmedMessageId);
+    for (let i: number = 0; i < thread.messages.length; i += 1) {
+      const candidate: CodexChatMessage = thread.messages[i];
+      if (candidate.role !== 'assistant' && candidate.role !== 'reasoning') {
+        continue;
+      }
+      if (this.messageItemAlias(candidate.messageId) !== targetAlias) {
+        continue;
+      }
+      const content: string = candidate.content.trim() === REASONING_PLACEHOLDER_TEXT
+        ? delta
+        : `${candidate.content}${delta}`;
+      thread.messages[i] = new CodexChatMessage(
+        candidate.messageId,
+        candidate.sequence,
+        candidate.author,
+        candidate.role,
+        content,
+        candidate.timestamp,
+        candidate.itemType,
+        candidate.status,
+        candidate.metadata
+      );
+      return;
+    }
+    // 仍未命中：防御性创建助手消息，靠后续 turn_poll 全量/终态快照对账收敛。
+    this.logInfo(`messageDelta unknown messageId=${trimmedMessageId} thread=${thread.remoteThreadId} — creating fallback assistant message`);
+    thread.messages.push(new CodexChatMessage(
+      trimmedMessageId,
+      thread.messages.length + 1,
+      'ArkPilot',
+      'assistant',
+      delta,
+      currentTimestamp(),
+      undefined,
+      undefined,
+      undefined
+    ));
+  }
+
+  /**
+   * 增量事件 messageStarted / messageReplaced：按 messageId upsert。
+   * replace=true 整条替换（保留 sequence 与非空 timestamp）；false 走合并语义。
+   */
+  private upsertMessageFromEvent(thread: CodexThreadRecord, incoming: CodexChatMessage, replace: boolean): void {
+    const index: number = this.findMessageIndex(thread, incoming.messageId);
+    if (index >= 0) {
+      const existing: CodexChatMessage = thread.messages[index];
+      if (replace) {
+        thread.messages[index] = new CodexChatMessage(
+          existing.messageId,
+          existing.sequence,
+          incoming.author.trim().length > 0 ? incoming.author : existing.author,
+          incoming.role,
+          incoming.content,
+          existing.timestamp.trim().length > 0 ? existing.timestamp : incoming.timestamp,
+          incoming.itemType ?? existing.itemType,
+          incoming.status ?? existing.status,
+          incoming.metadata ?? existing.metadata
+        );
+      } else {
+        thread.messages[index] = this.mergeThreadMessage(existing, incoming);
+      }
+      return;
+    }
+    // alias 兜底：处理 id 前缀漂移。
+    for (let i: number = 0; i < thread.messages.length; i += 1) {
+      const candidate: CodexChatMessage = thread.messages[i];
+      if (this.isSameThreadMessageAlias(candidate, incoming)) {
+        if (replace) {
+          thread.messages[i] = new CodexChatMessage(
+            candidate.messageId,
+            candidate.sequence,
+            incoming.author.trim().length > 0 ? incoming.author : candidate.author,
+            incoming.role,
+            incoming.content,
+            candidate.timestamp.trim().length > 0 ? candidate.timestamp : incoming.timestamp,
+            incoming.itemType ?? candidate.itemType,
+            incoming.status ?? candidate.status,
+            incoming.metadata ?? candidate.metadata
+          );
+        } else {
+          thread.messages[i] = this.mergeThreadMessage(candidate, incoming);
+        }
+        return;
+      }
+    }
+    thread.messages.push(new CodexChatMessage(
+      incoming.messageId,
+      thread.messages.length + 1,
+      incoming.author,
+      incoming.role,
+      incoming.content,
+      incoming.timestamp,
+      incoming.itemType,
+      incoming.status,
+      incoming.metadata
+    ));
   }
 
   private parseUnifiedDiff(diff: string): ParsedDiff {
