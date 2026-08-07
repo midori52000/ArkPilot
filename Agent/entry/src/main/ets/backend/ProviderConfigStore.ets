@@ -389,7 +389,14 @@ export class ProviderConfigStore {
       2, activeId, providers, currentIsoTimestamp()
     );
     console.info('[ProviderConfigStore] syncToNativeCatalog: calling saveEmbeddedCodexProviderCatalog');
-    saveEmbeddedCodexProviderCatalog(catalog);
+    // 失败必须抛出，调用方（saveProvidersToStore）据此在写文件前中止
+    try {
+      saveEmbeddedCodexProviderCatalog(catalog);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : JSON.stringify(err);
+      console.error('[ProviderConfigStore] syncToNativeCatalog failed: ' + message);
+      throw new Error('同步 native provider catalog 失败: ' + message);
+    }
     console.info('[ProviderConfigStore] syncToNativeCatalog: done');
   }
 

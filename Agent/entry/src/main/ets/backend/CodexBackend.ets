@@ -1291,6 +1291,9 @@ export class CodexBackend {
   private mcpStatusText: string = '尚未加载 MCP 状态';
   private mcpErrorText: string = '';
   private approvalTimerId: number = -1;
+  private lastSnapshotMessagesSignature: string = '';
+  private cachedSnapshotMessages: CodexChatMessage[] = [];
+  private lastEventBatchSignature: string = '';
 
   private logInfo(message: string): void {
     hilog.info(BACKEND_LOG_DOMAIN, BACKEND_LOG_TAG, '%{public}s', message);
@@ -2495,6 +2498,12 @@ export class CodexBackend {
       return;
     }
     this.approvalTimerId = setInterval(() => {
+      if (!this.initialized) {
+        return;
+      }
+      if (!this.hasActiveTurn() && this.pendingApproval === null && this.pendingRequestUserInput === null) {
+        return;
+      }
       this.pollPendingApproval();
     }, APPROVAL_POLL_INTERVAL_MS);
   }
@@ -2516,13 +2525,19 @@ export class CodexBackend {
     }
     const payload: Record<string, Object> = parsed as Record<string, Object>;
     const kindRaw: string = typeof payload['kind'] === 'string' ? (payload['kind'] as string) : '';
+    let nextRequestUserInput: CodexRequestUserInput | null = null;
+    let nextApproval: CodexApprovalRequest | null = null;
     if (kindRaw === 'requestUserInput') {
-      this.pendingRequestUserInput = this.buildRequestUserInputFromNative(payload);
-      this.pendingApproval = null;
+      nextRequestUserInput = this.buildRequestUserInputFromNative(payload);
     } else {
-      this.pendingRequestUserInput = null;
-      this.pendingApproval = this.buildApprovalFromNative(payload);
+      nextApproval = this.buildApprovalFromNative(payload);
     }
+    if (this.requestUserInputStateEquals(nextRequestUserInput, this.pendingRequestUserInput)
+      && this.approvalStateEquals(nextApproval, this.pendingApproval)) {
+      return;
+    }
+    this.pendingRequestUserInput = nextRequestUserInput;
+    this.pendingApproval = nextApproval;
     this.notifyListeners();
   }
 
@@ -2918,7 +2933,28 @@ export class CodexBackend {
     }
   }
 
+  private eventBatchSignature(events: Object[]): string {
+    const count: number = events.length;
+    if (count === 0) {
+      return '0';
+    }
+    const last: Record<string, Object> = events[count - 1] as Record<string, Object>;
+    const kind: string = typeof last['kind'] === 'string' ? (last['kind'] as string) : '';
+    let contentText: string = '';
+    if (kind === 'summaryLine') {
+      contentText = typeof last['line'] === 'string' ? (last['line'] as string) : '';
+    } else if (kind === 'messageSnapshot') {
+      contentText = `${(Array.isArray(last['messages']) ? (last['messages'] as Object[]) : []).length}`;
+    } else if (kind === 'diffSnapshot') {
+      contentText = typeof last['diff'] === 'string' ? (last['diff'] as string) : '';
+    } else if (kind === 'status') {
+      contentText = typeof last['status'] === 'string' ? (last['status'] as string) : '';
+    }
+    return `${count}|${kind}|${contentText.length}`;
+  }
+
   private async pollTurnUntilCompleted(thread: CodexThreadRecord, pendingTurn: PendingTurnState): Promise<CodexTurnResult> {
+    this.lastEventBatchSignature = '';
     const startedAt: number = Date.now();
     const deadline: number = startedAt + TURN_POLL_TIMEOUT_MS;
     let nextReconcileAt: number = startedAt + TURN_STATUS_RECONCILE_START_MS;
@@ -2955,9 +2991,14 @@ export class CodexBackend {
       if (eventPayload.length > 0) {
         this.logInfo(`turnEvents thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} count=${eventPayload.length}`);
         const nextSnapshot: CodexTurnResult = this.applyTurnEventBatch(thread, pendingTurn.turnId, eventPayload);
-        this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
         if (nextSnapshot.status !== 'inProgress') {
+          this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
           return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, nextSnapshot);
+        }
+        const eventSignature: string = this.eventBatchSignature(eventPayload);
+        if (eventSignature !== this.lastEventBatchSignature) {
+          this.lastEventBatchSignature = eventSignature;
+          this.emitTurnUpdate(thread, pendingTurn, nextSnapshot);
         }
       }
       const now: number = Date.now();
@@ -3809,12 +3850,32 @@ export class CodexBackend {
   }
 
   // 注意：每轮 O(N) 克隆一次全量消息是 CodexTurnResult 携带完整列表的固有下限（线性，可接受）。
+  private cachedMessagesForThread(thread: CodexThreadRecord): CodexChatMessage[] {
+    const signature: string = this.messagesSignature(thread);
+    if (signature === this.lastSnapshotMessagesSignature && this.cachedSnapshotMessages.length === thread.messages.length) {
+      return this.cachedSnapshotMessages;
+    }
+    this.cachedSnapshotMessages = thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message));
+    this.lastSnapshotMessagesSignature = signature;
+    return this.cachedSnapshotMessages;
+  }
+
+  private messagesSignature(thread: CodexThreadRecord): string {
+    const count: number = thread.messages.length;
+    let signature: string = `${count}`;
+    for (let index: number = 0; index < count; index += 1) {
+      const message: CodexChatMessage = thread.messages[index];
+      signature += `|${message.messageId}|${message.content.length}|${message.status ?? ''}|${message.sequence}|${message.role}`;
+    }
+    return signature;
+  }
+
   private snapshotForThread(thread: CodexThreadRecord, status: CodexTurnStatus, turnId: string = ''): CodexTurnResult {
     return new CodexTurnResult(
       thread.remoteThreadId,
       turnId,
       status,
-      thread.messages.map((message: CodexChatMessage) => this.cloneMessage(message)),
+      this.cachedMessagesForThread(thread),
       thread.diffLines.map((line: CodexDiffLine) => this.cloneDiffLine(line)),
       thread.summaryTitle,
       [...thread.summaryPoints],
@@ -4119,6 +4180,33 @@ export class CodexBackend {
       question.isSecret,
       question.options.map((option: CodexRequestUserInputOption) => new CodexRequestUserInputOption(option.label, option.description))
     );
+  }
+
+  private approvalStateEquals(left: CodexApprovalRequest | null, right: CodexApprovalRequest | null): boolean {
+    if (left === null || right === null) {
+      return left === right;
+    }
+    return this.approvalIdentityString(left) === this.approvalIdentityString(right);
+  }
+
+  private approvalIdentityString(approval: CodexApprovalRequest): string {
+    return `${approval.requestId}|${approval.kind}|${approval.title}|${approval.detail}|${approval.threadId}|${approval.turnId}|${approval.itemId}`;
+  }
+
+  private requestUserInputStateEquals(left: CodexRequestUserInput | null, right: CodexRequestUserInput | null): boolean {
+    if (left === null || right === null) {
+      return left === right;
+    }
+    return this.requestUserInputIdentityString(left) === this.requestUserInputIdentityString(right);
+  }
+
+  private requestUserInputIdentityString(request: CodexRequestUserInput): string {
+    let questionsSignature: string = '';
+    for (let index: number = 0; index < request.questions.length; index += 1) {
+      const question: CodexRequestUserInputQuestion = request.questions[index];
+      questionsSignature += `${question.id}|${question.header}|${question.question}|${question.isOther}|${question.isSecret}|${question.options.length};`;
+    }
+    return `${request.requestId}|${request.title}|${request.detail}|${request.threadId}|${request.turnId}|${request.itemId}|${questionsSignature}`;
   }
 
   private cloneCollaborationMode(mode: CollaborationModeOption): CollaborationModeOption {

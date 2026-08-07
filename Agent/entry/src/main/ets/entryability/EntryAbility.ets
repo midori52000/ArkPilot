@@ -2,11 +2,12 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { startEmbeddedCodexHost } from '../backend/CodexNative';
+import { CodexHostStatus, startEmbeddedCodexHostAsync } from '../backend/CodexNative';
 import { PromptsBackendService } from '../prompts/PromptsBackendService';
 import { installBundledSkills } from '../skills/BundledSkills';
 import { SkillsBackendService } from '../skills/SkillsBackendService';
 import { ReconcileResult } from '../skills/SkillTypes';
+import { huaweiAccountService } from '../account/HuaweiAccountService';
 
 const DOMAIN = 0x0000;
 const TAG = 'CodexHost';
@@ -23,16 +24,19 @@ export default class EntryAbility extends UIAbility {
     try {
       const codexHome: string = `${this.context.filesDir}/codex-home`;
       AppStorage.setOrCreate<string>('codexHome', codexHome);
-      const status = startEmbeddedCodexHost(codexHome, DEFAULT_SERVER_URL);
-      hilog.info(
-        DOMAIN,
-        TAG,
-        'Embedded host start result: code=%{public}d running=%{public}s url=%{public}s message=%{public}s',
-        status.code,
-        status.running ? 'true' : 'false',
-        status.serverUrl,
-        status.message
-      );
+      void startEmbeddedCodexHostAsync(codexHome, DEFAULT_SERVER_URL).then((status: CodexHostStatus) => {
+        hilog.info(
+          DOMAIN,
+          TAG,
+          'Embedded host start result: code=%{public}d running=%{public}s url=%{public}s message=%{public}s',
+          status.code,
+          status.running ? 'true' : 'false',
+          status.serverUrl,
+          status.message
+        );
+      }).catch((err: Error) => {
+        hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
+      });
 
       // 首次启动自动导入已有 AGENTS.md
       const promptsService = new PromptsBackendService(codexHome);
@@ -40,8 +44,14 @@ export default class EntryAbility extends UIAbility {
         hilog.warn(DOMAIN, TAG, 'Prompt auto import failed: %{public}s', JSON.stringify(err));
       });
 
-      // 首次启动安装预设 bundled skills
-      installBundledSkills(codexHome);
+      // 首次启动安装预设 bundled skills（延迟到首帧之后执行，避免阻塞 onCreate）
+      setTimeout(() => {
+        try {
+          installBundledSkills(codexHome);
+        } catch (err) {
+          hilog.error(DOMAIN, TAG, 'Failed to install bundled skills: %{public}s', JSON.stringify(err));
+        }
+      }, 0);
 
       // Skill 一致性检查：修复 registry 与 SSOT 目录的不一致
       const skillsService = new SkillsBackendService(codexHome);
@@ -58,6 +68,13 @@ export default class EntryAbility extends UIAbility {
       });
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Failed to start embedded app-server. Cause: %{public}s', JSON.stringify(err));
+    }
+
+    try {
+      huaweiAccountService.init(this.context);
+      void huaweiAccountService.verifySystemAccountState();
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'Failed to init huawei account service. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onCreate');
   }
@@ -98,7 +115,9 @@ export default class EntryAbility extends UIAbility {
       }
     });
 
-    windowStage.loadContent('pages/Index', (err) => {
+    const loggedIn: boolean = (AppStorage.get<boolean>('arkPilotLoggedIn') ?? false);
+    const initialPage: string = loggedIn ? 'pages/Index' : 'pages/LoginPage';
+    windowStage.loadContent(initialPage, (err) => {
       if (err.code) {
         hilog.error(DOMAIN, TAG, 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
@@ -115,6 +134,11 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     // Ability has brought to foreground
     hilog.info(DOMAIN, TAG, '%{public}s', 'Ability onForeground');
+    try {
+      void huaweiAccountService.verifySystemAccountState();
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'Failed to verify huawei account state. Cause: %{public}s', JSON.stringify(err));
+    }
   }
 
   onBackground(): void {

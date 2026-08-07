@@ -110,6 +110,7 @@ struct SettingsPage {
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
   @State private toastIdSeed: number = 1;
+  private toastTimerId: number = -1;
 
   @State private showValidationDialog: boolean = false;
   @State private validationResult: ApiValidationResult | null = null;
@@ -235,6 +236,14 @@ struct SettingsPage {
     this.syncPromptsStateFromViewModel();
     this.syncSkillsStateFromViewModel();
     this.syncMcpStateFromBackend();
+  }
+
+  aboutToDisappear(): void {
+    this.stopMcpPolling();
+    if (this.toastTimerId >= 0) {
+      clearTimeout(this.toastTimerId);
+      this.toastTimerId = -1;
+    }
   }
 
   private isPhoneBreakpoint(): boolean {
@@ -1286,9 +1295,13 @@ struct SettingsPage {
     this.runMotion(() => {
       this.toasts = [...this.toasts, new UiToastItem(toastId, tone, message)];
     }, 180);
-    setTimeout(() => {
+    const timerId: number = setTimeout(() => {
+      if (this.toastTimerId === timerId) {
+        this.toastTimerId = -1;
+      }
       this.dismissToast(toastId);
     }, duration);
+    this.toastTimerId = timerId;
   }
 
   private dismissToast(toastId: number): void {
@@ -3146,7 +3159,7 @@ struct SettingsPage {
           .width('100%')
           Row() {
             Button('取消')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('skill-delete-cancel'), y: this.pressScale('skill-delete-cancel') })
@@ -3154,7 +3167,7 @@ struct SettingsPage {
               .onTouch((event: TouchEvent) => { this.updatePressed('skill-delete-cancel', event); })
               .onClick(() => { this.cancelUninstallSkill(); })
             Button('确认删除')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('skill-delete-confirm'), y: this.pressScale('skill-delete-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3215,7 +3228,7 @@ struct SettingsPage {
           .backgroundColor(this.elevatedSurface()).borderRadius(12)
           Row() {
             Button('关闭')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('skill-detail-close'), y: this.pressScale('skill-detail-close') })
@@ -3527,7 +3540,7 @@ struct SettingsPage {
           .backgroundColor('#F1F5F9').borderRadius(12)
           Row() {
             Button('取消')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('mcp-add-cancel'), y: this.pressScale('mcp-add-cancel') })
@@ -3535,7 +3548,7 @@ struct SettingsPage {
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-add-cancel', event); })
               .onClick(() => { this.cancelMcpAdd(); })
             Button('添加')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#0A84FF').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('mcp-add-confirm'), y: this.pressScale('mcp-add-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3581,7 +3594,7 @@ struct SettingsPage {
             .copyOption(CopyOptions.None).fontSize(12).fontColor(this.textMuted()).lineHeight(20).margin({ top: 10 })
           Row() {
             Button('取消')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('mcp-delete-cancel'), y: this.pressScale('mcp-delete-cancel') })
@@ -3589,7 +3602,7 @@ struct SettingsPage {
               .onTouch((event: TouchEvent) => { this.updatePressed('mcp-delete-cancel', event); })
               .onClick(() => { this.cancelMcpDelete(); })
             Button('确认删除')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('mcp-delete-confirm'), y: this.pressScale('mcp-delete-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -3635,7 +3648,7 @@ struct SettingsPage {
             .copyOption(CopyOptions.None).fontSize(12).fontColor(this.textMuted()).lineHeight(20).margin({ top: 10 })
           Row() {
             Button('取消')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor(this.textSecondary()).backgroundColor(this.surface()).borderRadius(14)
               .border({ width: 1, color: '#D5E0ED' })
               .scale({ x: this.pressScale('prompt-delete-cancel'), y: this.pressScale('prompt-delete-cancel') })
@@ -3643,7 +3656,7 @@ struct SettingsPage {
               .onTouch((event: TouchEvent) => { this.updatePressed('prompt-delete-cancel', event); })
               .onClick(() => { this.cancelDeletePrompt(); })
             Button('确认删除')
-              .height(40).layoutWeight(1).fontSize(12).fontWeight(FontWeight.Medium)
+              .height(40).layoutWeight(1).fontSize(14).fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF').backgroundColor('#F97373').borderRadius(14).margin({ left: 12 })
               .scale({ x: this.pressScale('prompt-delete-confirm'), y: this.pressScale('prompt-delete-confirm') })
               .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -4566,7 +4579,7 @@ struct SettingsPage {
         Button('关闭')
           .height(38)
           .width('100%')
-          .fontSize(12)
+          .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
           .backgroundColor('#111827')

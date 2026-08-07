@@ -42,6 +42,8 @@ struct AddProviderPage {
   @State private editId: string = '';
   @State private contextWindowStr: string = '';
   private modelAutoCompactTokenLimit: number = 0;
+  private toastTimerId: number = -1;
+  private backTimerId: number = -1;
 
   private get isPhone(): boolean {
     return this.currentBreakpoint === 'xs' || this.currentBreakpoint === 'sm';
@@ -97,6 +99,17 @@ struct AddProviderPage {
     this.applyPreset(this.selectedPresetId, false);
   }
 
+  aboutToDisappear(): void {
+    if (this.toastTimerId >= 0) {
+      clearTimeout(this.toastTimerId);
+      this.toastTimerId = -1;
+    }
+    if (this.backTimerId >= 0) {
+      clearTimeout(this.backTimerId);
+      this.backTimerId = -1;
+    }
+  }
+
   private loadProviderForEdit(providerId: string): void {
     const result = configManagerFacade.listProviders();
     if (!result.ok || result.data === null) {
@@ -127,12 +140,20 @@ struct AddProviderPage {
   }
 
   private showToast(message: string, tone: ToastTone = 'info', duration: number = 1800): void {
+    if (this.toastTimerId >= 0) {
+      clearTimeout(this.toastTimerId);
+      this.toastTimerId = -1;
+    }
     const toastId = this.toastIdSeed;
     this.toastIdSeed += 1;
-    this.toasts = [...this.toasts, new UiToastItem(toastId, tone, message)];
-    setTimeout(() => {
+    this.toasts = [new UiToastItem(toastId, tone, message)];
+    const timerId: number = setTimeout(() => {
+      if (this.toastTimerId === timerId) {
+        this.toastTimerId = -1;
+      }
       this.dismissToast(toastId);
     }, duration);
+    this.toastTimerId = timerId;
   }
 
   private dismissToast(toastId: number): void {
@@ -362,9 +383,17 @@ struct AddProviderPage {
       }
       const actionLabel: string = this.editId.length > 0 ? '已更新' : '已添加';
       this.triggerFeedback(`${actionLabel} "${result.data.name}"。`, 'success');
-      setTimeout(() => {
+      if (this.backTimerId >= 0) {
+        clearTimeout(this.backTimerId);
+        this.backTimerId = -1;
+      }
+      const backTimerId: number = setTimeout(() => {
+        if (this.backTimerId === backTimerId) {
+          this.backTimerId = -1;
+        }
         router.back();
       }, 600);
+      this.backTimerId = backTimerId;
     } catch (_err) {
       this.isSubmitting = false;
       this.triggerFeedback('保存失败，请检查配置后重试。', 'error');
@@ -865,7 +894,7 @@ struct AddProviderPage {
             .borderRadius(8)
 
           Text(toast.message)
-            .copyOption(CopyOptions.LocalDevice)
+            .copyOption(CopyOptions.None)
             .fontSize(11)
             .fontColor(this.textPrimary())
             .margin({ left: 10 })
@@ -881,10 +910,10 @@ struct AddProviderPage {
         .margin({ top: 10 })
       }, (toast: UiToastItem) => `${toast.id}`)
     }
+    .width('100%')
+    .padding({ left: 14, right: 14 })
     .alignItems(HorizontalAlign.End)
     .position({ x: 0, y: 28 })
-    .width('100%')
-    .padding({ right: 28 })
   }
 
   build() {

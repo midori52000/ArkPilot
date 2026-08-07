@@ -1,4 +1,5 @@
 import fileIo from '@ohos.file.fs';
+import taskpool from '@ohos.taskpool';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ProjectRecord } from './ConsoleModels';
 
@@ -14,16 +15,23 @@ function storeFilePath(): string {
   return STORE_FILE_NAME;
 }
 
-function ensureParentDirectory(path: string): void {
+@Concurrent
+function writeFileTask(path: string, content: string): void {
   const slashIndex: number = path.lastIndexOf('/');
-  if (slashIndex <= 0) {
-    return;
+  if (slashIndex > 0) {
+    const parentPath: string = path.substring(0, slashIndex);
+    try {
+      fileIo.mkdirSync(parentPath, true);
+    } catch (err) {
+      hilog.error(0x0ff3, 'ProjectStore', 'ensureParentDirectory failed: %{public}s', `${err}`);
+    }
   }
-  const parentPath: string = path.substring(0, slashIndex);
   try {
-    fileIo.mkdirSync(parentPath, true);
+    const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    fileIo.writeSync(file.fd, content);
+    fileIo.closeSync(file);
   } catch (err) {
-    hilog.error(STORE_DOMAIN, STORE_TAG, 'ensureParentDirectory failed: %{public}s', `${err}`);
+    hilog.error(0x0ff3, 'ProjectStore', 'save failed: %{public}s', `${err}`);
   }
 }
 
@@ -68,6 +76,7 @@ function safeParseSnapshot(rawText: string): ProjectStoreSnapshot {
 
 export class ProjectStore {
   private cachedDeletedPaths: string[] = [];
+  private pendingSaveTimerId: number = -1;
 
   load(): ProjectRecord[] {
     const snapshot = this.loadSnapshot();
@@ -93,15 +102,21 @@ export class ProjectStore {
 
   save(projects: ProjectRecord[]): void {
     const path: string = storeFilePath();
-    ensureParentDirectory(path);
     const payload: string = JSON.stringify({ projects, deletedPaths: this.cachedDeletedPaths }, null, 2);
-    try {
-      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, payload);
-      fileIo.closeSync(file);
-    } catch (err) {
-      hilog.error(STORE_DOMAIN, STORE_TAG, 'save failed: %{public}s', `${err}`);
+    this.scheduleSave(path, payload);
+  }
+
+  private scheduleSave(path: string, payload: string): void {
+    if (this.pendingSaveTimerId >= 0) {
+      clearTimeout(this.pendingSaveTimerId);
     }
+    this.pendingSaveTimerId = setTimeout(() => {
+      this.pendingSaveTimerId = -1;
+      const task: taskpool.Task = new taskpool.Task(writeFileTask, path, payload);
+      void taskpool.execute(task).catch((err: Error) => {
+        hilog.error(STORE_DOMAIN, STORE_TAG, 'save failed: %{public}s', `${err}`);
+      });
+    }, 300);
   }
 
   addDeletedPath(path: string): void {

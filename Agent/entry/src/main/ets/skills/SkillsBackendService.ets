@@ -12,11 +12,13 @@ import {
 import http from '@ohos.net.http';
 import fileIo from '@ohos.file.fs';
 import zlib from '@ohos.zlib';
+import taskpool from '@ohos.taskpool';
 
 const GITHUB_API_BASE = 'https://github.com';
 const SKILLS_SH_API = 'https://skills.sh/api/search';
 const DOWNLOAD_TIMEOUT_MS = 60000;
 const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const DEFAULT_RECURSION_MAX_DEPTH = 8;
 
 interface DownloadAndExtractResult {
   tempDir: string;
@@ -48,6 +50,12 @@ interface ImportSourceEntry {
   sourcePath: string;
   installName: string;
   fallbackName: string;
+}
+
+interface ScannedSkillJson {
+  directory: string;
+  name: string;
+  description: string;
 }
 
 interface SkillsShApiItemJson {
@@ -101,6 +109,235 @@ export const SKILL_ERROR_MESSAGES: Map<SkillErrorCode, string> = new Map([
   [SkillErrorCode.DOWNLOAD_FAILED, '下载仓库失败，请检查仓库地址和网络连接'],
   [SkillErrorCode.EMPTY_ARCHIVE, '下载的 ZIP 文件为空，请确认仓库是否存在'],
 ]);
+
+// ================================================================
+// TaskPool 卸载：重同步 SSOT 扫描 / 目录复制 / 目录删除
+// （@Concurrent 函数必须是顶层、不可捕获外部变量、参数与返回值必须可序列化）
+// ================================================================
+
+@Concurrent
+function scanSsotDirectoryTask(ssotDir: string): string {
+  const results: ScannedSkillJson[] = [];
+  let entries: string[];
+  try {
+    entries = fileIo.listFileSync(ssotDir) as string[];
+  } catch (_) {
+    return '[]';
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry: string = entries[i];
+    if (entry.startsWith('.')) {
+      continue;
+    }
+    const skillDir: string = `${ssotDir}/${entry}`;
+    try {
+      const stat = fileIo.statSync(skillDir);
+      if (!stat.isDirectory()) {
+        continue;
+      }
+    } catch (_) {
+      continue;
+    }
+
+    const skillMdPath: string = `${skillDir}/SKILL.md`;
+    try {
+      fileIo.statSync(skillMdPath);
+    } catch (_) {
+      continue;
+    }
+
+    let name: string = entry;
+    let description: string = '';
+    try {
+      const content: string = fileIo.readTextSync(skillMdPath) as string;
+      let clean: string = content;
+      if (content.charCodeAt(0) === 0xFEFF) {
+        clean = content.substring(1);
+      }
+      const parts: string[] = clean.split('---');
+      if (parts.length >= 3) {
+        const frontMatter: string = parts[1].trim();
+        const fmLines: string[] = frontMatter.split('\n');
+        for (let j = 0; j < fmLines.length; j++) {
+          const colonIdx: number = fmLines[j].indexOf(':');
+          if (colonIdx === -1) {
+            continue;
+          }
+          const key: string = fmLines[j].substring(0, colonIdx).trim();
+          let value: string = fmLines[j].substring(colonIdx + 1).trim();
+          if (value.length >= 2 && (value.startsWith("'") || value.startsWith('"'))) {
+            const quote: string = value.charAt(0);
+            if (value.endsWith(quote)) {
+              value = value.substring(1, value.length - 1);
+            }
+          }
+          if (key === 'name' && value.length > 0) {
+            name = value;
+          }
+          if (key === 'description') {
+            description = value;
+          }
+        }
+      }
+    } catch (_) {
+      // 保持 fallback name
+    }
+
+    const item: ScannedSkillJson = {
+      directory: entry,
+      name: name,
+      description: description
+    };
+    results.push(item);
+  }
+
+  return JSON.stringify(results);
+}
+
+async function scanSsotDirectoryAsync(codexHome: string): Promise<InstalledSkill[]> {
+  const results: InstalledSkill[] = [];
+  try {
+    const ssotDir: string = `${codexHome}/skills`;
+    const task = new taskpool.Task(scanSsotDirectoryTask, ssotDir);
+    const json: string = await taskpool.execute(task) as string;
+    const parsed: ScannedSkillJson[] = JSON.parse(json) as ScannedSkillJson[];
+    for (let i = 0; i < parsed.length; i++) {
+      const item: ScannedSkillJson = parsed[i];
+      results.push(new InstalledSkill(
+        `local:${item.directory}`, item.name, item.description, item.directory,
+        'local', '', '', '', '', true, Date.now(), '', 0
+      ));
+    }
+  } catch (_) {
+    return [];
+  }
+  return results;
+}
+
+@Concurrent
+function copyDirRecursiveTask(src: string, dest: string, maxDepth: number): string {
+  const stackSrc: string[] = [];
+  const stackDest: string[] = [];
+  const stackDepth: number[] = [];
+  stackSrc.push(src);
+  stackDest.push(dest);
+  stackDepth.push(0);
+  try {
+    while (stackSrc.length > 0) {
+      const currentSrc: string = stackSrc.pop() as string;
+      const currentDest: string = stackDest.pop() as string;
+      const depth: number = stackDepth.pop() as number;
+      fileIo.mkdirSync(currentDest, true);
+      let files: string[];
+      try {
+        files = fileIo.listFileSync(currentSrc) as string[];
+      } catch (_) {
+        continue;
+      }
+      for (let i = 0; i < files.length; i++) {
+        const file: string = files[i];
+        const srcPath: string = `${currentSrc}/${file}`;
+        const destPath: string = `${currentDest}/${file}`;
+        try {
+          const stat = fileIo.statSync(srcPath);
+          if (stat.isDirectory()) {
+            if (depth + 1 < maxDepth) {
+              stackSrc.push(srcPath);
+              stackDest.push(destPath);
+              stackDepth.push(depth + 1);
+            } else {
+              console.warn(`copyDirRecursive depth limit reached, skip: ${srcPath}`);
+            }
+          } else {
+            fileIo.copyFileSync(srcPath, destPath);
+          }
+        } catch (e) {
+          console.warn(`copy failed: ${srcPath} -> ${destPath}: ${JSON.stringify(e)}`);
+        }
+      }
+    }
+    return '';
+  } catch (e) {
+    return 'copy failed: ' + JSON.stringify(e);
+  }
+}
+
+async function copyDirRecursiveAsync(src: string, dest: string, maxDepth: number): Promise<void> {
+  const task = new taskpool.Task(copyDirRecursiveTask, src, dest, maxDepth);
+  const result: string = await taskpool.execute(task) as string;
+  if (result.length > 0) {
+    throw new Error(result);
+  }
+}
+
+@Concurrent
+function removeDirRecursiveTask(rootPath: string, maxDepth: number): string {
+  const paths: string[] = [];
+  const depths: number[] = [];
+  const removeSelf: boolean[] = [];
+  paths.push(rootPath);
+  depths.push(0);
+  removeSelf.push(false);
+  try {
+    while (paths.length > 0) {
+      const p: string = paths.pop() as string;
+      const d: number = depths.pop() as number;
+      const self: boolean = removeSelf.pop() as boolean;
+      if (self) {
+        try {
+          fileIo.rmdirSync(p);
+        } catch (_) {
+          try {
+            fileIo.unlinkSync(p);
+          } catch (_2) {
+            // best effort
+          }
+        }
+        continue;
+      }
+      try {
+        const stat = fileIo.statSync(p);
+        if (stat.isDirectory()) {
+          if (d + 1 < maxDepth) {
+            const entries: string[] = fileIo.listFileSync(p) as string[];
+            for (let i = 0; i < entries.length; i++) {
+              paths.push(`${p}/${entries[i]}`);
+              depths.push(d + 1);
+              removeSelf.push(false);
+            }
+          }
+          paths.push(p);
+          depths.push(d);
+          removeSelf.push(true);
+        } else {
+          fileIo.unlinkSync(p);
+        }
+      } catch (e) {
+        try {
+          fileIo.rmdirSync(p);
+        } catch (_) {
+          try {
+            fileIo.unlinkSync(p);
+          } catch (_2) {
+            // best effort
+          }
+        }
+      }
+    }
+    return '';
+  } catch (e) {
+    return 'remove failed: ' + JSON.stringify(e);
+  }
+}
+
+async function removeDirRecursiveAsync(path: string, maxDepth: number): Promise<void> {
+  const task = new taskpool.Task(removeDirRecursiveTask, path, maxDepth);
+  const result: string = await taskpool.execute(task) as string;
+  if (result.length > 0) {
+    throw new Error(result);
+  }
+}
 
 /**
  * Skills 后端管理服务
@@ -202,8 +439,13 @@ export class SkillsBackendService {
 
   async getInstalled(): Promise<InstalledSkill[]> {
     const json = getSkillsRegistry(this.codexHome);
-    const parsed: SkillsRegistryJson = JSON.parse(json) as SkillsRegistryJson;
-    let skills: SkillEntryJson[] = parsed.skills ?? [];
+    let skills: SkillEntryJson[] = [];
+    try {
+      const parsed: SkillsRegistryJson = JSON.parse(json) as SkillsRegistryJson;
+      skills = parsed.skills ?? [];
+    } catch (_) {
+      skills = [];
+    }
 
     // 兜底：注册表为空时，尝试 reconcile（扫描 SSOT 目录自动注册）
     if (skills.length === 0) {
@@ -220,54 +462,13 @@ export class SkillsBackendService {
       }
     }
 
-    // 兜底：如果 reconcile 也没结果（native 不可用），直接扫 SSOT 目录
+    // 兜底：如果 reconcile 也没结果（native 不可用），直接扫 SSOT 目录（TaskPool 卸载）
     if (skills.length === 0) {
-      const scanned = this.scanSsotDirectory();
+      const scanned = await scanSsotDirectoryAsync(this.codexHome);
       return scanned;
     }
 
     return skills.map((skill: SkillEntryJson) => InstalledSkill.fromJSON(skill));
-  }
-
-  private scanSsotDirectory(): InstalledSkill[] {
-    const ssotDir = this.getSsotDir();
-    const results: InstalledSkill[] = [];
-    let entries: string[];
-    try {
-      entries = fileIo.listFileSync(ssotDir) as string[];
-    } catch (_) {
-      return results;
-    }
-
-    for (const entry of entries) {
-      if (entry.startsWith('.')) {
-        continue;
-      }
-      const skillDir = `${ssotDir}/${entry}`;
-      try {
-        const stat = fileIo.statSync(skillDir);
-        if (!stat.isDirectory()) {
-          continue;
-        }
-      } catch (_) {
-        continue;
-      }
-
-      const skillMdPath = `${skillDir}/SKILL.md`;
-      try {
-        fileIo.statSync(skillMdPath);
-      } catch (_) {
-        continue;
-      }
-
-      const metadata = this.parseSkillMetadata(skillMdPath, entry);
-      results.push(new InstalledSkill(
-        `local:${entry}`, metadata.name, metadata.description, entry,
-        'local', '', '', '', '', true, Date.now(), '', 0
-      ));
-    }
-
-    return results;
   }
 
   async saveInstalled(skills: InstalledSkill[]): Promise<void> {
@@ -321,7 +522,15 @@ export class SkillsBackendService {
   async reconcileSkills(): Promise<ReconcileResult> {
     this.ensureSsotDir();
     const json = reconcileSkills(this.codexHome);
-    const parsed = JSON.parse(json) as ReconcileResult;
+    let parsed: ReconcileResult | null = null;
+    try {
+      parsed = JSON.parse(json) as ReconcileResult;
+    } catch (_) {
+      parsed = null;
+    }
+    if (parsed === null) {
+      return new ReconcileResult([], []);
+    }
     return new ReconcileResult(parsed.removed ?? [], parsed.registered ?? []);
   }
 
@@ -487,7 +696,7 @@ export class SkillsBackendService {
     // 替换文件
     const dest = `${this.getSsotDir()}/${skill.directory}`;
     await this.removeDir(dest);
-    await this.copyDirRecursive(sourceDir, dest);
+    await copyDirRecursiveAsync(sourceDir, dest, DEFAULT_RECURSION_MAX_DEPTH);
     await this.removeDir(tempDir);
 
     const contentHash = computeDirHash(dest);
@@ -518,10 +727,15 @@ export class SkillsBackendService {
 
   async discoverFromRepos(): Promise<DiscoverableSkill[]> {
     const reposJson = getSkillsRepos(this.codexHome);
-    const reposList: SkillsRepoListJson = JSON.parse(reposJson) as SkillsRepoListJson;
-    const repos: SkillRepo[] = (reposList.repos ?? [])
-      .map((repo: SkillRepoEntryJson) => SkillRepo.fromJSON(repo))
-      .filter((repo: SkillRepo) => repo.enabled);
+    let repos: SkillRepo[] = [];
+    try {
+      const reposList: SkillsRepoListJson = JSON.parse(reposJson) as SkillsRepoListJson;
+      repos = (reposList.repos ?? [])
+        .map((repo: SkillRepoEntryJson) => SkillRepo.fromJSON(repo))
+        .filter((repo: SkillRepo) => repo.enabled);
+    } catch (_) {
+      repos = [];
+    }
 
     const results = await Promise.allSettled(
       repos.map((repo: SkillRepo): Promise<DiscoverableSkill[]> => this.fetchRepoSkills(repo))
@@ -614,8 +828,8 @@ export class SkillsBackendService {
 
   private async fetchRepoTree(repo: SkillRepo, branch: string): Promise<TreeResponse | null> {
     const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${branch}?recursive=1`;
+    const httpRequest = http.createHttp();
     try {
-      const httpRequest = http.createHttp();
       const response = await httpRequest.request(treeUrl, {
         method: http.RequestMethod.GET,
         header: { 'Accept': 'application/vnd.github.v3+json' },
@@ -628,6 +842,8 @@ export class SkillsBackendService {
       return JSON.parse(response.result as string) as TreeResponse;
     } catch (_) {
       return null;
+    } finally {
+      httpRequest.destroy();
     }
   }
 
@@ -638,8 +854,8 @@ export class SkillsBackendService {
     fallbackName: string
   ): Promise<SkillMetadata> {
     const rawUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${manifestPath}`;
+    const httpRequest = http.createHttp();
     try {
-      const httpRequest = http.createHttp();
       const response = await httpRequest.request(rawUrl, {
         method: http.RequestMethod.GET,
         connectTimeout: DOWNLOAD_TIMEOUT_MS,
@@ -651,14 +867,22 @@ export class SkillsBackendService {
       return this.parseSkillMetadataText(response.result as string, fallbackName);
     } catch (_) {
       return { name: fallbackName, description: '' };
+    } finally {
+      httpRequest.destroy();
     }
   }
 
   private async scanDirRecursive(
     currentDir: string, baseDir: string,
-    repo: SkillRepo, usedBranch: string
+    repo: SkillRepo, usedBranch: string,
+    maxDepth: number = DEFAULT_RECURSION_MAX_DEPTH,
+    depth: number = 0
   ): Promise<DiscoverableSkill[]> {
     const results: DiscoverableSkill[] = [];
+    if (depth >= maxDepth) {
+      console.warn(`scanDirRecursive depth limit reached, stop at: ${currentDir}`);
+      return results;
+    }
 
     const skillMdPath = `${currentDir}/SKILL.md`;
     try {
@@ -694,7 +918,7 @@ export class SkillsBackendService {
         try {
           const stat = fileIo.statSync(fullPath);
           if (stat.isDirectory()) {
-            const childResults = await this.scanDirRecursive(fullPath, baseDir, repo, usedBranch);
+            const childResults = await this.scanDirRecursive(fullPath, baseDir, repo, usedBranch, maxDepth, depth + 1);
             results.push(...childResults);
           }
         } catch (_) { /* skip */ }
@@ -805,7 +1029,10 @@ export class SkillsBackendService {
     }
   }
 
-  private findSkillDirs(baseDir: string, result: string[]): void {
+  private findSkillDirs(baseDir: string, result: string[], maxDepth: number = DEFAULT_RECURSION_MAX_DEPTH, depth: number = 0): void {
+    if (depth >= maxDepth) {
+      return;
+    }
     try {
       const entries: string[] = fileIo.listFileSync(baseDir) as string[];
       // 先检查当前目录是否有 SKILL.md
@@ -821,7 +1048,7 @@ export class SkillsBackendService {
         try {
           const stat = fileIo.statSync(fullPath);
           if (stat.isDirectory()) {
-            this.findSkillDirs(fullPath, result);
+            this.findSkillDirs(fullPath, result, maxDepth, depth + 1);
           }
         } catch (_) { /* */ }
       }
@@ -878,7 +1105,7 @@ export class SkillsBackendService {
           `Skill 目录 ${installName} 已存在，请先卸载现有 Skill 或清理残留目录后再重试`
         );
       }
-      await this.copyDirRecursive(sourceEntry.sourcePath, dest);
+      await copyDirRecursiveAsync(sourceEntry.sourcePath, dest, DEFAULT_RECURSION_MAX_DEPTH);
 
       const metadata = this.parseSkillMetadata(`${dest}/SKILL.md`, sourceEntry.fallbackName);
       const name = metadata.name;
@@ -969,35 +1196,39 @@ export class SkillsBackendService {
     const url = `${SKILLS_SH_API}?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`;
 
     const httpRequest = http.createHttp();
-    const response = await httpRequest.request(url, {
-      method: http.RequestMethod.GET,
-      connectTimeout: 10000,
-      readTimeout: 10000
-    });
-
-    if (response.responseCode !== 200) {
-      throw new Error(`skills.sh API returned ${response.responseCode}`);
-    }
-
-    const data: SkillsShApiResponse = JSON.parse(response.result as string) as SkillsShApiResponse;
-    const rawSkills: SkillsShApiItemJson[] = data.skills ?? [];
-    const skills = rawSkills
-      .filter((skillItem: SkillsShApiItemJson): boolean => {
-        const parts = skillItem.source.split('/');
-        return parts.length === 2;
-      })
-      .map((skillItem: SkillsShApiItemJson): SkillsShItem => {
-        const srcParts = skillItem.source.split('/');
-        const owner = srcParts[0];
-        const repo = srcParts[1];
-        return new SkillsShItem(
-          skillItem.id, skillItem.name, skillItem.skillId,
-          owner, repo, 'main', skillItem.installs,
-          `https://github.com/${owner}/${repo}`
-        );
+    try {
+      const response = await httpRequest.request(url, {
+        method: http.RequestMethod.GET,
+        connectTimeout: 10000,
+        readTimeout: 10000
       });
 
-    return new SkillsShSearchResult(skills, data.count, data.query);
+      if (response.responseCode !== 200) {
+        throw new Error(`skills.sh API returned ${response.responseCode}`);
+      }
+
+      const data: SkillsShApiResponse = JSON.parse(response.result as string) as SkillsShApiResponse;
+      const rawSkills: SkillsShApiItemJson[] = data.skills ?? [];
+      const skills = rawSkills
+        .filter((skillItem: SkillsShApiItemJson): boolean => {
+          const parts = skillItem.source.split('/');
+          return parts.length === 2;
+        })
+        .map((skillItem: SkillsShApiItemJson): SkillsShItem => {
+          const srcParts = skillItem.source.split('/');
+          const owner = srcParts[0];
+          const repo = srcParts[1];
+          return new SkillsShItem(
+            skillItem.id, skillItem.name, skillItem.skillId,
+            owner, repo, 'main', skillItem.installs,
+            `https://github.com/${owner}/${repo}`
+          );
+        });
+
+      return new SkillsShSearchResult(skills, data.count, data.query);
+    } finally {
+      httpRequest.destroy();
+    }
   }
 
   // ================================================================
@@ -1006,7 +1237,15 @@ export class SkillsBackendService {
 
   async getRepos(): Promise<SkillRepo[]> {
     const json = getSkillsRepos(this.codexHome);
-    const parsed: SkillsRepoListJson = JSON.parse(json) as SkillsRepoListJson;
+    let parsed: SkillsRepoListJson | null = null;
+    try {
+      parsed = JSON.parse(json) as SkillsRepoListJson;
+    } catch (_) {
+      parsed = null;
+    }
+    if (parsed === null) {
+      return [];
+    }
     return (parsed.repos ?? []).map((repo: SkillRepoEntryJson) => SkillRepo.fromJSON(repo));
   }
 
@@ -1072,8 +1311,8 @@ export class SkillsBackendService {
       } catch (_) { /* */ }
 
       const url = `${GITHUB_API_BASE}/${repo.owner}/${repo.name}/archive/refs/heads/${branch}.zip`;
+      const httpRequest = http.createHttp();
       try {
-        const httpRequest = http.createHttp();
         const response = await httpRequest.request(url, {
           method: http.RequestMethod.GET,
           expectDataType: http.HttpDataType.ARRAY_BUFFER,
@@ -1109,6 +1348,8 @@ export class SkillsBackendService {
         lastError = e instanceof Error ? e : new Error(JSON.stringify(e));
         try { await this.removeDir(tempDir); } catch (_) { /* */ }
         continue;
+      } finally {
+        httpRequest.destroy();
       }
     }
 
@@ -1149,8 +1390,8 @@ export class SkillsBackendService {
    */
   private async downloadRepoViaApi(repo: SkillRepo, destDir: string, branch: string): Promise<boolean> {
     const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${branch}?recursive=1`;
+    const httpRequest = http.createHttp();
     try {
-      const httpRequest = http.createHttp();
       const treeResponse = await httpRequest.request(treeUrl, {
         method: http.RequestMethod.GET,
         header: { 'Accept': 'application/vnd.github.v3+json' },
@@ -1219,6 +1460,8 @@ export class SkillsBackendService {
     } catch (e) {
       console.warn(`GitHub API download failed: ${JSON.stringify(e)}`);
       return false;
+    } finally {
+      httpRequest.destroy();
     }
   }
 
@@ -1266,56 +1509,10 @@ export class SkillsBackendService {
     return skillDirs.length > 0;
   }
 
-  private async copyDirRecursive(src: string, dest: string): Promise<void> {
-    fileIo.mkdirSync(dest, true);
-
-    const files: string[] = fileIo.listFileSync(src) as string[];
-    for (const file of files) {
-      const srcPath = `${src}/${file}`;
-      const destPath = `${dest}/${file}`;
-
-      try {
-        const stat = fileIo.statSync(srcPath);
-        if (stat.isDirectory()) {
-          await this.copyDirRecursive(srcPath, destPath);
-        } else {
-          fileIo.copyFileSync(srcPath, destPath);
-        }
-      } catch (e) {
-        console.warn(`copy failed: ${srcPath} -> ${destPath}: ${JSON.stringify(e)}`);
-      }
-    }
-  }
-
   private async removeDir(path: string): Promise<void> {
     try {
-      this.removeDirRecursive(path);
+      await removeDirRecursiveAsync(path, DEFAULT_RECURSION_MAX_DEPTH);
     } catch (_) { /* ignore */ }
-  }
-
-  private removeDirRecursive(path: string): void {
-    try {
-      const stat = fileIo.statSync(path);
-      if (stat.isDirectory()) {
-        const entries: string[] = fileIo.listFileSync(path) as string[];
-        for (const entry of entries) {
-          this.removeDirRecursive(`${path}/${entry}`);
-        }
-        fileIo.rmdirSync(path);
-      } else {
-        fileIo.unlinkSync(path);
-      }
-    } catch (e) {
-      // 尝试直接删除
-      try {
-        fileIo.rmdirSync(path);
-      } catch (_) {
-        try {
-          fileIo.unlinkSync(path);
-        } catch (_) { /* best effort */ }
-      }
-      void e;
-    }
   }
 
   // ================================================================
