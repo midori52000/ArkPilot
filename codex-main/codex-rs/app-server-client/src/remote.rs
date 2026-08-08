@@ -55,6 +55,8 @@ use url::Url;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
+// 普通 RPC 请求超时：防止服务端静默挂死时调用方无限等待（会导致主线程 block_on 冻结）。
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct RemoteAppServerConnectArgs {
@@ -485,12 +487,20 @@ impl RemoteAppServerClient {
                     "remote app-server worker channel is closed",
                 )
             })?;
-        response_rx.await.map_err(|_| {
-            IoError::new(
-                ErrorKind::BrokenPipe,
-                "remote app-server request channel is closed",
-            )
-        })?
+        timeout(REQUEST_TIMEOUT, response_rx)
+            .await
+            .map_err(|_elapsed| {
+                IoError::new(
+                    ErrorKind::TimedOut,
+                    "remote app-server request timed out waiting for a response",
+                )
+            })?
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "remote app-server request channel is closed",
+                )
+            })?
     }
 
     pub async fn request_typed<T>(&self, request: ClientRequest) -> Result<T, TypedRequestError>
@@ -643,12 +653,20 @@ impl RemoteAppServerRequestHandle {
                     "remote app-server worker channel is closed",
                 )
             })?;
-        response_rx.await.map_err(|_| {
-            IoError::new(
-                ErrorKind::BrokenPipe,
-                "remote app-server request channel is closed",
-            )
-        })?
+        timeout(REQUEST_TIMEOUT, response_rx)
+            .await
+            .map_err(|_elapsed| {
+                IoError::new(
+                    ErrorKind::TimedOut,
+                    "remote app-server request timed out waiting for a response",
+                )
+            })?
+            .map_err(|_| {
+                IoError::new(
+                    ErrorKind::BrokenPipe,
+                    "remote app-server request channel is closed",
+                )
+            })?
     }
 
     pub async fn request_typed<T>(&self, request: ClientRequest) -> Result<T, TypedRequestError>
@@ -978,5 +996,47 @@ mod tests {
         assert!(!event_requires_delivery(&AppServerEvent::Lagged {
             skipped: 1
         }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn request_times_out_when_server_never_responds() {
+        // 模拟服务端静默挂死：接收端读取 Request 命令后持有 response_tx 但永不发送，
+        // 等价于 worker 收到请求但服务端永不回包（response_rx.await 永久 pending）。
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel::<RemoteClientCommand>(8);
+        tokio::spawn(async move {
+            let mut held: Vec<oneshot::Sender<IoResult<RequestResult>>> = Vec::new();
+            while let Some(command) = command_rx.recv().await {
+                if let RemoteClientCommand::Request { response_tx, .. } = command {
+                    held.push(response_tx);
+                }
+            }
+        });
+        let handle = RemoteAppServerRequestHandle { command_tx };
+
+        let result = handle
+            .request_typed::<serde_json::Value>(ClientRequest::ThreadList {
+                request_id: crate::RequestId::Integer(42),
+                params: codex_app_server_protocol::ThreadListParams {
+                    limit: None,
+                    cursor: None,
+                    sort_key: None,
+                    model_providers: None,
+                    source_kinds: None,
+                    archived: None,
+                    cwd: None,
+                    search_term: None,
+                },
+            })
+            .await;
+
+        // 应在 REQUEST_TIMEOUT（15s，已暂停虚拟时间推进）内超时返回 TimedOut。
+        match &result {
+            Err(TypedRequestError::Transport { source, .. })
+                if source.kind() == ErrorKind::TimedOut => {}
+            other => {
+                eprintln!("unexpected result: {other:?}");
+                panic!("expected TimedOut transport error, got {other:?}");
+            }
+        }
     }
 }

@@ -1058,3 +1058,139 @@ export async function startEmbeddedCodexHostAsync(codexHome: string, serverUrl: 
     return new CodexHostStatus(1, false, '', 'start host async failed');
   }
 }
+
+// --- Async wrappers for RPC-blocking native calls (offload from UI thread) ---
+// 这些函数在 Rust 侧会 block_on 等 app-server RPC 响应（现已加 15s 超时），
+// 若在主线程同步调用，任何一次 RPC 挂起都会冻结 UI。taskpool 化后阻塞发生在工作线程。
+
+@Concurrent
+function threadReadTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{}';
+  }
+  try {
+    return mod.threadRead(paramsJson);
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+export async function threadReadAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(threadReadTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{}';
+  }
+}
+
+@Concurrent
+function threadListTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{"data":[],"nextCursor":null}';
+  }
+  try {
+    return mod.threadList(paramsJson);
+  } catch (_err) {
+    return '{"data":[],"nextCursor":null}';
+  }
+}
+
+export async function threadListAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(threadListTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{"data":[],"nextCursor":null}';
+  }
+}
+
+@Concurrent
+function threadNameSetTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{"ok":false}';
+  }
+  try {
+    return mod.threadNameSet(paramsJson);
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
+export async function threadNameSetAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(threadNameSetTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
+@Concurrent
+function threadArchiveTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{"ok":false}';
+  }
+  try {
+    return mod.threadArchive(paramsJson);
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
+export async function threadArchiveAsyncNative(paramsJson: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(threadArchiveTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{"ok":false}';
+  }
+}
+
+@Concurrent
+function turnEventsTask(threadId: string, turnId: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '[]';
+  }
+  try {
+    return mod.turnEvents(threadId, turnId);
+  } catch (_err) {
+    return '[]';
+  }
+}
+
+export async function turnEventsAsyncNative(threadId: string, turnId: string): Promise<string> {
+  try {
+    const task = new taskpool.Task(turnEventsTask, threadId, turnId);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '[]';
+  }
+}
+
+@Concurrent
+function collaborationModeListTask(paramsJson: string): string {
+  const mod = entry ?? null;
+  if (mod === null) {
+    return '{"data":[]}';
+  }
+  try {
+    return mod.collaborationModeList(paramsJson);
+  } catch (_err) {
+    return '{"data":[]}';
+  }
+}
+
+export async function collaborationModeListAsyncNative(paramsJson: string = '{}'): Promise<string> {
+  try {
+    const task = new taskpool.Task(collaborationModeListTask, paramsJson);
+    return await taskpool.execute(task) as string;
+  } catch (_err) {
+    return '{"data":[]}';
+  }
+}

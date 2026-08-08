@@ -7,7 +7,6 @@ import {
   approvalPollNative,
   CollaborationModeOption,
   CodexHostStatus,
-  collaborationModeListNative,
   getEmbeddedCodexHostStatus,
   getEmbeddedCodexHostStatusAsync,
   initializeNative,
@@ -20,10 +19,10 @@ import {
   mcpReloadNative,
   mcpStatusListNative,
   compactStartNative,
-  threadArchiveNative,
-  threadListNative,
-  threadNameSetNative,
-  threadReadNative,
+  threadArchiveAsyncNative,
+  threadListAsyncNative,
+  threadNameSetAsyncNative,
+  threadReadAsyncNative,
   threadResumeNative,
   threadResumeAsyncNative,
   threadStartNative,
@@ -31,9 +30,10 @@ import {
   turnInterruptNative,
   turnPollNative,
   turnPollAsyncNative,
-  turnEventsNative,
+  turnEventsAsyncNative,
   turnStartNative,
   turnStartAsyncNative,
+  collaborationModeListAsyncNative,
   fetchNativeTokenUsageAggregate
 } from './CodexNative';
 import {
@@ -1444,7 +1444,7 @@ export class CodexBackend {
       throw new Error(`initialize failed: ${errorText}`);
     }
     this.initialized = true;
-    this.refreshCollaborationModes();
+    await this.refreshCollaborationModes();
     await this.refreshAccountState();
     const platformOs: string = typeof initRecord['platformOs'] === 'string'
       ? (initRecord['platformOs'] as string)
@@ -1551,7 +1551,7 @@ export class CodexBackend {
     await this.ensureConnected();
     const listRequest: ThreadListRequestPayload = new ThreadListRequestPayload();
     const payload: Record<string, Object> = parseJsonText(
-      threadListNative(JSON.stringify(listRequest)),
+      await threadListAsyncNative(JSON.stringify(listRequest)),
       new ThreadListResponsePayload() as Object
     ) as Record<string, Object>;
     const data: Object[] = Array.isArray(payload['data']) ? (payload['data'] as Object[]) : [];
@@ -1599,7 +1599,7 @@ export class CodexBackend {
       renameRequest.threadId = remoteThreadId;
       renameRequest.name = title.trim();
       const renamePayload: Record<string, Object> = parseJsonText(
-        threadNameSetNative(JSON.stringify(renameRequest)),
+        await threadNameSetAsyncNative(JSON.stringify(renameRequest)),
         new Object() as Object
       ) as Record<string, Object>;
       if (renamePayload['ok'] === false) {
@@ -1654,7 +1654,7 @@ export class CodexBackend {
     renameRequest.threadId = trimmedThreadId;
     renameRequest.name = trimmedTitle;
     const payload: Record<string, Object> = parseJsonText(
-      threadNameSetNative(JSON.stringify(renameRequest)),
+      await threadNameSetAsyncNative(JSON.stringify(renameRequest)),
       new Object() as Object
     ) as Record<string, Object>;
     if (payload['ok'] === false) {
@@ -1685,7 +1685,7 @@ export class CodexBackend {
     const archiveRequest: ThreadArchiveRequestPayload = new ThreadArchiveRequestPayload();
     archiveRequest.threadId = trimmedThreadId;
     const payload: Record<string, Object> = parseJsonText(
-      threadArchiveNative(JSON.stringify(archiveRequest)),
+      await threadArchiveAsyncNative(JSON.stringify(archiveRequest)),
       new Object() as Object
     ) as Record<string, Object>;
     if (payload['ok'] === false) {
@@ -2021,7 +2021,7 @@ export class CodexBackend {
     readRequest.threadId = trimmedThreadId;
     readRequest.includeTurns = true;
     const payload: Record<string, Object> = parseJsonText(
-      threadReadNative(JSON.stringify(readRequest)),
+      await threadReadAsyncNative(JSON.stringify(readRequest)),
       new Object() as Object
     ) as Record<string, Object>;
     const errorRecord: Record<string, Object> | undefined = payload['error'] as Record<string, Object> | undefined;
@@ -2480,8 +2480,8 @@ export class CodexBackend {
     this.applyAccountState(payload);
   }
 
-  private refreshCollaborationModes(): void {
-    const rawJson: string = collaborationModeListNative('{}');
+  private async refreshCollaborationModes(): Promise<void> {
+    const rawJson: string = await collaborationModeListAsyncNative('{}');
     this.logInfo(`refreshCollaborationModes raw=${rawJson.substring(0, 200)}`);
     const payload: Record<string, Object> = parseJsonText(
       rawJson,
@@ -2985,7 +2985,7 @@ export class CodexBackend {
         return timeoutSnapshot;
       }
       const eventPayload: Object[] = parseJsonText(
-        turnEventsNative(thread.remoteThreadId, pendingTurn.turnId),
+        await turnEventsAsyncNative(thread.remoteThreadId, pendingTurn.turnId),
         [] as Object
       ) as Object[];
       if (eventPayload.length > 0) {
