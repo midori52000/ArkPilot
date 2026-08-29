@@ -1,7 +1,7 @@
 import router from '@ohos.router';
 import mediaQuery from '@ohos.mediaquery';
 import { ProviderPreset, BUILTIN_PROVIDER_PRESETS } from '../apim/ApiTypes';
-import { ApiWireFormat, CustomHeadersEntry, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
+import { CustomHeadersEntry, ProviderCategory, ProviderRecord } from '../backend/ConsoleModels';
 import { configManagerFacade } from '../backend/CodexBackend';
 import { ArkPilotBreakpoint } from '../adaptive/BreakpointTypes';
 import { breakpointManager } from '../adaptive/BreakpointManager';
@@ -35,10 +35,8 @@ struct AddProviderPage {
   @State private websiteUrl: string = '';
   @State private apiKey: string = '';
   @State private baseUrl: string = '';
-  @State private wireApi: ApiWireFormat = 'anthropic';
   @State private requestFullUrl: boolean = false;
   @State private defaultModel: string = '';
-  @State private advancedExpanded: boolean = false;
   @State private editId: string = '';
   @State private contextWindowStr: string = '';
   private modelAutoCompactTokenLimit: number = 0;
@@ -126,7 +124,6 @@ struct AddProviderPage {
     this.websiteUrl = provider.websiteUrl;
     this.apiKey = provider.apiKey;
     this.baseUrl = provider.baseUrl;
-    this.wireApi = provider.wireApi;
     this.defaultModel = provider.model;
     this.contextWindowStr = provider.contextWindow > 0 ? String(provider.contextWindow) : '';
     this.modelAutoCompactTokenLimit = provider.modelAutoCompactTokenLimit;
@@ -238,14 +235,6 @@ struct AddProviderPage {
     return this.categoryLabel(preset.category);
   }
 
-  private selectedPresetWireApiLabel(): string {
-    const preset = this.selectedPreset();
-    if (preset === null) {
-      return '';
-    }
-    return preset.wireApi;
-  }
-
   private findPreset(presetId: string): ProviderPreset | null {
     for (let index = 0; index < BUILTIN_PROVIDER_PRESETS.length; index += 1) {
       if (BUILTIN_PROVIDER_PRESETS[index].id === presetId) {
@@ -280,7 +269,6 @@ struct AddProviderPage {
       this.apiKey = '';
       this.baseUrl = '';
       this.defaultModel = '';
-      this.wireApi = 'anthropic';
       this.modelAutoCompactTokenLimit = 0;
       if (withToast) {
         this.triggerFeedback('已切换到自定义配置。', 'info');
@@ -298,7 +286,6 @@ struct AddProviderPage {
     this.websiteUrl = preset.websiteUrl;
     this.baseUrl = preset.baseUrl;
     this.defaultModel = preset.defaultModel;
-    this.wireApi = preset.wireApi;
     this.modelAutoCompactTokenLimit = 0;
     if (withToast) {
       this.triggerFeedback(`已载入 ${preset.name} 预设。`, 'success');
@@ -359,7 +346,7 @@ struct AddProviderPage {
         '',
         authMode,
         headers,
-        this.wireApi,
+        'responses',
         category,
         this.providerNote,
         this.websiteUrl,
@@ -626,7 +613,6 @@ struct AddProviderPage {
       if (this.selectedPresetId !== 'custom' && this.selectedPreset() !== null) {
         Row() {
           this.chip(this.selectedPresetCategoryLabel(), '#EEF4FF', '#3563C8')
-          this.chip(this.selectedPresetWireApiLabel(), this.themeColor('#F8FAFC', '#263449'), this.textMuted())
         }
         .margin({ top: 10 })
       }
@@ -638,65 +624,11 @@ struct AddProviderPage {
 
   @Builder
   private requestHint() {
-    Text('兼容 OpenAI API，地址通常以 /v1 结尾')
+    Text('请填写 OpenAI 格式（Responses API）的请求地址，通常以 /v1 结尾')
       .copyOption(CopyOptions.LocalDevice)
       .fontSize(11)
       .fontColor(this.textSecondary())
       .margin({ top: 8 })
-  }
-
-  @Builder
-  private advancedSection() {
-    Column() {
-      Row() {
-        Text(this.advancedExpanded ? '⌄' : '›')
-          .fontSize(14)
-      .fontColor(this.textSecondary())
-        Text('高级选项')
-          .copyOption(CopyOptions.None)
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.textPrimary())
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .onClick(() => { this.advancedExpanded = !this.advancedExpanded; })
-
-      Text('按需修改 API、认证和模型映射。')
-        .copyOption(CopyOptions.LocalDevice)
-        .fontSize(11)
-        .fontColor(this.textSecondary())
-        .lineHeight(18)
-        .margin({ top: 8 })
-
-      if (this.advancedExpanded) {
-        Column() {
-          this.formLabel('Wire API')
-          Flex({ wrap: FlexWrap.Wrap }) {
-            ForEach(['responses', 'chat', 'anthropic'], (api: string) => {
-              Button(api)
-                .height(36)
-                .fontSize(11)
-                .fontWeight(this.wireApi === api ? FontWeight.Medium : FontWeight.Regular)
-                .fontColor(this.wireApi === api ? '#FFFFFF' : this.textMuted())
-                .backgroundColor(this.wireApi === api ? '#2284F6' : this.themeColor('#F5F7FB', '#263449'))
-                .borderRadius(12)
-                .border({ width: this.wireApi === api ? 0 : 1, color: this.themeColor('#E1E7F0', '#475569') })
-                .padding({ left: 14, right: 14 })
-                .margin({ right: 10 })
-                .onClick(() => {
-                  this.wireApi = api as ApiWireFormat;
-                  this.triggerFeedback(`已切换为 ${api} 格式。`, 'info');
-                })
-            }, (api: string) => api)
-          }
-          .width('100%')
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .margin({ top: 18 })
   }
 
   @Builder
@@ -709,7 +641,7 @@ struct AddProviderPage {
       if (this.isPhone) {
         Column() {
           this.formLabel('供应商名称')
-          TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
+          TextInput({ text: $$this.providerName, placeholder: '例如：OpenAI 官方' })
             .width('100%').height(42).backgroundColor(this.inputSurface())
             .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
             .padding({ left: 14, right: 14 }).margin({ top: 8 })
@@ -725,7 +657,7 @@ struct AddProviderPage {
         Row() {
           Column() {
             this.formLabel('供应商名称')
-            TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
+            TextInput({ text: $$this.providerName, placeholder: '例如：OpenAI 官方' })
               .width('100%').height(42).backgroundColor(this.inputSurface())
               .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
               .padding({ left: 14, right: 14 }).margin({ top: 8 })
@@ -759,7 +691,7 @@ struct AddProviderPage {
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
 
       this.formLabel('默认模型')
-      TextInput({ text: $$this.defaultModel, placeholder: '例如：claude-sonnet-4-6' })
+      TextInput({ text: $$this.defaultModel, placeholder: '例如：gpt-5.4' })
         .width('100%').height(42).backgroundColor(this.inputSurface())
         .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
@@ -838,7 +770,6 @@ struct AddProviderPage {
         .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
       this.requestHint()
-      this.advancedSection()
     }
     .padding(18)
     .backgroundColor(this.surface())

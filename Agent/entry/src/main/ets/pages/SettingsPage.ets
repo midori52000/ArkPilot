@@ -1657,10 +1657,6 @@ struct SettingsPage {
     switch (wireApi) {
       case 'responses':
         return 'Responses';
-      case 'chat':
-        return '对话';
-      case 'anthropic':
-        return 'Anthropic';
       default:
         return wireApi;
     }

@@ -48,22 +48,10 @@ class OpenAIUsageData {
   soft_limit_usd: string = '';
 }
 
-class ChatProbeMessage {
-  role: string = '';
-  content: string = '';
-}
-
-
 class ResponsesProbeBody {
   model: string = '';
   input: string = '';
   max_output_tokens: number = 0;
-}
-
-class ChatProbeBody {
-  model: string = '';
-  messages: ChatProbeMessage[] = [];
-  max_tokens: number = 0;
 }
 
 class ProviderImportEntry {
@@ -366,20 +354,17 @@ export class ApiManagementService {
       httpRequest.destroy();
     }
 
-    // Strategy 2: POST /chat/completions minimal probe
-    const chatUrl = `${trimmedBaseUrl}/chat/completions`;
+    // Strategy 2: POST /responses minimal probe
+    const responsesUrl = `${trimmedBaseUrl}/responses`;
     const httpRequest2 = http.createHttp();
     try {
-      const probeMsg: ChatProbeMessage = new ChatProbeMessage();
-      probeMsg.role = 'user';
-      probeMsg.content = 'hi';
-      const probeObj: ChatProbeBody = new ChatProbeBody();
+      const probeObj: ResponsesProbeBody = new ResponsesProbeBody();
       probeObj.model = 'gpt-4o-mini';
-      probeObj.messages = [probeMsg];
-      probeObj.max_tokens = 1;
+      probeObj.input = 'hi';
+      probeObj.max_output_tokens = 1;
       const probeBody = JSON.stringify(probeObj);
 
-      const chatResponse = await httpRequest2.request(chatUrl, {
+      const chatResponse = await httpRequest2.request(responsesUrl, {
         method: http.RequestMethod.POST,
         header: {
           'Authorization': `Bearer ${trimmedApiKey}`,
@@ -396,7 +381,7 @@ export class ApiManagementService {
       if (status === 200 || status === 201) {
         return new ApiValidationResult(
           true, status, latency,
-          '', 0, 'API 连通性正常（通过 Chat API 探测）'
+          '', 0, 'API 连通性正常（通过 Responses API 探测）'
         );
       }
 
@@ -431,70 +416,30 @@ export class ApiManagementService {
   // ========== 端点测速 ==========
 
   private async probeChatEndpoint(
-    baseUrl: string, apiKey: string, model: string, wireApi: string
+    baseUrl: string, apiKey: string, model: string
   ): Promise<ChatProbeResult> {
     const trimmedUrl = cleanBaseUrl(baseUrl);
     const effectiveModel: string = model.length > 0 ? model : 'gpt-4o-mini';
-    let chatUrl: string = '';
-    let body: string = '';
-
-    if (wireApi === 'chat' || wireApi === 'chat_completions') {
-      chatUrl = `${trimmedUrl}/chat/completions`;
-      const msg = new ChatProbeMessage();
-      msg.role = 'user';
-      msg.content = 'hi';
-      const probeBody = new ChatProbeBody();
-      probeBody.model = effectiveModel;
-      probeBody.messages = [msg];
-      probeBody.max_tokens = 1;
-      body = JSON.stringify(probeBody);
-    } else if (wireApi === 'anthropic') {
-      chatUrl = `${trimmedUrl}/messages`;
-      const msg = new ChatProbeMessage();
-      msg.role = 'user';
-      msg.content = 'hi';
-      const probeBody = new ChatProbeBody();
-      probeBody.model = model.length > 0 ? model : 'claude-3-haiku-20240307';
-      probeBody.messages = [msg];
-      probeBody.max_tokens = 1;
-      body = JSON.stringify(probeBody);
-    } else {
-      chatUrl = `${trimmedUrl}/responses`;
-      const respBody = new ResponsesProbeBody();
-      respBody.model = effectiveModel;
-      respBody.input = 'hi';
-      respBody.max_output_tokens = 1;
-      body = JSON.stringify(respBody);
-    }
+    const chatUrl = `${trimmedUrl}/responses`;
+    const respBody = new ResponsesProbeBody();
+    respBody.model = effectiveModel;
+    respBody.input = 'hi';
+    respBody.max_output_tokens = 1;
+    const body = JSON.stringify(respBody);
 
     const startTime: number = Date.now();
     const httpRequest = http.createHttp();
     try {
-      let response: http.HttpResponse;
-      if (wireApi === 'anthropic') {
-        response = await httpRequest.request(chatUrl, {
-          method: http.RequestMethod.POST,
-          header: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          extraData: body,
-          connectTimeout: 15000,
-          readTimeout: 15000
-        });
-      } else {
-        response = await httpRequest.request(chatUrl, {
-          method: http.RequestMethod.POST,
-          header: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          extraData: body,
-          connectTimeout: 15000,
-          readTimeout: 15000
-        });
-      }
+      const response = await httpRequest.request(chatUrl, {
+        method: http.RequestMethod.POST,
+        header: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        extraData: body,
+        connectTimeout: 15000,
+        readTimeout: 15000
+      });
 
       const latency: number = Date.now() - startTime;
       const status: number = response.responseCode;
@@ -563,7 +508,7 @@ export class ApiManagementService {
           let chatProbe: ChatProbeResult | null = null;
           if (modelsOk) {
             chatProbe = await this.probeChatEndpoint(
-              trimmedUrl, provider.apiKey, provider.model, provider.wireApi
+              trimmedUrl, provider.apiKey, provider.model
             );
           }
 
