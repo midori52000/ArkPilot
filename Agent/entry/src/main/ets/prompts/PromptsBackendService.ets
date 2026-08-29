@@ -1,10 +1,13 @@
 import { getPromptsRegistry, savePromptsRegistry, readAgentsMd, writeAgentsMd, enablePromptNative, disableAllPromptsNative } from '../backend/CodexNative';
 import { PromptRecord, PromptImportResult } from './PromptTypes';
 import fileIo from '@ohos.file.fs';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const MAX_NAME_LEN = 100;
 const MAX_CONTENT_PREVIEW_LEN = 500;
 const AUTO_IMPORT_MARKER_NAME = '.prompts-auto-imported';
+const BACKEND_LOG_DOMAIN: number = 0x0ff1;
+const BACKEND_LOG_TAG: string = 'PromptsService';
 
 export enum PromptErrorCode {
   INVALID_NAME = 'INVALID_NAME',
@@ -75,6 +78,12 @@ const INDUSTRIAL_ENGINEER_FRAMEWORK = `# 工业软件设计工程师思维框架
 ## 反模式警觉
 
 遇到以下模式时主动警告：上帝类、硬编码协议、无超时通信、UI 线程阻塞、浮点直接比较、状态魔数、日志不足。
+
+## 回复铁律
+
+- 完成推理、工具调用或命令执行后，必须向用户输出一段**完整、清晰的最终回答**（结论 + 关键依据），不得只输出推理或不输出正文就结束。
+- 任务未完成时，不得自行判定"已完成"；若需用户决策或遇到阻塞，应明确说明当前进度与下一步。
+- 长思考后必须收敛：把推理沉淀为可读的最终正文，避免"想了很久却不写出来"。
 `;
 
 export class PromptsBackendService {
@@ -229,6 +238,31 @@ export class PromptsBackendService {
       : content;
 
     return new PromptImportResult(prompt, preview);
+  }
+
+  /** 幂等确保 AGENTS.md 含"回复铁律"段：缺则追加到末尾（保留用户已有内容）。 */
+  async ensureReplyRules(): Promise<void> {
+    const REPLY_RULES_MARKER: string = '## 回复铁律';
+    const REPLY_RULES: string = `
+## 回复铁律
+
+- 完成推理、工具调用或命令执行后，必须向用户输出一段**完整、清晰的最终回答**（结论 + 关键依据），不得只输出推理或不输出正文就结束。
+- 任务未完成时，不得自行判定"已完成"；若需用户决策或遇到阻塞，应明确说明当前进度与下一步。
+- 长思考后必须收敛：把推理沉淀为可读的最终正文，避免"想了很久却不写出来"。`;
+    try {
+      const existingContent: string = readAgentsMd(this.codexHome);
+      if (existingContent.indexOf(REPLY_RULES_MARKER) >= 0) {
+        return;
+      }
+      const next: string = existingContent.trim().length > 0
+        ? `${existingContent}\n${REPLY_RULES}`
+        : REPLY_RULES;
+      if (!writeAgentsMd(this.codexHome, next)) {
+        throw new Error('写入 AGENTS.md 回复铁律失败');
+      }
+    } catch (err) {
+      hilog.warn(BACKEND_LOG_DOMAIN, BACKEND_LOG_TAG, 'ensureReplyRules failed: %{public}s', err instanceof Error ? err.message : JSON.stringify(err));
+    }
   }
 
   async autoImportOnFirstLaunch(): Promise<void> {

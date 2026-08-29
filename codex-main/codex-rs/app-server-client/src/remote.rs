@@ -467,6 +467,12 @@ impl RemoteAppServerClient {
         })
     }
 
+    /// worker 线程是否仍在运行。收到 Disconnected 后 worker 退出，
+    /// 调用方应据此把 state.client 置为 None（丢弃死 client）以便后续重连。
+    pub fn is_healthy(&self) -> bool {
+        !self.worker_handle.is_finished()
+    }
+
     pub fn request_handle(&self) -> RemoteAppServerRequestHandle {
         RemoteAppServerRequestHandle {
             command_tx: self.command_tx.clone(),

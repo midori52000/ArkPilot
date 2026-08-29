@@ -37,6 +37,10 @@ export default class EntryAbility extends UIAbility {
       promptsService.autoImportOnFirstLaunch().catch((err: Error) => {
         hilog.warn(DOMAIN, TAG, 'Prompt auto import failed: %{public}s', JSON.stringify(err));
       });
+      // 幂等追加"回复铁律"：确保 AGENTS.md 引导模型推理后必须输出结论正文（对已安装用户也生效）
+      promptsService.ensureReplyRules().catch((err: Error) => {
+        hilog.warn(DOMAIN, TAG, 'ensureReplyRules failed: %{public}s', JSON.stringify(err));
+      });
 
       // 首次启动安装预设 bundled skills（延迟到首帧之后执行，避免阻塞 onCreate）
       setTimeout(() => {

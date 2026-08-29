@@ -3416,13 +3416,19 @@ async fn process_pending_events_with_limits(
             .ok()
             .flatten();
         let should_stop = event.is_none();
+        let mut event_result = Ok(());
         if let Some(app_event) = event {
-            handle_app_server_event(&mut client, app_event, target_turn_id).await?;
-            processed_events += 1;
+            event_result = handle_app_server_event(&mut client, app_event, target_turn_id).await;
+            if event_result.is_ok() {
+                processed_events += 1;
+            }
         }
+        // 先放回 client（断开/worker 退出时丢弃为 None 以便重连），再传播事件处理错误，
+        // 避免 take 后因 ? 提前返回导致 state.client 永久丢失。
         with_native_state(|state| {
-            state.client = Some(client);
+            state.client = if client.is_healthy() { Some(client) } else { None };
         });
+        event_result?;
         if should_stop {
             break;
         }
@@ -4202,135 +4208,145 @@ fn resolve_pending_approval(params_json: *const c_char, approved: bool) -> i32 {
         serde_json::from_str::<NativeApprovalActionRequest>(&params_text).unwrap_or_default();
     let request_id_from_payload = parse_request_id_value(&request.request_id);
     let result = with_runtime_result(async move {
-        let (client, pending) = with_native_state(|state| {
-            let client = state.client.take();
+        // take 出 client 后，无论处理成功/失败都在末尾统一放回（健康检查），
+        // 避免各 ? 提前返回导致 state.client 永久丢失。
+        let client = with_native_state(|state| state.client.take());
+        let mut pending = with_native_state(|state| {
             let pending = state.pending_approval.clone();
             if pending.is_none() {
                 state.pending_approval = None;
             }
-            (client, pending)
+            pending
         });
-        let client = client.context("remote app-server client is not initialized")?;
-        let pending = pending.context("no pending approval request")?;
-        if let Some(request_id) = request_id_from_payload {
-            if request_id != pending.request_id {
-                with_native_state(|state| {
-                    state.client = Some(client);
-                });
-                anyhow::bail!("approval request id does not match current pending approval");
+        let outcome = async {
+            let client = client.as_ref().context("remote app-server client is not initialized")?;
+            let pending_ref = pending.as_ref().context("no pending approval request")?;
+            if let Some(request_id) = request_id_from_payload {
+                if request_id != pending_ref.request_id {
+                    anyhow::bail!("approval request id does not match current pending approval");
+                }
             }
-        }
-        let response = match pending.resolution_kind {
-            PendingApprovalResolutionKind::CommandExecution => {
-                let decision = if approved {
-                    CommandExecutionApprovalDecision::Accept
-                } else {
-                    CommandExecutionApprovalDecision::Decline
-                };
-                serde_json::to_value(CommandExecutionRequestApprovalResponse { decision })?
-            }
-            PendingApprovalResolutionKind::FileChange => {
-                let decision = if approved {
-                    FileChangeApprovalDecision::Accept
-                } else {
-                    FileChangeApprovalDecision::Decline
-                };
-                serde_json::to_value(FileChangeRequestApprovalResponse { decision })?
-            }
-            PendingApprovalResolutionKind::Permissions => {
-                let permissions = if approved {
-                    GrantedPermissionProfile {
-                        network: None,
-                        file_system: None,
-                    }
-                } else {
-                    GrantedPermissionProfile::default()
-                };
-                serde_json::to_value(PermissionsRequestApprovalResponse {
-                    permissions,
-                    scope: PermissionGrantScope::Turn,
-                })?
-            }
-            PendingApprovalResolutionKind::LegacyPatch => {
-                let decision = if approved {
-                    codex_protocol::protocol::ReviewDecision::Approved
-                } else {
-                    codex_protocol::protocol::ReviewDecision::Denied
-                };
-                serde_json::to_value(ApplyPatchApprovalResponse { decision })?
-            }
-            PendingApprovalResolutionKind::LegacyExec => {
-                let decision = if approved {
-                    codex_protocol::protocol::ReviewDecision::Approved
-                } else {
-                    codex_protocol::protocol::ReviewDecision::Denied
-                };
-                serde_json::to_value(codex_app_server_protocol::ExecCommandApprovalResponse {
-                    decision,
-                })?
-            }
-            PendingApprovalResolutionKind::RequestUserInput => {
-                if approved {
-                    let answers = request
-                        .answers
-                        .into_iter()
-                        .map(|(question_id, answer)| {
-                            (
-                                question_id,
-                                ToolRequestUserInputAnswer {
-                                    answers: answer.answers,
+            let response = match pending_ref.resolution_kind {
+                PendingApprovalResolutionKind::CommandExecution => {
+                    let decision = if approved {
+                        CommandExecutionApprovalDecision::Accept
+                    } else {
+                        CommandExecutionApprovalDecision::Decline
+                    };
+                    serde_json::to_value(CommandExecutionRequestApprovalResponse { decision })?
+                }
+                PendingApprovalResolutionKind::FileChange => {
+                    let decision = if approved {
+                        FileChangeApprovalDecision::Accept
+                    } else {
+                        FileChangeApprovalDecision::Decline
+                    };
+                    serde_json::to_value(FileChangeRequestApprovalResponse { decision })?
+                }
+                PendingApprovalResolutionKind::Permissions => {
+                    let permissions = if approved {
+                        GrantedPermissionProfile {
+                            network: None,
+                            file_system: None,
+                        }
+                    } else {
+                        GrantedPermissionProfile::default()
+                    };
+                    serde_json::to_value(PermissionsRequestApprovalResponse {
+                        permissions,
+                        scope: PermissionGrantScope::Turn,
+                    })?
+                }
+                PendingApprovalResolutionKind::LegacyPatch => {
+                    let decision = if approved {
+                        codex_protocol::protocol::ReviewDecision::Approved
+                    } else {
+                        codex_protocol::protocol::ReviewDecision::Denied
+                    };
+                    serde_json::to_value(ApplyPatchApprovalResponse { decision })?
+                }
+                PendingApprovalResolutionKind::LegacyExec => {
+                    let decision = if approved {
+                        codex_protocol::protocol::ReviewDecision::Approved
+                    } else {
+                        codex_protocol::protocol::ReviewDecision::Denied
+                    };
+                    serde_json::to_value(codex_app_server_protocol::ExecCommandApprovalResponse {
+                        decision,
+                    })?
+                }
+                PendingApprovalResolutionKind::RequestUserInput => {
+                    if approved {
+                        let answers = request
+                            .answers
+                            .into_iter()
+                            .map(|(question_id, answer)| {
+                                (
+                                    question_id,
+                                    ToolRequestUserInputAnswer {
+                                        answers: answer.answers,
+                                    },
+                                )
+                            })
+                            .collect::<HashMap<_, _>>();
+                        serde_json::to_value(ToolRequestUserInputResponse { answers })?
+                    } else {
+                        client
+                            .reject_server_request(
+                                pending_ref.request_id.clone(),
+                                codex_app_server_protocol::JSONRPCErrorError {
+                                    code: -32600,
+                                    data: None,
+                                    message: "user rejected request_user_input".to_string(),
                                 },
                             )
+                            .await
+                            .map_err(anyhow::Error::from)?;
+                        // 已发送拒绝：保留 pending_approval=None（下方统一清空）
+                        return Ok(());
+                    }
+                }
+                PendingApprovalResolutionKind::McpElicitationApproval => {
+                    if approved {
+                        // Accept elicitation: action=accept, content=null
+                        // Per parse_mcp_tool_approval_elicitation_response (mcp_tool_call.rs:1315):
+                        // Accept with content=None → Cancel → mapped to Accept
+                        serde_json::json!({
+                            "action": "accept",
+                            "content": null
                         })
-                        .collect::<HashMap<_, _>>();
-                    serde_json::to_value(ToolRequestUserInputResponse { answers })?
-                } else {
-                    client
-                        .reject_server_request(
-                            pending.request_id.clone(),
-                            codex_app_server_protocol::JSONRPCErrorError {
-                                code: -32600,
-                                data: None,
-                                message: "user rejected request_user_input".to_string(),
-                            },
-                        )
-                        .await
-                        .map_err(anyhow::Error::from)?;
-                    with_native_state(|state| {
-                        state.client = Some(client);
-                        state.pending_approval = None;
-                    });
-                    clear_pending_approval();
-                    return Ok::<(), anyhow::Error>(());
+                    } else {
+                        // Decline elicitation
+                        serde_json::json!({
+                            "action": "decline"
+                        })
+                    }
                 }
-            }
-            PendingApprovalResolutionKind::McpElicitationApproval => {
-                if approved {
-                    // Accept elicitation: action=accept, content=null
-                    // Per parse_mcp_tool_approval_elicitation_response (mcp_tool_call.rs:1315):
-                    // Accept with content=None → Cancel → mapped to Accept
-                    serde_json::json!({
-                        "action": "accept",
-                        "content": null
-                    })
-                } else {
-                    // Decline elicitation
-                    serde_json::json!({
-                        "action": "decline"
-                    })
-                }
-            }
-        };
-        client
-            .resolve_server_request(pending.request_id.clone(), response)
-            .await
-            .map_err(anyhow::Error::from)?;
+            };
+            client
+                .resolve_server_request(pending_ref.request_id.clone(), response)
+                .await
+                .map_err(anyhow::Error::from)?;
+            Ok(())
+        }.await;
+
+        // 统一收口：放回 client（健康则 Some，断开/worker 退出则 None 以便重连），
+        // 成功时清空 pending_approval。
         with_native_state(|state| {
-            state.client = Some(client);
-            state.pending_approval = None;
+            state.client = match client {
+                Some(c) if c.is_healthy() => Some(c),
+                _ => None,
+            };
+            if outcome.is_ok() {
+                state.pending_approval = None;
+            }
         });
-        clear_pending_approval();
-        Ok::<(), anyhow::Error>(())
+        if outcome.is_ok() {
+            clear_pending_approval();
+        }
+        // 让 pending 存活到闭包末尾，避免借用冲突。
+        drop(pending);
+        outcome
     });
     if let Err(err) = result {
         set_host_message(format!("approval resolution failed: {err}"));
@@ -5351,7 +5367,7 @@ async fn wait_for_thread_closed(thread_id: &str) -> Result<()> {
             None => false,
         };
         with_native_state(|state| {
-            state.client = Some(client);
+            state.client = if client.is_healthy() { Some(client) } else { None };
         });
         event_result?;
         if closed {
