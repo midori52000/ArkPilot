@@ -12,7 +12,6 @@ const HUAWEI_ID_LOGIN_SYSCAP: string = 'SystemCapability.AuthenticationServices.
 @Entry
 @Component
 struct LoginPage {
-  @StorageProp('arkPilotThemeMode') themeMode: string = 'light';
   @State private errorText: string = '';
   @State private capabilitySupported: boolean = true;
   @State private lastAccount: string = '';
@@ -24,7 +23,7 @@ struct LoginPage {
   private loginParams: loginComponentManager.LoginWithHuaweiIDButtonParams = {
     style: loginComponentManager.Style.BUTTON_RED,
     borderRadius: 28,
-    supportDarkMode: true,
+    supportDarkMode: false,
     loginType: loginComponentManager.LoginType.ID,
     textAndIconStyle: true
   };
@@ -101,28 +100,20 @@ struct LoginPage {
     this.errorText = '';
   }
 
-  private isDarkMode(): boolean {
-    return this.themeMode === 'dark';
-  }
-
-  private themeColor(light: string, dark: string): string {
-    return this.isDarkMode() ? dark : light;
-  }
-
   private textPrimary(): string {
-    return this.themeColor('#0F172A', '#F8FAFC');
+    return '#0F172A';
   }
 
   private textSecondary(): string {
-    return this.themeColor('#475569', '#CBD5E1');
+    return '#475569';
   }
 
   private textMuted(): string {
-    return this.themeColor('#64748B', '#A8B3C2');
+    return '#64748B';
   }
 
   private surface(): string {
-    return this.themeColor('#FFFFFF', '#1E293B');
+    return '#FFFFFF';
   }
 
   build() {
@@ -130,7 +121,7 @@ struct LoginPage {
       Column() {}
         .width('100%')
         .height('100%')
-        .backgroundColor(this.themeColor('#EEF2F7', '#121212'))
+        .backgroundColor('#EEF2F7')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       Column() {
@@ -170,7 +161,7 @@ struct LoginPage {
           }
           .width('100%')
           .padding(16)
-          .backgroundColor(this.themeColor('#FFFFFF', '#252526'))
+          .backgroundColor('#FFFFFF')
           .borderRadius(16)
           .margin({ top: 36 })
         }
@@ -189,7 +180,7 @@ struct LoginPage {
               .copyOption(CopyOptions.None)
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
-              .fontColor(this.themeColor('#2563EB', '#60A5FA'))
+              .fontColor('#2563EB')
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .onClick(() => {
                 this.openSwitchAccount();
@@ -197,7 +188,7 @@ struct LoginPage {
           }
           .width('100%')
           .padding({ left: 16, right: 12, top: 12, bottom: 12 })
-          .backgroundColor(this.themeColor('#F5F7FA', '#252526'))
+          .backgroundColor('#F5F7FA')
           .borderRadius(14)
           .margin({ top: 18 })
         }

@@ -3,7 +3,6 @@
     "pages/LoginPage",
     "pages/Index",
     "pages/SettingsPage",
-    "pages/AddProviderPage",
-    "pages/WebPreviewPage"
+    "pages/AddProviderPage"
   ]
 }

@@ -102,8 +102,6 @@ struct SettingsPage {
   @StorageProp('arkPilotBreakpoint')
   @Watch('onBreakpointChange')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
-  @StorageProp('arkPilotThemeMode')
-  themeMode: string = 'light';
   @State private animatedMode: ArkPilotLayoutMode = 'phone';
   @State private activeTab: SettingsTab = 'api';
   @State private pressedKey: string = '';
@@ -1919,36 +1917,28 @@ struct SettingsPage {
     return '#475569';
   }
 
-  private isDarkMode(): boolean {
-    return this.themeMode === 'dark';
-  }
-
-  private themeColor(light: string, dark: string): string {
-    return this.isDarkMode() ? dark : light;
-  }
-
   private textPrimary(): string {
-    return this.themeColor('#0F172A', '#F8FAFC');
+    return '#0F172A';
   }
 
   private textSecondary(): string {
-    return this.themeColor('#475569', '#CBD5E1');
+    return '#475569';
   }
 
   private textMuted(): string {
-    return this.themeColor('#64748B', '#A8B3C2');
+    return '#64748B';
   }
 
   private surface(): string {
-    return this.themeColor('#FFFFFF', '#1E293B');
+    return '#FFFFFF';
   }
 
   private elevatedSurface(): string {
-    return this.themeColor('#F8FAFC', '#263449');
+    return '#F8FAFC';
   }
 
   private pageBackground(): string {
-    return this.themeColor('#F1F3F5', '#0F172A');
+    return '#F1F3F5';
   }
 
   private speedProbeDetailSize(r: EndpointSpeedResult): number {
@@ -1991,9 +1981,9 @@ struct SettingsPage {
               .height(32)
               .fontSize(20)
               .fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155'))
+              .backgroundColor('#E2E8F0')
               .borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .border({ width: 1, color: '#CBD5E1' })
               .margin({ left: 12 })
               .onClick(() => { this.runMotion(() => { this.apiShowSpeedResults = false; }); })
           }
@@ -2153,7 +2143,7 @@ struct SettingsPage {
       .padding(this.isPhoneBreakpoint() ? 0 : { left: 12, right: 14 })
       .backgroundColor(this.surface())
       .borderRadius(this.isPhoneBreakpoint() ? 12 : 10)
-      .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+      .border({ width: 1, color: '#E5E7EB' })
       .scale({ x: this.pressScale('back'), y: this.pressScale('back') })
       .animation({ duration: 140, curve: Curve.FastOutSlowIn })
       .onTouch((event: TouchEvent) => { this.updatePressed('back', event); })
@@ -2182,7 +2172,7 @@ struct SettingsPage {
           .padding({ left: 10, right: 10 })
           .backgroundColor(this.elevatedSurface())
           .borderRadius(12)
-          .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+          .border({ width: 1, color: '#E5E7EB' })
           .scale({ x: this.pressScale('config-toml'), y: this.pressScale('config-toml') })
           .animation({ duration: 140, curve: Curve.FastOutSlowIn })
           .onTouch((event: TouchEvent) => { this.updatePressed('config-toml', event); })
@@ -2197,7 +2187,7 @@ struct SettingsPage {
           .fontColor(this.textPrimary())
           .backgroundColor(this.elevatedSurface())
           .borderRadius(12)
-          .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+          .border({ width: 1, color: '#E5E7EB' })
           .scale({ x: this.pressScale('settings-close'), y: this.pressScale('settings-close') })
           .animation({ duration: 140, curve: Curve.FastOutSlowIn })
           .onTouch((event: TouchEvent) => { this.updatePressed('settings-close', event); })
@@ -2311,9 +2301,9 @@ struct SettingsPage {
               .height(32)
               .fontSize(20)
               .fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155'))
+              .backgroundColor('#E2E8F0')
               .borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => { this.runMotion(() => { this.showConfigToml = false; }); })
           }
           .width('100%')
@@ -2393,14 +2383,14 @@ struct SettingsPage {
       .height(36)
       .backgroundColor(this.elevatedSurface())
       .borderRadius(10)
-      .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+      .border({ width: 1, color: '#E5E7EB' })
       .onClick(() => { this.openConfigToml(); })
     }
     .width(260)
     .height('100%')
     .padding(16)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+    .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(16)
   }
 
@@ -2417,7 +2407,7 @@ struct SettingsPage {
     .width('100%')
     .height(56)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+    .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(16)
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
@@ -2447,7 +2437,7 @@ struct SettingsPage {
     .height(42)
     .margin({ right: 6 })
       .backgroundColor(this.activeTab === item.tab ? this.elevatedSurface() : this.surface())
-      .border({ width: 1, color: this.activeTab === item.tab ? '#93C5FD' : this.themeColor('#EDF2F7', '#334155') })
+      .border({ width: 1, color: this.activeTab === item.tab ? '#93C5FD' : '#EDF2F7' })
     .borderRadius(16)
     .scale({ x: this.pressScale(`top-nav-${item.tab}`), y: this.pressScale(`top-nav-${item.tab}`) })
     .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -2469,7 +2459,7 @@ struct SettingsPage {
     .width('100%')
     .padding(18)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#DFE9F5', '#334155') })
+    .border({ width: 1, color: '#DFE9F5' })
     .borderRadius(24)
   }
 
@@ -2545,7 +2535,7 @@ struct SettingsPage {
     .height('100%')
     .scrollBar(BarState.Off)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E5E7EB', '#334155') })
+    .border({ width: 1, color: '#E5E7EB' })
     .borderRadius(16)
     .margin({ left: this.isPhoneBreakpoint() ? 0 : 16, top: this.isPhoneBreakpoint() ? 10 : 0 })
   }
@@ -2640,7 +2630,7 @@ struct SettingsPage {
     .width('100%')
     .padding(18)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
+    .border({ width: 1, color: '#E2EAF3' })
     .borderRadius(22)
   }
 
@@ -2663,9 +2653,9 @@ struct SettingsPage {
       .fontSize(12)
       .fontWeight(FontWeight.Medium)
       .fontColor(primary ? '#FFFFFF' : this.textPrimary())
-      .backgroundColor(primary ? this.themeColor('#111827', '#2563EB') : this.surface())
+      .backgroundColor(primary ? '#111827' : this.surface())
       .borderRadius(16)
-      .border({ width: primary ? 0 : 1, color: this.themeColor('#D5E0ED', '#475569') })
+      .border({ width: primary ? 0 : 1, color: '#D5E0ED' })
       .padding({ left: 16, right: 16 })
       .scale({ x: this.pressScale(key), y: this.pressScale(key) })
       .animation({ duration: 140, curve: Curve.FastOutSlowIn })
@@ -2800,8 +2790,8 @@ struct SettingsPage {
           }
           .width('100%')
           .margin({ top: 8 })
-          .backgroundColor(this.selectedSkillId === skill.id ? this.themeColor('#F0F9FF', '#1E3A5F') : this.surface())
-          .border({ width: 1, color: this.selectedSkillId === skill.id ? '#93C5FD' : this.themeColor('#E5E7EB', '#334155') })
+          .backgroundColor(this.selectedSkillId === skill.id ? '#F0F9FF' : this.surface())
+          .border({ width: 1, color: this.selectedSkillId === skill.id ? '#93C5FD' : '#E5E7EB' })
           .borderRadius(12)
           .onClick(() => { this.selectSkillForPreview(skill); })
         }, (skill: InstalledSkill) => `${skill.id}-${skill.enabled}`)
@@ -3152,8 +3142,8 @@ struct SettingsPage {
               .accessibilityText('关闭')
               .width(32).height(32)
               .fontSize(20).fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .backgroundColor('#E2E8F0').borderRadius(10)
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => { this.cancelUninstallSkill(); })
           }
           .width('100%')
@@ -3517,8 +3507,8 @@ struct SettingsPage {
               .accessibilityText('关闭')
               .width(32).height(32)
               .fontSize(20).fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .backgroundColor('#E2E8F0').borderRadius(10)
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => { this.cancelMcpAdd(); })
           }
           .width('100%')
@@ -3585,8 +3575,8 @@ struct SettingsPage {
               .accessibilityText('关闭')
               .width(32).height(32)
               .fontSize(20).fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .backgroundColor('#E2E8F0').borderRadius(10)
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => { this.cancelMcpDelete(); })
           }
           .width('100%')
@@ -3639,8 +3629,8 @@ struct SettingsPage {
               .accessibilityText('关闭')
               .width(32).height(32)
               .fontSize(20).fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155')).borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .backgroundColor('#E2E8F0').borderRadius(10)
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => { this.cancelDeletePrompt(); })
           }
           .width('100%')
@@ -4296,7 +4286,7 @@ struct SettingsPage {
     .width('100%')
     .padding(16)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
+    .border({ width: 1, color: '#E2EAF3' })
     .borderRadius(20)
     .margin({ top: 12 })
   }
@@ -4489,9 +4479,9 @@ struct SettingsPage {
               .height(32)
               .fontSize(20)
               .fontColor(this.textSecondary())
-              .backgroundColor(this.themeColor('#E2E8F0', '#334155'))
+              .backgroundColor('#E2E8F0')
               .borderRadius(10)
-              .border({ width: 1, color: this.themeColor('#CBD5E1', '#475569') })
+              .border({ width: 1, color: '#CBD5E1' })
               .onClick(() => { this.runMotion(() => { this.showValidationDialog = false; }); })
           }
           .width('100%')

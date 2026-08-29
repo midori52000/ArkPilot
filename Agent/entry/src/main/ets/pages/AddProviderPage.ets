@@ -24,7 +24,6 @@ class UiToastItem {
 @Component
 struct AddProviderPage {
   @StorageProp('arkPilotBreakpoint') currentBreakpoint: ArkPilotBreakpoint = 'sm';
-  @StorageProp('arkPilotThemeMode') themeMode: string = 'light';
   @State private isSubmitting: boolean = false;
   @State private sparkSeed: number = 0;
   @State private toasts: UiToastItem[] = [];
@@ -49,32 +48,24 @@ struct AddProviderPage {
     return this.currentBreakpoint === 'xs' || this.currentBreakpoint === 'sm';
   }
 
-  private isDarkMode(): boolean {
-    return this.themeMode === 'dark';
-  }
-
-  private themeColor(light: string, dark: string): string {
-    return this.isDarkMode() ? dark : light;
-  }
-
   private textPrimary(): string {
-    return this.themeColor('#0F172A', '#F8FAFC');
+    return '#0F172A';
   }
 
   private textSecondary(): string {
-    return this.themeColor('#475569', '#CBD5E1');
+    return '#475569';
   }
 
   private textMuted(): string {
-    return this.themeColor('#64748B', '#A8B3C2');
+    return '#64748B';
   }
 
   private surface(): string {
-    return this.themeColor('#FFFFFF', '#1E293B');
+    return '#FFFFFF';
   }
 
   private inputSurface(): string {
-    return this.themeColor('#FFFFFF', '#172033');
+    return '#FFFFFF';
   }
 
   private get pagePadding(): number {
@@ -563,9 +554,9 @@ struct AddProviderPage {
           .fontSize(11)
           .fontWeight(this.selectedPresetId === 'custom' ? FontWeight.Medium : FontWeight.Regular)
           .fontColor(this.selectedPresetId === 'custom' ? '#FFFFFF' : this.textMuted())
-          .backgroundColor(this.selectedPresetId === 'custom' ? '#2284F6' : this.themeColor('#F5F7FB', '#263449'))
+          .backgroundColor(this.selectedPresetId === 'custom' ? '#2284F6' : '#F5F7FB')
           .borderRadius(12)
-          .border({ width: this.selectedPresetId === 'custom' ? 0 : 1, color: this.themeColor('#E1E7F0', '#475569') })
+          .border({ width: this.selectedPresetId === 'custom' ? 0 : 1, color: '#E1E7F0' })
           .padding({ left: 14, right: 14 })
           .margin({ right: 10, bottom: 10 })
           .onClick(() => { this.applyPreset('custom'); })
@@ -576,9 +567,9 @@ struct AddProviderPage {
             .fontSize(11)
             .fontWeight(this.selectedPresetId === preset.id ? FontWeight.Medium : FontWeight.Regular)
             .fontColor(this.selectedPresetId === preset.id ? '#FFFFFF' : this.textMuted())
-            .backgroundColor(this.selectedPresetId === preset.id ? '#2284F6' : this.themeColor('#F5F7FB', '#263449'))
+            .backgroundColor(this.selectedPresetId === preset.id ? '#2284F6' : '#F5F7FB')
             .borderRadius(12)
-            .border({ width: this.selectedPresetId === preset.id ? 0 : 1, color: this.themeColor('#E1E7F0', '#475569') })
+            .border({ width: this.selectedPresetId === preset.id ? 0 : 1, color: '#E1E7F0' })
             .padding({ left: 14, right: 14 })
             .margin({ right: 10, bottom: 10 })
             .onClick(() => { this.applyPreset(preset.id); })
@@ -601,7 +592,7 @@ struct AddProviderPage {
     .width('100%')
     .padding(18)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
+    .border({ width: 1, color: '#E2EAF3' })
     .borderRadius(24)
   }
 
@@ -626,7 +617,7 @@ struct AddProviderPage {
       if (this.selectedPresetId !== 'custom' && this.selectedPreset() !== null) {
         Row() {
           this.chip(this.selectedPresetCategoryLabel(), '#EEF4FF', '#3563C8')
-          this.chip(this.selectedPresetWireApiLabel(), this.themeColor('#F8FAFC', '#263449'), this.textMuted())
+          this.chip(this.selectedPresetWireApiLabel(), '#F8FAFC', this.textMuted())
         }
         .margin({ top: 10 })
       }
@@ -679,9 +670,9 @@ struct AddProviderPage {
                 .fontSize(11)
                 .fontWeight(this.wireApi === api ? FontWeight.Medium : FontWeight.Regular)
                 .fontColor(this.wireApi === api ? '#FFFFFF' : this.textMuted())
-                .backgroundColor(this.wireApi === api ? '#2284F6' : this.themeColor('#F5F7FB', '#263449'))
+                .backgroundColor(this.wireApi === api ? '#2284F6' : '#F5F7FB')
                 .borderRadius(12)
-                .border({ width: this.wireApi === api ? 0 : 1, color: this.themeColor('#E1E7F0', '#475569') })
+                .border({ width: this.wireApi === api ? 0 : 1, color: '#E1E7F0' })
                 .padding({ left: 14, right: 14 })
                 .margin({ right: 10 })
                 .onClick(() => {
@@ -711,13 +702,13 @@ struct AddProviderPage {
           this.formLabel('供应商名称')
           TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
             .width('100%').height(42).backgroundColor(this.inputSurface())
-            .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+            .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
             .padding({ left: 14, right: 14 }).margin({ top: 8 })
 
           this.formLabel('备注')
           TextInput({ text: $$this.providerNote, placeholder: '例如：公司专用账号' })
             .width('100%').height(42).backgroundColor(this.inputSurface())
-            .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+            .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
             .padding({ left: 14, right: 14 }).margin({ top: 8 })
         }
         .width('100%')
@@ -727,7 +718,7 @@ struct AddProviderPage {
             this.formLabel('供应商名称')
             TextInput({ text: $$this.providerName, placeholder: '例如：Claude 官方' })
               .width('100%').height(42).backgroundColor(this.inputSurface())
-              .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+              .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
               .padding({ left: 14, right: 14 }).margin({ top: 8 })
           }
           .layoutWeight(1)
@@ -736,7 +727,7 @@ struct AddProviderPage {
             this.formLabel('备注')
             TextInput({ text: $$this.providerNote, placeholder: '例如：公司专用账号' })
               .width('100%').height(42).backgroundColor(this.inputSurface())
-              .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+              .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
               .padding({ left: 14, right: 14 }).margin({ top: 8 })
           }
           .layoutWeight(1)
@@ -749,19 +740,19 @@ struct AddProviderPage {
       this.formLabel('官网链接')
       TextInput({ text: $$this.websiteUrl, placeholder: 'https://example.com（可选）' })
         .width('100%').height(42).backgroundColor(this.inputSurface())
-        .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
 
       this.formLabel('API Key')
       TextInput({ text: $$this.apiKey, placeholder: '只需要填这里，下方配置会自动填充' })
         .width('100%').height(42).backgroundColor(this.inputSurface())
-        .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
 
       this.formLabel('默认模型')
       TextInput({ text: $$this.defaultModel, placeholder: '例如：claude-sonnet-4-6' })
         .width('100%').height(42).backgroundColor(this.inputSurface())
-        .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
 
       if (this.currentPresetModels().length > 0) {
@@ -772,9 +763,9 @@ struct AddProviderPage {
               .fontSize(10)
               .fontWeight(this.defaultModel === model ? FontWeight.Medium : FontWeight.Regular)
               .fontColor(this.defaultModel === model ? '#FFFFFF' : this.textMuted())
-              .backgroundColor(this.defaultModel === model ? '#2284F6' : this.themeColor('#F5F7FB', '#263449'))
+              .backgroundColor(this.defaultModel === model ? '#2284F6' : '#F5F7FB')
               .borderRadius(10)
-              .border({ width: this.defaultModel === model ? 0 : 1, color: this.themeColor('#E1E7F0', '#475569') })
+              .border({ width: this.defaultModel === model ? 0 : 1, color: '#E1E7F0' })
               .padding({ left: 10, right: 10 })
               .margin({ right: 8, bottom: 8 })
               .onClick(() => {
@@ -790,7 +781,7 @@ struct AddProviderPage {
       this.formLabel('上下文窗口大小（可选）')
       TextInput({ text: $$this.contextWindowStr, placeholder: '例如：1000000（留空使用模型默认值）' })
         .width('100%').height(42).backgroundColor(this.inputSurface())
-        .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
         .type(InputType.Number)
 
@@ -826,7 +817,7 @@ struct AddProviderPage {
         }
         .padding({ left: 8, right: 8, top: 4, bottom: 4 })
         .borderRadius(8)
-        .backgroundColor(this.themeColor('#F8FAFC', '#263449'))
+        .backgroundColor('#F8FAFC')
         .border({ width: 1, color: '#E2E8F0' })
         .onClick(() => { this.triggerFeedback('测速暂不可用。', 'info'); })
       }
@@ -835,14 +826,14 @@ struct AddProviderPage {
 
       TextInput({ text: $$this.baseUrl, placeholder: 'https://your-api-endpoint.com' })
         .width('100%').height(42).backgroundColor(this.inputSurface())
-        .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
+        .border({ width: 1, color: '#DEE6F2' }).borderRadius(14)
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
       this.requestHint()
       this.advancedSection()
     }
     .padding(18)
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
+    .border({ width: 1, color: '#E2EAF3' })
     .borderRadius(24)
   }
 
@@ -859,7 +850,7 @@ struct AddProviderPage {
         .fontColor(this.textSecondary())
       .backgroundColor(this.surface())
         .borderRadius(14)
-        .border({ width: 1, color: this.themeColor('#D5E0ED', '#475569') })
+        .border({ width: 1, color: '#D5E0ED' })
         .padding({ left: 18, right: 18 })
         .onClick(() => { router.back(); })
 
@@ -877,7 +868,7 @@ struct AddProviderPage {
     }
     .padding({ left: this.isPhone ? 12 : 24, right: this.isPhone ? 12 : 24, top: 14, bottom: 18 })
     .backgroundColor(this.surface())
-    .border({ width: 1, color: this.themeColor('#E3EAF4', '#334155') })
+    .border({ width: 1, color: '#E3EAF4' })
     .borderRadius(22)
     .margin({ top: 16 })
   }
@@ -943,6 +934,6 @@ struct AddProviderPage {
     }
     .width('100%')
     .height('100%')
-      .backgroundColor(this.themeColor('#E9EEF6', '#0F172A'))
+      .backgroundColor('#E9EEF6')
   }
 }

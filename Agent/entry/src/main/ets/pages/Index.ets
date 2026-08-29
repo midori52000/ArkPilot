@@ -53,24 +53,6 @@ const USER_FILE_SERVICE_SYSCAP: string = 'SystemCapability.FileManagement.UserFi
 const FOLDER_SELECTION_SYSCAP: string = 'SystemCapability.FileManagement.UserFileService.FolderSelection';
 const FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.AppFileService.FolderAuthorization';
 const LEGACY_FOLDER_AUTHORIZATION_SYSCAP: string = 'SystemCapability.FileManagement.File.Environment.FolderObtain';
-const ARK_PILOT_THEME_MODE_KEY: string = 'arkPilotThemeMode';
-
-let cachedThemeMode: string = '';
-
-function cachedThemeModeValue(): string {
-  if (cachedThemeMode.length === 0) {
-    cachedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
-  }
-  return cachedThemeMode;
-}
-
-function invalidateCachedThemeMode(): void {
-  cachedThemeMode = '';
-}
-
-function indexThemeColor(light: string, dark: string): string {
-  return cachedThemeModeValue() === 'dark' ? dark : light;
-}
 
 // ================================================================
 // TaskPool 卸载：项目目录拷贝 / 镜像 / 删除（迭代式，避免 UI 线程递归同步 I/O）
@@ -892,13 +874,13 @@ struct ArkPilotProjectCreateDialog {
         .copyOption(CopyOptions.None)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor(indexThemeColor('#18181B', '#F8FAFC'))
+        .fontColor('#18181B')
         .width('100%')
 
       Text('同步文件夹是项目和本地目录之间的交换入口。项目在应用内运行，需要时再手动与该文件夹导入或导出项目文件。')
         .copyOption(CopyOptions.None)
         .fontSize(12)
-        .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
+        .fontColor('#4E5969')
         .lineHeight(18)
         .width('100%')
         .margin({ top: 8 })
@@ -907,14 +889,14 @@ struct ArkPilotProjectCreateDialog {
         Text('• 导出项目内容：创建项目后，可以在项目菜单中，把应用内该项目文件夹内容导出到同步文件夹。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
+          .fontColor('#4E5969')
           .lineHeight(18)
           .width('100%')
 
         Text('• 导入文件夹内容：可以在项目菜单中，把同步文件夹中的内容导入到项目文件夹内。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
+          .fontColor('#4E5969')
           .lineHeight(18)
           .width('100%')
           .margin({ top: 6 })
@@ -922,7 +904,7 @@ struct ArkPilotProjectCreateDialog {
         Text('• 未选择时：仅使用应用内项目目录，可以在项目菜单中重新关联同步文件夹。')
           .copyOption(CopyOptions.None)
           .fontSize(12)
-          .fontColor(indexThemeColor('#4E5969', '#CBD5E1'))
+          .fontColor('#4E5969')
           .lineHeight(18)
           .width('100%')
           .margin({ top: 6 })
@@ -932,7 +914,7 @@ struct ArkPilotProjectCreateDialog {
     }
     .width(292)
     .padding({ left: 14, right: 14, top: 14, bottom: 14 })
-    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .backgroundColor('#FFFFFF')
     .borderRadius(16)
   }
 
@@ -943,7 +925,7 @@ struct ArkPilotProjectCreateDialog {
           .copyOption(CopyOptions.None)
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .fontColor('#182431')
           .layoutWeight(1)
         Button('×')
           .type(ButtonType.Normal)
@@ -951,8 +933,8 @@ struct ArkPilotProjectCreateDialog {
           .width(32)
           .height(32)
           .fontSize(20)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(10)
           .onClick(() => {
             this.cancel();
@@ -966,7 +948,7 @@ struct ArkPilotProjectCreateDialog {
       Text('运行目录将自动创建在应用内项目目录。')
         .copyOption(CopyOptions.None)
         .fontSize(14)
-        .fontColor(indexThemeColor('#475569', '#CBD5E1'))
+        .fontColor('#475569')
         .lineHeight(20)
         .width('100%')
         .margin({ top: 8 })
@@ -975,9 +957,9 @@ struct ArkPilotProjectCreateDialog {
         .width('100%')
         .height(48)
         .fontSize(15)
-        .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+        .fontColor('#182431')
         .placeholderColor('#64748B')
-        .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
+        .backgroundColor('#F7F8FA')
         .borderRadius(12)
         .padding({ left: 14, right: 14 })
         .margin({ top: 22 })
@@ -991,7 +973,7 @@ struct ArkPilotProjectCreateDialog {
           Text('同步文件夹')
             .copyOption(CopyOptions.None)
             .fontSize(12)
-            .fontColor(indexThemeColor('#475569', '#CBD5E1'))
+            .fontColor('#475569')
 
           Blank()
             .layoutWeight(1)
@@ -1000,12 +982,12 @@ struct ArkPilotProjectCreateDialog {
             .copyOption(CopyOptions.None)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
-            .fontColor(indexThemeColor(this.shouldShowSourceInfo() ? '#18181B' : '#4E5969', '#E2E8F0'))
+            .fontColor(this.shouldShowSourceInfo() ? '#18181B' : '#4E5969')
             .textAlign(TextAlign.Center)
             .width(22)
             .height(22)
-            .backgroundColor(indexThemeColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF', this.shouldShowSourceInfo() ? '#334155' : '#1E293B'))
-            .border({ width: 1, color: indexThemeColor('#D1D5DB', '#475569') })
+            .backgroundColor(this.shouldShowSourceInfo() ? '#E5E7EB' : '#FFFFFF')
+            .border({ width: 1, color: '#D1D5DB' })
             .borderRadius(11)
             .onHover((isHover: boolean) => {
               this.sourceInfoHovering = isHover;
@@ -1027,7 +1009,7 @@ struct ArkPilotProjectCreateDialog {
               mask: false,
               autoCancel: true,
               enableArrow: true,
-              popupColor: indexThemeColor('#FFFFFF', '#1E293B'),
+              popupColor: '#FFFFFF',
               shadow: { radius: 16, color: '#26000000', offsetX: 0, offsetY: 6 },
               onStateChange: (event) => {
                 if (!event.isVisible) {
@@ -1054,7 +1036,7 @@ struct ArkPilotProjectCreateDialog {
       .width('100%')
       .padding(14)
       .margin({ top: 12 })
-      .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
+      .backgroundColor('#F7F8FA')
       .borderRadius(12)
 
       Button(this.canSelectExternalFolder() ? '选择同步文件夹' : '启用下载目录同步')
@@ -1062,8 +1044,8 @@ struct ArkPilotProjectCreateDialog {
         .width('100%')
         .height(40)
         .fontSize(14)
-        .fontColor(indexThemeColor('#18181B', '#F8FAFC'))
-        .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+        .fontColor('#18181B')
+        .backgroundColor('#F2F3F5')
         .borderRadius(12)
         .margin({ top: 12 })
         .onClick(() => {
@@ -1076,8 +1058,8 @@ struct ArkPilotProjectCreateDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -1104,7 +1086,7 @@ struct ArkPilotProjectCreateDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .backgroundColor('#FFFFFF')
     .borderRadius(24)
   }
 }
@@ -1127,7 +1109,7 @@ struct ArkPilotNameDialog {
           .copyOption(CopyOptions.None)
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .fontColor('#182431')
           .layoutWeight(1)
         Button('×')
           .type(ButtonType.Normal)
@@ -1135,8 +1117,8 @@ struct ArkPilotNameDialog {
           .width(32)
           .height(32)
           .fontSize(20)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(10)
           .onClick(() => {
             this.cancel();
@@ -1151,7 +1133,7 @@ struct ArkPilotNameDialog {
         Text(this.subtitle)
           .copyOption(CopyOptions.None)
           .fontSize(14)
-          .fontColor(indexThemeColor('#475569', '#CBD5E1'))
+          .fontColor('#475569')
           .lineHeight(20)
           .width('100%')
           .margin({ top: 8 })
@@ -1161,9 +1143,9 @@ struct ArkPilotNameDialog {
         .width('100%')
         .height(48)
         .fontSize(15)
-        .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+        .fontColor('#182431')
         .placeholderColor('#64748B')
-        .backgroundColor(indexThemeColor('#F7F8FA', '#172033'))
+        .backgroundColor('#F7F8FA')
         .borderRadius(12)
         .padding({ left: 14, right: 14 })
         .margin({ top: 22 })
@@ -1178,8 +1160,8 @@ struct ArkPilotNameDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -1206,7 +1188,7 @@ struct ArkPilotNameDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .backgroundColor('#FFFFFF')
     .borderRadius(24)
   }
 }
@@ -1228,7 +1210,7 @@ struct ArkPilotDeleteDialog {
           .copyOption(CopyOptions.None)
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .fontColor('#182431')
           .layoutWeight(1)
         Button('×')
           .type(ButtonType.Normal)
@@ -1236,8 +1218,8 @@ struct ArkPilotDeleteDialog {
           .width(32)
           .height(32)
           .fontSize(20)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(10)
           .onClick(() => {
             this.cancel();
@@ -1260,7 +1242,7 @@ struct ArkPilotDeleteDialog {
         Text(this.description)
           .copyOption(CopyOptions.None)
           .fontSize(13)
-          .fontColor(indexThemeColor('#475569', '#CBD5E1'))
+          .fontColor('#475569')
           .lineHeight(19)
           .width('100%')
           .margin({ top: 8 })
@@ -1272,8 +1254,8 @@ struct ArkPilotDeleteDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -1300,7 +1282,7 @@ struct ArkPilotDeleteDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .backgroundColor('#FFFFFF')
     .borderRadius(24)
   }
 }
@@ -1318,7 +1300,7 @@ struct ArkPilotLogoutDialog {
           .copyOption(CopyOptions.None)
           .fontSize(20)
           .fontWeight(FontWeight.Medium)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+          .fontColor('#182431')
           .layoutWeight(1)
         Button('×')
           .type(ButtonType.Circle)
@@ -1327,9 +1309,9 @@ struct ArkPilotLogoutDialog {
           .height(32)
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor(indexThemeColor('#64748B', '#A8B3C2'))
-          .backgroundColor(indexThemeColor('#F1F5F9', '#334155'))
-          .border({ width: 1, color: indexThemeColor('#E2E8F0', '#475569') })
+          .fontColor('#64748B')
+          .backgroundColor('#F1F5F9')
+          .border({ width: 1, color: '#E2E8F0' })
           .onClick(() => {
             this.cancel();
             if (this.controller !== undefined) {
@@ -1342,7 +1324,7 @@ struct ArkPilotLogoutDialog {
       Text('确定要退出华为账号登录吗？')
         .copyOption(CopyOptions.None)
         .fontSize(15)
-        .fontColor(indexThemeColor('#182431', '#F8FAFC'))
+        .fontColor('#182431')
         .lineHeight(22)
         .width('100%')
         .margin({ top: 16 })
@@ -1350,7 +1332,7 @@ struct ArkPilotLogoutDialog {
       Text('退出后需要重新使用华为账号登录。')
         .copyOption(CopyOptions.None)
         .fontSize(13)
-        .fontColor(indexThemeColor('#475569', '#CBD5E1'))
+        .fontColor('#475569')
         .lineHeight(19)
         .width('100%')
         .margin({ top: 8 })
@@ -1361,8 +1343,8 @@ struct ArkPilotLogoutDialog {
           .layoutWeight(1)
           .height(40)
           .fontSize(14)
-          .fontColor(indexThemeColor('#182431', '#F8FAFC'))
-          .backgroundColor(indexThemeColor('#F2F3F5', '#263449'))
+          .fontColor('#182431')
+          .backgroundColor('#F2F3F5')
           .borderRadius(20)
           .onClick(() => {
             this.cancel();
@@ -1389,7 +1371,7 @@ struct ArkPilotLogoutDialog {
     }
     .width('100%')
     .padding({ left: 24, right: 24, top: 24, bottom: 20 })
-    .backgroundColor(indexThemeColor('#FFFFFF', '#1E293B'))
+    .backgroundColor('#FFFFFF')
     .borderRadius(24)
   }
 }
@@ -1400,7 +1382,6 @@ struct Index {
   @StorageProp('arkPilotBreakpoint')
   @Watch('onBreakpointChanged')
   currentBreakpoint: ArkPilotBreakpoint = 'sm';
-  @State private isDarkMode: boolean = false;
   @StorageProp('arkPilotLoggedIn')
   @Watch('onLoggedInChanged')
   accountLoggedIn: boolean = false;
@@ -1812,10 +1793,6 @@ struct Index {
       router.replaceUrl({ url: 'pages/LoginPage' });
       return;
     }
-    const savedThemeMode = AppStorage.get<string>(ARK_PILOT_THEME_MODE_KEY) ?? 'light';
-    this.isDarkMode = savedThemeMode === 'dark';
-    AppStorage.setOrCreate<string>(ARK_PILOT_THEME_MODE_KEY, this.isDarkMode ? 'dark' : 'light');
-    invalidateCachedThemeMode();
     const mediaQuery = this.getUIContext().getMediaQuery();
     breakpointManager.initialize((condition: string) => mediaQuery.matchMediaSync(condition));
     this.applyResponsiveLayoutProfile(true);
@@ -2842,65 +2819,52 @@ struct Index {
     this.runMotion(action, this.motionFastDuration);
   }
 
-  private themeColor(light: string, dark: string): string {
-    return this.isDarkMode ? dark : light;
-  }
-
   private themeRootBackground(): string {
-    return this.themeColor('#EEF2F7', '#1E1E1E');
+    return '#EEF2F7';
   }
 
   private themePanelBackground(): string {
-    return this.themeColor('#FAFAFA', '#252526');
+    return '#FAFAFA';
   }
 
   private themeElevatedBackground(): string {
-    return this.themeColor('#FFFFFF', '#2D2D30');
+    return '#FFFFFF';
   }
 
   private themeInputBackground(): string {
-    return this.themeColor('#FFFFFF', '#1E1E1E');
+    return '#FFFFFF';
   }
 
   private themeSubtleBackground(): string {
-    return this.themeColor('#F4F4F5', '#333333');
+    return '#F4F4F5';
   }
 
   private themeTextPrimary(): string {
-    return this.themeColor('#18181B', '#D4D4D4');
+    return '#18181B';
   }
 
   private themeTextStrong(): string {
-    return this.themeColor('#0F172A', '#E8E8E8');
+    return '#0F172A';
   }
 
   private themeTextSecondary(): string {
-    return this.themeColor('#71717A', '#B3B3B3');
+    return '#71717A';
   }
 
   private themeTextMuted(): string {
-    return this.themeColor('#64748B', '#858585');
+    return '#64748B';
   }
 
   private themeBorder(): string {
-    return this.themeColor('#E4E4E7', '#3C3C3C');
+    return '#E4E4E7';
   }
 
   private themeStrongBorder(): string {
-    return this.themeColor('#D4D4D8', '#505050');
+    return '#D4D4D8';
   }
 
   private themeBackdrop(): string {
-    return this.themeColor('#66000000', '#99000000');
-  }
-
-  private toggleTheme(): void {
-    const nextDark = !this.isDarkMode;
-    this.getUIContext().animateTo({ duration: 320, curve: Curve.FastOutSlowIn }, () => {
-      this.isDarkMode = nextDark;
-    });
-    AppStorage.set<string>(ARK_PILOT_THEME_MODE_KEY, nextDark ? 'dark' : 'light');
-    invalidateCachedThemeMode();
+    return '#66000000';
   }
 
   private toggleProjectExpanded(projectId: string): void {
@@ -5103,7 +5067,7 @@ struct Index {
       case 'agent':
         return '#00000000';
       case 'user':
-        return this.themeColor('#EFF6FF', '#333333');
+        return '#EFF6FF';
       default:
         return this.themeElevatedBackground();
     }
@@ -5143,22 +5107,22 @@ struct Index {
 
   private diffBackground(kind: string): string {
     if (kind === 'add') {
-      return this.themeColor('#ECFDF3', '#243A2E');
+      return '#ECFDF3';
     }
     if (kind === 'delete') {
-      return this.themeColor('#FEF2F2', '#3A2529');
+      return '#FEF2F2';
     }
-    return this.themeColor('#F8FAFC', '#252526');
+    return '#F8FAFC';
   }
 
   private diffColor(kind: string): string {
     if (kind === 'add') {
-      return this.themeColor('#15803D', '#86EFAC');
+      return '#15803D';
     }
     if (kind === 'delete') {
-      return this.themeColor('#DC2626', '#FCA5A5');
+      return '#DC2626';
     }
-    return this.themeColor('#475569', '#CBD5E1');
+    return '#475569';
   }
 
   private isWorkspaceActive(item: WorkspaceItem): boolean {
@@ -6075,9 +6039,9 @@ struct Index {
     Text(label)
       .copyOption(CopyOptions.None)
       .fontSize(10)
-      .fontColor(this.themeColor(color, this.themeTextSecondary()))
+      .fontColor(color)
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-      .backgroundColor(this.themeColor(background, this.themeSubtleBackground()))
+      .backgroundColor(background)
       .borderRadius(6)
   }
 
@@ -6138,7 +6102,7 @@ struct Index {
       .fontColor(selected ? this.themeTextStrong() : this.themeTextSecondary())
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Normal)
       .padding({ left: 11, right: 11, top: 6, bottom: 6 })
-      .backgroundColor(selected ? this.themeColor('#EEF6FF', '#1E3A5F') : this.themeElevatedBackground())
+      .backgroundColor(selected ? '#EEF6FF' : this.themeElevatedBackground())
       .border({ width: 0.5, color: selected ? '#93C5FD' : this.themeBorder() })
       .borderRadius(10)
       .shadow(selected ? { radius: 8, color: '#143B82F6', offsetY: 2 } : { radius: 0, color: '#00000000', offsetY: 0 })
@@ -6338,7 +6302,7 @@ struct Index {
   @Builder
   private iconSelectTextButton(active: boolean, onPress: () => void) {
     Row() {
-      this.selectTextIcon(active ? this.themeColor('#2563EB', '#93C5FD') : this.themeTextSecondary())
+      this.selectTextIcon(active ? '#2563EB' : this.themeTextSecondary())
     }
     .width(30)
     .height(26)
@@ -7195,10 +7159,10 @@ struct Index {
         Text(block.language.length > 0 ? block.language : 'text')
           .copyOption(CopyOptions.None)
           .fontSize(9)
-          .fontColor(this.themeColor('#0369A1', '#9CDCFE'))
+          .fontColor('#0369A1')
           .fontWeight(FontWeight.Medium)
           .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-          .backgroundColor(this.themeColor('#E0F2FE', '#263241'))
+          .backgroundColor('#E0F2FE')
           .borderRadius(6)
         Blank()
           .layoutWeight(1)
@@ -7761,7 +7725,7 @@ struct Index {
         Text('Mermaid')
           .copyOption(CopyOptions.None)
           .fontSize(9)
-          .fontColor(this.themeColor('#2563EB', '#93C5FD'))
+          .fontColor('#2563EB')
           .padding({ left: 7, right: 7, top: 3, bottom: 3 })
           .backgroundColor(this.eventSoftBackground('tool'))
           .borderRadius(6)
@@ -8012,7 +7976,7 @@ struct Index {
             Text('重试压缩')
               .copyOption(CopyOptions.None)
               .fontSize(this.conversationFontSize(10))
-              .fontColor(this.themeColor('#4338CA', '#A5B4FC'))
+              .fontColor('#4338CA')
               .fontWeight(FontWeight.Medium)
               .padding({ left: 8, right: 8, top: 5, bottom: 5 })
               .backgroundColor(this.compactionNoticeSoftBackground('completed'))
@@ -8212,7 +8176,7 @@ struct Index {
       bottom: this.isUserMessage(item) ? 9 : 4
     })
     .backgroundColor(this.messageBackground(item.itemType ?? item.role))
-    .border({ width: this.isUserMessage(item) ? 0.5 : 0, color: this.isUserMessage(item) ? this.themeColor('#BFDBFE', '#2563EB') : 'transparent' })
+    .border({ width: this.isUserMessage(item) ? 0.5 : 0, color: this.isUserMessage(item) ? '#BFDBFE' : 'transparent' })
     .borderRadius(this.isUserMessage(item) ? 10 : 0)
   }
 
@@ -8414,7 +8378,7 @@ struct Index {
 
   private plainMarkdownRunColor(run: MarkdownTextRun, itemType?: string): string {
     if (run.inlineKind === 'link') {
-      return this.themeColor('#2563EB', '#93C5FD');
+      return '#2563EB';
     }
     if (run.inlineKind === 'code') {
       return this.themeTextStrong();
@@ -9052,13 +9016,13 @@ struct Index {
 
   private codeTokenColor(kind: string): string {
     switch (kind) {
-      case 'keyword': return this.themeColor('#7C3AED', '#C586C0');
-      case 'builtin': return this.themeColor('#0369A1', '#9CDCFE');
-      case 'string': return this.themeColor('#15803D', '#CE9178');
+      case 'keyword': return '#7C3AED';
+      case 'builtin': return '#0369A1';
+      case 'string': return '#15803D';
       case 'number':
-      case 'literal': return this.themeColor('#B45309', '#B5CEA8');
-      case 'comment': return this.themeColor('#64748B', '#6A9955');
-      case 'operator': return this.themeColor('#BE123C', '#D4D4D4');
+      case 'literal': return '#B45309';
+      case 'comment': return '#64748B';
+      case 'operator': return '#BE123C';
       default: return this.themeTextStrong();
     }
   }
@@ -10226,30 +10190,30 @@ struct Index {
 
   private eventSoftBackground(role: string): string {
     switch (role) {
-      case 'reasoning': return this.themeColor('#FFFBEB', '#332D20');
-      case 'command': return this.themeColor('#ECFDF5', '#26342E');
-      case 'tool': return this.themeColor('#EFF6FF', '#263241');
-      case 'file': return this.themeColor('#F5F3FF', '#302A3D');
-      case 'search': return this.themeColor('#F0FDFA', '#243A36');
-      case 'plan': return this.themeColor('#FFF7ED', '#3A2E24');
-      case 'image': return this.themeColor('#FDF2F8', '#3A2633');
-      case 'hook': return this.themeColor('#FEFCE8', '#37321F');
-      case 'review': return this.themeColor('#FEF9C3', '#3A341C');
-      default: return this.themeColor('#F8FAFC', '#2D2D30');
+      case 'reasoning': return '#FFFBEB';
+      case 'command': return '#ECFDF5';
+      case 'tool': return '#EFF6FF';
+      case 'file': return '#F5F3FF';
+      case 'search': return '#F0FDFA';
+      case 'plan': return '#FFF7ED';
+      case 'image': return '#FDF2F8';
+      case 'hook': return '#FEFCE8';
+      case 'review': return '#FEF9C3';
+      default: return '#F8FAFC';
     }
   }
 
   private eventBorderColor(role: string): string {
     switch (role) {
-      case 'reasoning': return this.themeColor('#FDE68A', '#6B5A2A');
-      case 'command': return this.themeColor('#A7F3D0', '#3F6B57');
-      case 'tool': return this.themeColor('#BFDBFE', '#3C5E86');
-      case 'file': return this.themeColor('#DDD6FE', '#5A4D80');
-      case 'search': return this.themeColor('#99F6E4', '#3B7168');
-      case 'plan': return this.themeColor('#FED7AA', '#755538');
-      case 'image': return this.themeColor('#FBCFE8', '#784960');
-      case 'hook': return this.themeColor('#FDE68A', '#6B5A2A');
-      case 'review': return this.themeColor('#FACC15', '#776A24');
+      case 'reasoning': return '#FDE68A';
+      case 'command': return '#A7F3D0';
+      case 'tool': return '#BFDBFE';
+      case 'file': return '#DDD6FE';
+      case 'search': return '#99F6E4';
+      case 'plan': return '#FED7AA';
+      case 'image': return '#FBCFE8';
+      case 'hook': return '#FDE68A';
+      case 'review': return '#FACC15';
       default: return this.themeBorder();
     }
   }
@@ -10315,12 +10279,12 @@ struct Index {
     switch (status) {
       case 'failed':
       case 'timeout':
-        return this.themeColor('#FEF2F2', '#3A2529');
+        return '#FEF2F2';
       case 'starting':
       case 'running':
-        return this.themeColor('#EFF6FF', '#263241');
+        return '#EFF6FF';
       case 'completed':
-        return this.themeColor('#EEF2FF', '#302A3D');
+        return '#EEF2FF';
       default:
         return this.themeSubtleBackground();
     }
@@ -10330,12 +10294,12 @@ struct Index {
     switch (status) {
       case 'failed':
       case 'timeout':
-        return this.themeColor('#FECACA', '#7A3A40');
+        return '#FECACA';
       case 'starting':
       case 'running':
-        return this.themeColor('#BFDBFE', '#3C5E86');
+        return '#BFDBFE';
       case 'completed':
-        return this.themeColor('#C7D2FE', '#5A4D80');
+        return '#C7D2FE';
       default:
         return this.themeStrongBorder();
     }
@@ -10396,11 +10360,11 @@ struct Index {
   private statusBgColor(status: string): string {
     switch (status) {
       case 'inProgress':
-        return this.themeColor('#E0F2FE', '#263241');
+        return '#E0F2FE';
       case 'failed':
-        return this.themeColor('#FEE2E2', '#3A2529');
+        return '#FEE2E2';
       case 'declined':
-        return this.themeColor('#FEF3C7', '#332D20');
+        return '#FEF3C7';
       default:
         return this.themeSubtleBackground();
     }
@@ -10412,9 +10376,9 @@ struct Index {
         return this.themeTextSecondary();
       case 'command':
       case 'tool':
-        return this.themeColor('#1E40AF', '#93C5FD');
+        return '#1E40AF';
       default:
-        return this.themeColor('#27272A', '#E2E8F0');
+        return '#27272A';
     }
   }
 
@@ -10497,8 +10461,8 @@ struct Index {
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor(this.isDiffFileSelected(file) ? this.themeColor('#EFF6FF', '#333333') : this.themeElevatedBackground())
-    .border({ width: 0.5, color: this.isDiffFileSelected(file) ? this.themeColor('#93C5FD', '#505050') : this.themeBorder() })
+    .backgroundColor(this.isDiffFileSelected(file) ? '#EFF6FF' : this.themeElevatedBackground())
+    .border({ width: 0.5, color: this.isDiffFileSelected(file) ? '#93C5FD' : this.themeBorder() })
     .borderRadius(8)
     .gesture(
       TapGesture({ count: 2 })
@@ -10703,81 +10667,6 @@ struct Index {
   }
 
   @Builder
-  private sunIcon() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Circle()
-        .width(10)
-        .height(10)
-        .fill('#00000000')
-        .stroke(this.themeColor('#374151', '#D1D5DB'))
-        .strokeWidth(1.4)
-        .position({ x: 7, y: 7 })
-
-      Column().width(1.3).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 11.35, y: 1 })
-      Column().width(1.3).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 11.35, y: 19 })
-      Row().width(4).height(1.3).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 1, y: 11.35 })
-      Row().width(4).height(1.3).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 19, y: 11.35 })
-      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 4.3, y: 4.1 }).rotate({ angle: -45 })
-      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 18.4, y: 4.1 }).rotate({ angle: 45 })
-      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 4.3, y: 16.2 }).rotate({ angle: 45 })
-      Column().width(1.2).height(4).backgroundColor(this.themeColor('#374151', '#D1D5DB')).borderRadius(1).position({ x: 18.4, y: 16.2 }).rotate({ angle: -45 })
-    }
-    .width(24)
-    .height(24)
-  }
-
-  @Builder
-  private moonIcon() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Circle()
-        .width(18)
-        .height(18)
-        .fill(this.themeColor('#374151', '#E5E7EB'))
-        .position({ x: 3, y: 3 })
-
-      Circle()
-        .width(17)
-        .height(17)
-        .fill(this.themeElevatedBackground())
-        .position({ x: 9, y: 0 })
-    }
-    .width(24)
-    .height(24)
-  }
-
-  @Builder
-  private themeToggleIcon() {
-    if (this.isDarkMode) {
-      this.moonIcon()
-    } else {
-      this.sunIcon()
-    }
-  }
-
-  @Builder
-  private themeToggleButton() {
-    Button() {
-      Row() {
-        this.themeToggleIcon()
-      }
-      .width(28)
-      .height(28)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-    }
-    .type(ButtonType.Normal)
-    .width(32)
-    .height(32)
-    .backgroundColor(this.themeElevatedBackground())
-    .border({ width: 0.5, color: this.themeBorder() })
-    .borderRadius(16)
-    .shadow({ radius: this.isDarkMode ? 0 : 8, color: '#120F172A', offsetY: 2 })
-    .onClick(() => {
-      this.toggleTheme();
-    })
-  }
-
-  @Builder
   private leftPanel() {
     Column() {
       // Header
@@ -10789,8 +10678,6 @@ struct Index {
           .fontColor(this.themeTextPrimary())
           .layoutWeight(1)
           .onClick(() => { this.showAboutDialog = true; })
-
-        this.themeToggleButton()
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -11006,7 +10893,7 @@ struct Index {
               Text(this.currentCollaborationModeLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor(this.themeColor('#C2410C', '#FDBA74'))
+                .fontColor('#C2410C')
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                 .backgroundColor(this.eventSoftBackground('plan'))
                 .borderRadius(6)
@@ -11015,7 +10902,7 @@ struct Index {
               Text(this.currentModelLabel())
                 .copyOption(CopyOptions.None)
                 .fontSize(10)
-                .fontColor(this.themeColor('#2563EB', '#93C5FD'))
+                .fontColor('#2563EB')
                 .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                 .backgroundColor(this.eventSoftBackground('tool'))
                 .borderRadius(6)
@@ -11074,7 +10961,7 @@ struct Index {
             Text(this.currentCollaborationModeLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor(this.themeColor('#C2410C', '#FDBA74'))
+              .fontColor('#C2410C')
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .backgroundColor(this.eventSoftBackground('plan'))
               .borderRadius(6)
@@ -11083,7 +10970,7 @@ struct Index {
             Text(this.currentModelLabel())
               .copyOption(CopyOptions.None)
               .fontSize(10)
-              .fontColor(this.themeColor('#2563EB', '#93C5FD'))
+              .fontColor('#2563EB')
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .backgroundColor(this.eventSoftBackground('tool'))
               .borderRadius(6)
@@ -11193,7 +11080,7 @@ struct Index {
                 .margin({ left: 6 })
             }
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .backgroundColor(this.showCollaborationModeOptions ? this.themeColor('#EEF6FF', '#1E3A5F') : this.themeElevatedBackground())
+            .backgroundColor(this.showCollaborationModeOptions ? '#EEF6FF' : this.themeElevatedBackground())
             .border({ width: 0.5, color: this.showCollaborationModeOptions ? '#93C5FD' : this.themeBorder() })
             .borderRadius(12)
             .scale({ x: this.showCollaborationModeOptions ? 1.02 : 1, y: this.showCollaborationModeOptions ? 1.02 : 1 })
@@ -11228,7 +11115,7 @@ struct Index {
                 .margin({ left: 6 })
             }
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-            .backgroundColor(this.showEffortOptions ? this.themeColor('#EEF6FF', '#1E3A5F') : this.themeElevatedBackground())
+            .backgroundColor(this.showEffortOptions ? '#EEF6FF' : this.themeElevatedBackground())
             .border({ width: 0.5, color: this.showEffortOptions ? '#93C5FD' : this.themeBorder() })
             .borderRadius(12)
             .scale({ x: this.showEffortOptions ? 1.02 : 1, y: this.showEffortOptions ? 1.02 : 1 })
@@ -11356,7 +11243,7 @@ struct Index {
       .backgroundColor(this.themePanelBackground())
       .border({ width: 0.5, color: this.themeBorder() })
       .borderRadius(18)
-      .shadow({ radius: this.isDarkMode ? 0 : 18, color: '#120F172A', offsetY: 6 })
+      .shadow({ radius: 18, color: '#120F172A', offsetY: 6 })
     }
     .height('100%')
     .width('100%')
@@ -11478,7 +11365,7 @@ struct Index {
         Text(`${this.diffFiles.length.toString()} 个文件`)
           .copyOption(CopyOptions.LocalDevice)
           .fontSize(10)
-          .fontColor(this.themeColor('#1D4ED8', '#93C5FD'))
+          .fontColor('#1D4ED8')
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .backgroundColor(this.eventSoftBackground('tool'))
           .borderRadius(6)
@@ -12508,7 +12395,7 @@ struct Index {
                       .padding({ left: 8, right: 8, top: 3, bottom: 3 })
                       .border({ width: 1, color: this.compactError.length > 0 ? '#EF4444' : this.themeBorder() })
                       .borderRadius(6)
-                      .backgroundColor(this.compactError.length > 0 ? this.themeColor('#FEF2F2', '#3A1D24') : this.themePanelBackground())
+                      .backgroundColor(this.compactError.length > 0 ? '#FEF2F2' : this.themePanelBackground())
                       .margin({ left: 6 })
                       .onClick(() => {
                         this.retryCurrentCompaction(this.backendActiveThreadId);
@@ -12563,7 +12450,7 @@ struct Index {
               .fontWeight(this.tokenTab === 0 ? FontWeight.Medium : FontWeight.Normal)
               .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 0 ? this.themeColor('#27272A', '#334155') : 'transparent')
+              .backgroundColor(this.tokenTab === 0 ? '#27272A' : 'transparent')
               .onClick(() => { this.tokenTab = 0; })
             Text('趋势')
               .fontSize(12)
@@ -12571,7 +12458,7 @@ struct Index {
               .fontWeight(this.tokenTab === 1 ? FontWeight.Medium : FontWeight.Normal)
               .padding({ left: 14, right: 14, top: 5, bottom: 5 })
               .borderRadius(6)
-              .backgroundColor(this.tokenTab === 1 ? this.themeColor('#27272A', '#334155') : 'transparent')
+              .backgroundColor(this.tokenTab === 1 ? '#27272A' : 'transparent')
               .onClick(() => { this.tokenTab = 1; })
           }
           .margin({ top: 10 })
@@ -12640,7 +12527,7 @@ struct Index {
                     .fontWeight(this.tokenTrendRange === 0 ? FontWeight.Medium : FontWeight.Normal)
                     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
                     .borderRadius(6)
-                    .backgroundColor(this.tokenTrendRange === 0 ? this.themeColor('#27272A', '#334155') : 'transparent')
+                    .backgroundColor(this.tokenTrendRange === 0 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 0; })
                   Text('近7天')
                     .fontSize(11)
@@ -12648,7 +12535,7 @@ struct Index {
                     .fontWeight(this.tokenTrendRange === 1 ? FontWeight.Medium : FontWeight.Normal)
                     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
                     .borderRadius(6)
-                    .backgroundColor(this.tokenTrendRange === 1 ? this.themeColor('#27272A', '#334155') : 'transparent')
+                    .backgroundColor(this.tokenTrendRange === 1 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 1; })
                   Text('近30天')
                     .fontSize(11)
@@ -12656,7 +12543,7 @@ struct Index {
                     .fontWeight(this.tokenTrendRange === 2 ? FontWeight.Medium : FontWeight.Normal)
                     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
                     .borderRadius(6)
-                    .backgroundColor(this.tokenTrendRange === 2 ? this.themeColor('#27272A', '#334155') : 'transparent')
+                    .backgroundColor(this.tokenTrendRange === 2 ? '#27272A' : 'transparent')
                     .onClick(() => { this.tokenTrendRange = 2; })
                 }
                 .margin({ top: 8 })
@@ -12964,7 +12851,7 @@ struct Index {
           }
           .width('100%')
           .height('100%')
-          .backgroundColor(this.themeColor('#4D000000', '#B3000000'))
+          .backgroundColor('#4D000000')
           .transition(TransitionEffect.OPACITY.animation({ duration: this.motionNormalDuration, curve: Curve.FastOutSlowIn }))
           .onClick(() => {
             // tap backdrop to dismiss — do nothing, user must approve/deny
@@ -13018,7 +12905,7 @@ struct Index {
             .padding(20)
             .backgroundColor(this.themeElevatedBackground())
             .borderRadius(24)
-            .shadow({ radius: this.isDarkMode ? 0 : 24, color: '#33000000', offsetX: 0, offsetY: 8 })
+            .shadow({ radius: 24, color: '#33000000', offsetX: 0, offsetY: 8 })
           }
           .width('100%')
           .height('100%')
