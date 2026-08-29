@@ -1790,16 +1790,15 @@ struct SettingsPage {
   }
 
   private removeApiProvider(providerId: string): void {
-    this.apiProviders = this.apiProviders.filter((p: ProviderRecord) => p.id !== providerId);
-    if (this.selectedApiProviderId === providerId) {
-      this.selectedApiProviderId = this.apiProviders.length > 0 ? this.apiProviders[0].id : '';
-    }
-
     apiManagementVM.deleteProvider(providerId);
+    this.syncApiStateFromViewModel();
 
     if (apiManagementVM.state.errorText.trim().length > 0) {
       this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
+    }
+    if (this.selectedApiProviderId.length === 0 && this.apiProviders.length > 0) {
+      this.selectedApiProviderId = this.apiProviders[0].id;
     }
     this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
@@ -4344,7 +4343,6 @@ struct SettingsPage {
 
           Row() {
             this.apiSubTabChip('服务商', 'providers')
-            this.apiSubTabChip('预设', 'presets')
           }
 
           Button('+')
