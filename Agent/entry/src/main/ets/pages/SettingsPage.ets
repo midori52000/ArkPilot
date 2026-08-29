@@ -173,6 +173,7 @@ struct SettingsPage {
   @State private configTomlPath: string = '';
 
   @State private apiProviders: ProviderRecord[] = [];
+  @State private apiProviderCount: number = 0;
   @State private apiPresets: ApiPresetMockItem[] = [];
   @State private apiActiveSubTab: ApiSubTab = 'providers';
   @State private selectedApiProviderId: string = '';
@@ -336,6 +337,7 @@ struct SettingsPage {
 
   private syncApiStateFromViewModel(): void {
     this.apiProviders = [...apiManagementVM.state.providers];
+    this.apiProviderCount = this.apiProviders.length;
     if (this.apiProviders.length === 0) {
       this.selectedApiProviderId = '';
       return;
@@ -1873,6 +1875,7 @@ struct SettingsPage {
         this.apiSpeedResults = [...apiManagementVM.state.speedResults];
         this.apiSpeedTesting = false;
         this.apiProviders = [...apiManagementVM.state.providers];
+        this.apiProviderCount = this.apiProviders.length;
         const hasSuccess = this.apiSpeedResults.some((r: EndpointSpeedResult) => r.success);
         if (hasSuccess) {
           this.triggerFeedback('端点测速已完成。', 'success');
@@ -4187,7 +4190,7 @@ struct SettingsPage {
         Blank()
           .layoutWeight(1)
 
-        this.pill(`${this.apiProviders.length} 个服务商`, '#EEF4FF', '#1D4ED8')
+        this.pill(`${this.apiProviderCount} 个服务商`, '#EEF4FF', '#1D4ED8')
       }
       .width('100%')
 
