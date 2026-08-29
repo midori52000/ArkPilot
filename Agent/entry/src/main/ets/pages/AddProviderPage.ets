@@ -700,6 +700,17 @@ struct AddProviderPage {
         }
         .width('100%')
         .margin({ top: 10 })
+
+        Row() {
+          Text('💡')
+            .fontSize(11)
+          Text('以上为快捷填入按钮，具体模型名请以你实际使用的为准')
+            .copyOption(CopyOptions.LocalDevice)
+            .fontSize(10)
+            .fontColor(this.textMuted())
+            .margin({ left: 6 })
+        }
+        .margin({ top: 4 })
       }
 
       this.formLabel('上下文窗口大小（可选）')

@@ -73,15 +73,15 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
   new ProviderPreset(
     'openai-official', 'OpenAI', 'official',
     'https://api.openai.com/v1', 'gpt-5.4',
-    ['gpt-5.4', 'gpt-5.2', 'gpt-4.1', 'gpt-4o', 'gpt-4.1-mini', 'o4-mini'],
+    ['gpt-5.4', 'gpt-5.2', 'gpt-5.1', 'gpt-5-mini', 'gpt-4.1', 'o4-mini'],
     'responses', 'https://platform.openai.com', 'https://platform.openai.com/api-keys',
     'openai', '#00A67E', 'OpenAI 官方 API，支持 Responses API',
     'apiKey', [], true
   ),
   new ProviderPreset(
     'google-official', 'Google AI', 'official',
-    'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-2.5-pro',
-    ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+    'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-3.1-pro',
+    ['gemini-3.1-pro', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
     'responses', 'https://ai.google.dev/gemini-api', 'https://aistudio.google.com/apikey',
     'google', '#4285F4', 'Google AI 官方 API，Gemini 系列模型',
     'apiKey', [], true
@@ -89,7 +89,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
   new ProviderPreset(
     'deepseek', 'DeepSeek', 'official',
     'https://api.deepseek.com/v1', 'deepseek-v4-pro',
-    ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-reasoner'],
     'responses', 'https://platform.deepseek.com', 'https://platform.deepseek.com/api_keys',
     'deepseek', '#4D6BFE', 'DeepSeek 官方 API，OpenAI 兼容格式',
     'apiKey', [], false
@@ -113,7 +113,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
   new ProviderPreset(
     'dashscope', 'Bailian (阿里百炼)', 'official',
     'https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen3-coder-plus',
-    ['qwen3-coder-plus', 'qwen3.5-plus', 'qwen-max', 'qwen-plus'],
+    ['qwen3.5-plus', 'qwen3-coder-plus', 'qwen3-max', 'qwen-plus'],
     'responses', 'https://bailian.console.aliyun.com', 'https://bailian.console.aliyun.com/?apiKey=1',
     'alibaba', '#FF6A00', '阿里云百炼平台，通义千问系列，OpenAI 兼容',
     'apiKey', [], false
@@ -188,7 +188,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
   new ProviderPreset(
     'therouter', 'TheRouter', 'aggregator',
     'https://api.therouter.ai/v1', 'anthropic/claude-sonnet-4.6',
-    ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4', 'google/gemini-3-flash-preview',
+    ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4', 'google/gemini-3.1-pro',
      'deepseek/deepseek-v4-pro', 'qwen/qwen3-coder-480b'],
     'responses', 'https://therouter.ai', 'https://therouter.ai',
     'therouter', '#10B981', 'TheRouter 多模型聚合平台',
@@ -197,7 +197,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
   new ProviderPreset(
     'siliconflow', 'SiliconFlow (硅基流动)', 'aggregator',
     'https://api.siliconflow.cn/v1', 'Pro/MiniMaxAI/MiniMax-M2.7',
-    ['Pro/MiniMaxAI/MiniMax-M2.7', 'deepseek-ai/DeepSeek-V3',
+    ['Pro/MiniMaxAI/MiniMax-M2.7', 'deepseek-ai/DeepSeek-V4',
      'Qwen/Qwen3-235B-A22B', 'ZhipuAI/GLM-5'],
     'responses', 'https://siliconflow.cn', 'https://cloud.siliconflow.cn/account/ak',
     'siliconflow', '#5B21B6', '硅基流动，国产模型聚合平台',
