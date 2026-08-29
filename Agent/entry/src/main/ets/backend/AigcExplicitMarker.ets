@@ -209,6 +209,142 @@ export function buildOfdExplicitTextObject(markerText: string, nextId: number, f
     `<ofd:TextCode X="10" Y="10">${escaped}</ofd:TextCode></ofd:TextObject>`;
 }
 
+/** PDF 页面尺寸（PDF 坐标单位：点，1pt = 1/72 inch）。 */
+export interface PdfPageSize {
+  width: number;
+  height: number;
+}
+
+/** PDF 显式标注页的两个对象段（内容流对象 + 页面对象）。 */
+export interface PdfExplicitPageObjects {
+  contentObj: string;
+  pageObj: string;
+}
+
+/** 标准 A4 页面尺寸（595.276 x 841.89 pt），作为未取到 MediaBox 时的兜底。 */
+export const PDF_A4_SIZE: PdfPageSize = { width: 595.276, height: 841.89 };
+
+/**
+ * 中文字符串 → UTF-16BE 十六进制串（PDF Type0 字体 UniGB-UCS2-H 编码的 <...> 十六进制串）。
+ * BMP 字符一个码点 = 一个 2 字节码元；UTF-16BE 中每码元两个字节，输出 4 位 hex。
+ */
+export function utf16HexString(text: string): string {
+  const hexParts: string[] = [];
+  for (let i: number = 0; i < text.length; i += 1) {
+    const code: number = text.charCodeAt(i);
+    const hex: string = code.toString(16).toUpperCase().padStart(4, '0');
+    hexParts.push(hex);
+  }
+  return hexParts.join('');
+}
+
+/**
+ * 构建 PDF 显式标注页的内容流。
+ *
+ * 与 docx"正文开头插入可见段落"等价：新增一个标注页，顶部画浅黄横幅，
+ * 横幅上用 Type0 中文字体（STSong-Light + UniGB-UCS2-H）绘制
+ * "本文件由AI生成，请注意甄别"，文本以 <hex> 十六进制串嵌入。
+ * 横幅与文本坐标以 MediaBox 左下角为原点，与尺寸无关。
+ *
+ * @param size 页面尺寸（宽/高）
+ * @param markerHex 标记文本的 UTF-16BE hex（由 utf16HexString 生成）
+ */
+export function buildPdfExplicitContentStream(size: PdfPageSize, markerHex: string): string {
+  const h: number = size.height;
+  const w: number = size.width;
+  const bannerH: number = 56;
+  const bannerY: number = h - bannerH;
+  const content: string =
+    'q\n' +
+    '0.98 0.94 0.55 rg\n' + // 浅黄横幅填充
+    `0 ${bannerY} ${w} ${bannerH} re f\n` +
+    '0 0 0 RG\n' +
+    `0 ${bannerY} ${w} 1 re S\n` + // 横幅底边线
+    'Q\n' +
+    'BT\n' +
+    '/F1 16 Tf\n' + // Type0 中文字体
+    '0 0 0 rg\n' +
+    `72 ${bannerY + 18} Td\n` + // 文本基线
+    `<${markerHex}> Tj\n` +
+    'ET\n';
+  return content;
+}
+
+/** 构建 PDF 显式标注页的 Type0 中文字体对象（STSong-Light，不嵌入字体，依赖阅读器内置 CJK 字体）。 */
+export function buildPdfExplicitFontObject(fontObjNum: number, descendantObjNum: number): string {
+  return `${fontObjNum} 0 obj\n` +
+    `<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H ` +
+    `/DescendantFonts [${descendantObjNum} 0 R] >>\nendobj\n`;
+}
+
+/** 构建 STSong-Light 的 CIDFontType2 后代字体对象。 */
+export function buildPdfExplicitCidFontObject(cidObjNum: number, descriptorObjNum: number): string {
+  return `${cidObjNum} 0 obj\n` +
+    `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /STSong-Light ` +
+    `/CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 5 >> ` +
+    `/FontDescriptor ${descriptorObjNum} 0 R /DW 1000 /W [1 [1000]] >>\nendobj\n`;
+}
+
+/** 构建 STSong-Light 的 FontDescriptor 对象。 */
+export function buildPdfExplicitFontDescriptor(descriptorObjNum: number): string {
+  return `${descriptorObjNum} 0 obj\n` +
+    `<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 ` +
+    `/FontBBox [-25 -254 1000 880] /ItalicAngle 0 /Ascent 880 /Descent -254 /CapHeight 880 /StemV 80 >>\nendobj\n`;
+}
+
+/** 构建 PDF 显式标注页的对象块（内容流对象 + 页面对象）。 */
+export function buildPdfExplicitPageObjects(
+  pageObjNum: number,
+  contentObjNum: number,
+  pagesRef: number,
+  fontRef: number,
+  mediaBoxRaw: string,
+  size: PdfPageSize,
+  markerHex: string
+): PdfExplicitPageObjects {
+  const contentStream: string = buildPdfExplicitContentStream(size, markerHex);
+  // 内容流对象 Length 用字节数：stream\n 与 endstream 之间是 contentStream + 末尾 \n。
+  // 内容流全 ASCII（操作符 + hex），字节数 = 字符串长度 + 1（追加的换行）。
+  const streamLen: number = contentStream.length + 1;
+  const contentObj: string =
+    `${contentObjNum} 0 obj\n` +
+    `<< /Length ${streamLen} >>\n` +
+    `stream\n${contentStream}\nendstream\nendobj\n`;
+  const pageObj: string =
+    `${pageObjNum} 0 obj\n` +
+    `<< /Type /Page /Parent ${pagesRef} 0 R ` +
+    `/MediaBox ${mediaBoxRaw} ` +
+    `/Resources << /Font << /F1 ${fontRef} 0 R >> >> ` +
+    `/Contents ${contentObjNum} 0 R >>\nendobj\n`;
+  const result: PdfExplicitPageObjects = { contentObj: contentObj, pageObj: pageObj };
+  return result;
+}
+
+/**
+ * 构建重定义的 Pages 根对象：在原字典体上替换/补齐 /Kids 与 /Count，
+ * 保留其余键（/MediaBox、/Resources、/Parent 等），否则子页会丢失继承属性。
+ * 在 Kids 数组前追加标注页引用，Count 加 1。
+ */
+export function buildPdfRedefinedPagesObject(pagesObjNum: number, originalDictBody: string, newPageObjNum: number, newCount: number): string {
+  let body: string = originalDictBody.trim();
+  const kidsRe: RegExp = /\/Kids\s*\[[^\]]*\]/;
+  if (kidsRe.test(body)) {
+    const innerMatch = body.match(/\/Kids\s*\[([^\]]*)\]/);
+    const inner: string = innerMatch !== null && innerMatch.length > 1 ? innerMatch[1].trim() : '';
+    const newKids: string = inner.length > 0 ? `/Kids [${newPageObjNum} 0 R ${inner}]` : `/Kids [${newPageObjNum} 0 R]`;
+    body = body.replace(kidsRe, newKids);
+  } else {
+    body = `${body} /Kids [${newPageObjNum} 0 R]`;
+  }
+  const countRe: RegExp = /\/Count\s+\d+/;
+  if (countRe.test(body)) {
+    body = body.replace(countRe, `/Count ${newCount}`);
+  } else {
+    body = `${body} /Count ${newCount}`;
+  }
+  return `${pagesObjNum} 0 obj\n<< ${body} >>\nendobj\n`;
+}
+
 /** XML 文本转义。 */
 function escapeXmlText(input: string): string {
   return input
