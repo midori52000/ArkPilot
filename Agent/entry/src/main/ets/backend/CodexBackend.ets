@@ -90,9 +90,10 @@ const BACKEND_LOG_DOMAIN: number = 0x0ff1;
 const BACKEND_LOG_TAG: string = 'CodexBackend';
 const TURN_POLL_INTERVAL_MS: number = 200; // 事件轮询间隔
 const TURN_POLL_HEARTBEAT_INTERVAL_MS: number = 500;
-const TURN_POLL_TIMEOUT_MS: number = 300000; // 5 分钟轮询超时
-const TURN_STATUS_RECONCILE_INTERVAL_MS: number = 5000;
-const TURN_STATUS_RECONCILE_START_MS: number = 10000;
+// 轮询超时：deepseek 等推理模型可能推理超过 5 分钟才产出正文，5 分钟太短会误中断。
+const TURN_POLL_TIMEOUT_MS: number = 1200000; // 20 分钟轮询超时
+// 压缩超时：压缩是后台操作，保持 5 分钟。
+const COMPACTION_TIMEOUT_MS: number = 300000;
 const APPROVAL_POLL_INTERVAL_MS: number = 1000;
 const TERMINAL_TURN_DRAIN_ATTEMPTS: number = 3;
 const TERMINAL_TURN_DRAIN_INTERVAL_MS: number = 250;
@@ -1269,6 +1270,8 @@ function parseJsonText(rawText: string, fallbackValue: Object): Object {
 
 export class CodexBackend {
   private initialized: boolean = false;
+  /** 检测到 remote app-server 断开/连接丢失后置位，允许 ensureConnected 重新连接。 */
+  private connectionLost: boolean = false;
   private connectionState: CodexConnectionState = 'disconnected';
   private connectionText: string = '未连接';
   private readonly listeners: Map<number, BackendListener> = new Map();
@@ -1428,10 +1431,10 @@ export class CodexBackend {
   }
 
   async connect(): Promise<void> {
-    if (this.initialized) {
+    if (this.initialized && !this.connectionLost) {
       return;
     }
-    this.updateConnectionState('connecting', '正在初始化原生桥接');
+    this.updateConnectionState('connecting', this.connectionLost ? '检测到断线，正在重连' : '正在初始化原生桥接');
     const initRequest: InitializeRequestPayload = new InitializeRequestPayload();
     const initResult: Object = parseJsonText(await initializeAsyncNative(JSON.stringify(initRequest)), new Object() as Object);
     const initRecord: Record<string, Object> = initResult as Record<string, Object>;
@@ -1444,6 +1447,7 @@ export class CodexBackend {
       throw new Error(`initialize failed: ${errorText}`);
     }
     this.initialized = true;
+    this.connectionLost = false;
     await this.refreshCollaborationModes();
     await this.refreshAccountState();
     const platformOs: string = typeof initRecord['platformOs'] === 'string'
@@ -1455,6 +1459,7 @@ export class CodexBackend {
 
   async disconnect(): Promise<void> {
     this.initialized = false;
+    this.connectionLost = false;
     this.stopApprovalPolling();
     this.pendingApproval = null;
     this.pendingRequestUserInput = null;
@@ -1746,6 +1751,10 @@ export class CodexBackend {
       const failedSnapshot: CodexTurnResult = this.snapshotForThread(thread, 'failed');
       this.emitTurnUpdate(thread, pendingTurn, failedSnapshot);
       pendingTurn.resolveCompletion(failedSnapshot);
+      // 断线检测：若 turnStart 因连接丢失失败，触发自动重连供下次操作使用。
+      if (this.markConnectionLostIfError(errorMessage)) {
+        this.reconnectInBackground();
+      }
       return failedSnapshot;
     }
 
@@ -1812,7 +1821,7 @@ export class CodexBackend {
 
   private lastCompactError: string = '';
 
-  async compactThread(threadId: string, timeoutMs: number = TURN_POLL_TIMEOUT_MS): Promise<void> {
+  async compactThread(threadId: string, timeoutMs: number = COMPACTION_TIMEOUT_MS): Promise<void> {
     this.lastCompactError = '';
     const normalizedThreadId: string = this.normalizeThreadId(threadId);
     if (normalizedThreadId.length === 0) {
@@ -1854,6 +1863,9 @@ export class CodexBackend {
         const msg = typeof err?.['message'] === 'string' ? (err!['message'] as string) : 'compact 失败';
         this.failCompaction(msg, thread.remoteThreadId);
         this.logInfo(`compact failed: threadId=${thread.remoteThreadId} error=${msg}`);
+        if (this.markConnectionLostIfError(msg)) {
+          this.reconnectInBackground();
+        }
         throw new Error(msg);
       }
       thread.lastCompactionAtMs = Date.now();
@@ -2468,10 +2480,39 @@ export class CodexBackend {
   }
 
   private async ensureConnected(): Promise<void> {
-    if (!this.initialized) {
+    if (!this.initialized || this.connectionLost) {
       await this.connect();
       // 预热 MCP 状态缓存（非阻塞，后台刷新）
       this.refreshMcpServers().catch(() => {});
+    }
+  }
+
+  /** 识别 remote app-server 断线/连接丢失的错误文本（Rust 侧 client 丢失或 worker 退出）。 */
+  private isConnectionLostError(text: string): boolean {
+    const normalized: string = text.toLowerCase();
+    return normalized.indexOf('remote app-server client is not initialized') >= 0 ||
+      normalized.indexOf('app-server client is not initialized') >= 0 ||
+      normalized.indexOf('channel is closed') >= 0 ||
+      normalized.indexOf('request timed out') >= 0 ||
+      normalized.indexOf('disconnected') >= 0;
+  }
+
+  /** 检测到断线后标记 connectionLost；不在此处触发重连，由调用方决定。 */
+  private markConnectionLostIfError(text: string): boolean {
+    if (this.isConnectionLostError(text)) {
+      this.connectionLost = true;
+      this.updateConnectionState('error', '连接已断开');
+      return true;
+    }
+    return false;
+  }
+
+  /** 后台触发一次重连（重新 initialize → Rust connect_remote_client_if_needed 重建 client）。 */
+  private reconnectInBackground(): void {
+    if (this.connectionLost) {
+      this.connect().catch((err: Error) => {
+        this.logInfo(`reconnect failed: ${err.message}`);
+      });
     }
   }
 
@@ -2957,7 +2998,6 @@ export class CodexBackend {
     this.lastEventBatchSignature = '';
     const startedAt: number = Date.now();
     const deadline: number = startedAt + TURN_POLL_TIMEOUT_MS;
-    let nextReconcileAt: number = startedAt + TURN_STATUS_RECONCILE_START_MS;
     let lastHeartbeatPollAt: number = 0;
     while (true) {
       if (pendingTurn.cancelled) {
@@ -3015,15 +3055,21 @@ export class CodexBackend {
             this.emitTurnUpdate(thread, pendingTurn, recoveredSnapshot);
             return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, recoveredSnapshot);
           }
+          const failureMessage: string = this.turnPollFailureMessage(pollObject);
+          this.logInfo(`turnPoll failure detail thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} message=${failureMessage}`);
           const failedSnapshot: CodexTurnResult = this.buildTurnFailureSnapshot(
             thread,
             pendingTurn.turnId,
             this.turnPollFailureTitle(pollObject),
-            this.turnPollFailureMessage(pollObject)
+            failureMessage
           );
           this.emitTurnUpdate(thread, pendingTurn, failedSnapshot);
           thread.activeTurn = null;
           pendingTurn.resolveCompletion(failedSnapshot);
+          // 断线检测：轮询失败若因连接丢失，触发自动重连。
+          if (this.markConnectionLostIfError(failureMessage)) {
+            this.reconnectInBackground();
+          }
           return failedSnapshot;
         }
         const nextSnapshot: CodexTurnResult = this.applyTurnPollResult(thread, pendingTurn.turnId, pollObject);
@@ -3032,14 +3078,10 @@ export class CodexBackend {
           return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, nextSnapshot);
         }
       }
-      if (Date.now() >= nextReconcileAt) {
-        const reconciledSnapshot: CodexTurnResult | null = await this.reconcileInProgressTurnFromThreadHistory(thread, pendingTurn);
-        nextReconcileAt = Date.now() + TURN_STATUS_RECONCILE_INTERVAL_MS;
-        if (reconciledSnapshot !== null) {
-          this.emitTurnUpdate(thread, pendingTurn, reconciledSnapshot);
-          return await this.finalizeTerminalTurnSnapshot(thread, pendingTurn, reconciledSnapshot);
-        }
-      }
+      // 注意：推理期间不发起 thread_read 对账——thread_read 是 app-server RPC，
+      // 推理时 app-server 不响应会导致 await 阻塞轮询（最长 15s 超时），
+      // 累积后触发 5 分钟轮询超时。turn 完成靠 turnEvents/turnPoll 感知，
+      // 轮询失败时的 recoverTurnFromThreadHistory 承担兜底对账。
       await new Promise<void>((resolve) => setTimeout(resolve, TURN_POLL_INTERVAL_MS));
     }
   }
@@ -3122,31 +3164,6 @@ export class CodexBackend {
       snapshot.thread.remainingToAutoCompact,
       snapshot.thread.autoCompactNearThreshold
     );
-  }
-
-  private async reconcileInProgressTurnFromThreadHistory(
-    thread: CodexThreadRecord,
-    pendingTurn: PendingTurnState
-  ): Promise<CodexTurnResult | null> {
-    if (thread.remoteThreadId.trim().length === 0) {
-      return null;
-    }
-    try {
-      const snapshot: ThreadReadSnapshotPayload = await this.readThreadSnapshot(thread.remoteThreadId);
-      const recoveredStatus: CodexTurnStatus = this.mapTurnStatus(snapshot.lastTurnStatus);
-      if (recoveredStatus === 'inProgress') {
-        this.logInfo(`threadRead reconcile still in progress thread=${thread.remoteThreadId} turn=${pendingTurn.turnId}`);
-        return null;
-      }
-      this.logInfo(
-        `threadRead reconcile completed thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} recoveredStatus=${recoveredStatus}`
-      );
-      return this.buildRecoveredTurnResult(snapshot, pendingTurn.turnId, recoveredStatus);
-    } catch (err) {
-      const errorText: string = err instanceof Error ? err.message : JSON.stringify(err);
-      this.logInfo(`threadRead reconcile failed thread=${thread.remoteThreadId} turn=${pendingTurn.turnId} error=${errorText}`);
-      return null;
-    }
   }
 
   private async recoverTurnFromThreadHistory(
