@@ -35,7 +35,6 @@ struct AddProviderPage {
   @State private websiteUrl: string = '';
   @State private apiKey: string = '';
   @State private baseUrl: string = '';
-  @State private requestFullUrl: boolean = false;
   @State private defaultModel: string = '';
   @State private editId: string = '';
   @State private contextWindowStr: string = '';
@@ -501,26 +500,6 @@ struct AddProviderPage {
   }
 
   @Builder
-  private ghostSwitch(enabled: boolean, key: string, onClick: () => void) {
-    Row() {
-      Row() {
-        Column()
-          .width(18)
-          .height(18)
-          .backgroundColor(this.surface())
-          .borderRadius(9)
-          .margin({ left: enabled ? 18 : 2 })
-          .animation({ duration: 140, curve: Curve.EaseOut })
-      }
-      .width(40)
-      .height(22)
-      .backgroundColor(enabled ? '#D946EF' : '#E5E7EB')
-      .borderRadius(11)
-    }
-    .onClick(onClick)
-  }
-
-  @Builder
   private sectionCard(title: string, subtitle: string) {
     Column() {
       Text(title)
@@ -732,35 +711,8 @@ struct AddProviderPage {
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.textPrimary())
-        Row() {
-          Text('完整 URL')
-            .copyOption(CopyOptions.None)
-            .fontSize(10)
-             .fontColor(this.textMuted())
-            .margin({ right: 8 })
-          this.ghostSwitch(this.requestFullUrl, 'request-full-url', () => {
-            this.requestFullUrl = !this.requestFullUrl;
-            this.triggerFeedback(this.requestFullUrl ? '已开启完整 URL 模式。' : '已关闭完整 URL 模式。', 'info');
-          })
-        }
-        .margin({ left: 14 })
         Blank()
           .layoutWeight(1)
-        Row() {
-          Text('⚡')
-            .fontSize(11)
-             .fontColor(this.textMuted())
-          Text('管理与测速')
-            .copyOption(CopyOptions.None)
-            .fontSize(10)
-             .fontColor(this.textMuted())
-            .margin({ left: 6 })
-        }
-        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-        .borderRadius(8)
-        .backgroundColor(this.themeColor('#F8FAFC', '#263449'))
-        .border({ width: 1, color: '#E2E8F0' })
-        .onClick(() => { this.triggerFeedback('测速暂不可用。', 'info'); })
       }
       .width('100%')
       .margin({ top: 16 })

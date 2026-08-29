@@ -1310,10 +1310,6 @@ struct SettingsPage {
     }, 180);
   }
 
-  private notePending(action: string): void {
-    this.triggerFeedback(`${action}暂不可用。`, 'warning');
-  }
-
   private updatePressed(key: string, event: TouchEvent): void {
     if (event.type === TouchType.Down) {
       this.runMotion(() => {
