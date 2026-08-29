@@ -7,7 +7,7 @@ export type McpAuthStatus = 'notRequired' | 'required' | 'pending' | 'authentica
 export type SidebarView = 'chat' | 'providers' | 'sessions' | 'usage' | 'mcp' | 'prompts' | 'skills' | 'openclaw' | 'hermes';
 export type SettingsTab = 'mcp' | 'skills' | 'prompts' | 'api';
 
-export type ApiWireFormat = 'responses' | 'chat' | 'anthropic';
+export type ApiWireFormat = 'responses';
 export type ProviderCategory = 'official' | 'third_party' | 'cloud_provider' | 'aggregator' | 'custom';
 export type WorkspaceAccessKind = 'sandbox' | 'user_granted' | 'readonly' | 'unknown';
 export type WorkspacePermissionState = 'writable' | 'readonly' | 'unavailable' | 'revoked';

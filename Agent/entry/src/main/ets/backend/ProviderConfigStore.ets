@@ -259,12 +259,14 @@ class ModelsCacheJsonRaw {
 // ── TOML mapping helpers ──
 
 function tomlMapToDefinition(m: Map<string, string>): ProviderDefinition {
+  const rawWireApi: string = parseTomlString(m.get('wire_api') ?? '"responses"');
+  const wireApi: string = rawWireApi === 'responses' ? rawWireApi : 'responses';
   return new ProviderDefinition(
     parseTomlString(m.get('id') ?? '""'),
     parseTomlString(m.get('name') ?? '""'),
     parseTomlString(m.get('base_url') ?? '""'),
     parseTomlString(m.get('model') ?? '""'),
-    parseTomlString(m.get('wire_api') ?? '"responses"'),
+    wireApi,
     parseTomlBool(m.get('is_active') ?? 'false'),
     parseTomlString(m.get('app_type') ?? '"codex"'),
     parseTomlString(m.get('mode') ?? '"exclusive"'),

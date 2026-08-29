@@ -171,6 +171,7 @@ struct SettingsPage {
   @State private configTomlPath: string = '';
 
   @State private apiProviders: ProviderRecord[] = [];
+  @State private apiProviderCount: number = 0;
   @State private apiPresets: ApiPresetMockItem[] = [];
   @State private apiActiveSubTab: ApiSubTab = 'providers';
   @State private selectedApiProviderId: string = '';
@@ -334,6 +335,7 @@ struct SettingsPage {
 
   private syncApiStateFromViewModel(): void {
     this.apiProviders = [...apiManagementVM.state.providers];
+    this.apiProviderCount = this.apiProviders.length;
     if (this.apiProviders.length === 0) {
       this.selectedApiProviderId = '';
       return;
@@ -1308,10 +1310,6 @@ struct SettingsPage {
     }, 180);
   }
 
-  private notePending(action: string): void {
-    this.triggerFeedback(`${action}暂不可用。`, 'warning');
-  }
-
   private updatePressed(key: string, event: TouchEvent): void {
     if (event.type === TouchType.Down) {
       this.runMotion(() => {
@@ -1655,10 +1653,6 @@ struct SettingsPage {
     switch (wireApi) {
       case 'responses':
         return 'Responses';
-      case 'chat':
-        return '对话';
-      case 'anthropic':
-        return 'Anthropic';
       default:
         return wireApi;
     }
@@ -1804,16 +1798,15 @@ struct SettingsPage {
   }
 
   private removeApiProvider(providerId: string): void {
-    this.apiProviders = this.apiProviders.filter((p: ProviderRecord) => p.id !== providerId);
-    if (this.selectedApiProviderId === providerId) {
-      this.selectedApiProviderId = this.apiProviders.length > 0 ? this.apiProviders[0].id : '';
-    }
-
     apiManagementVM.deleteProvider(providerId);
+    this.syncApiStateFromViewModel();
 
     if (apiManagementVM.state.errorText.trim().length > 0) {
       this.triggerFeedback(apiManagementVM.state.errorText, 'warning');
       return;
+    }
+    if (this.selectedApiProviderId.length === 0 && this.apiProviders.length > 0) {
+      this.selectedApiProviderId = this.apiProviders[0].id;
     }
     this.triggerFeedback(apiManagementVM.state.statusText, 'success');
   }
@@ -1888,6 +1881,7 @@ struct SettingsPage {
         this.apiSpeedResults = [...apiManagementVM.state.speedResults];
         this.apiSpeedTesting = false;
         this.apiProviders = [...apiManagementVM.state.providers];
+        this.apiProviderCount = this.apiProviders.length;
         const hasSuccess = this.apiSpeedResults.some((r: EndpointSpeedResult) => r.success);
         if (hasSuccess) {
           this.triggerFeedback('端点测速已完成。', 'success');
@@ -4194,7 +4188,7 @@ struct SettingsPage {
         Blank()
           .layoutWeight(1)
 
-        this.pill(`${this.apiProviders.length} 个服务商`, '#EEF4FF', '#1D4ED8')
+        this.pill(`${this.apiProviderCount} 个服务商`, '#EEF4FF', '#1D4ED8')
       }
       .width('100%')
 
@@ -4350,7 +4344,6 @@ struct SettingsPage {
 
           Row() {
             this.apiSubTabChip('服务商', 'providers')
-            this.apiSubTabChip('预设', 'presets')
           }
 
           Button('+')

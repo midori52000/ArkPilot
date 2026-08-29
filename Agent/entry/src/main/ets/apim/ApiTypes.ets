@@ -71,109 +71,92 @@ export class ProviderPreset {
 export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
   // ── 官方 ──
   new ProviderPreset(
-    'anthropic-official', 'Anthropic', 'official',
-    'https://api.anthropic.com/v1', 'claude-sonnet-4-6',
-    ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
-    'anthropic', 'https://www.anthropic.com/claude-code', 'https://console.anthropic.com/settings/keys',
-    'anthropic', '#D97757', 'Anthropic 官方 API，Claude 系列模型',
-    'apiKey', [], true
-  ),
-  new ProviderPreset(
     'openai-official', 'OpenAI', 'official',
     'https://api.openai.com/v1', 'gpt-5.4',
-    ['gpt-5.4', 'gpt-5.2', 'gpt-4.1', 'gpt-4o', 'gpt-4.1-mini', 'o4-mini'],
+    ['gpt-5.4', 'gpt-5.2', 'gpt-5.1', 'gpt-5-mini', 'gpt-4.1', 'o4-mini'],
     'responses', 'https://platform.openai.com', 'https://platform.openai.com/api-keys',
-    'openai', '#00A67E', 'OpenAI 官方 API，支持 Responses/Chat API',
+    'openai', '#00A67E', 'OpenAI 官方 API，支持 Responses API',
     'apiKey', [], true
   ),
   new ProviderPreset(
     'google-official', 'Google AI', 'official',
-    'https://generativelanguage.googleapis.com/v1beta', 'gemini-2.5-pro',
-    ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
-    'chat', 'https://ai.google.dev/gemini-api', 'https://aistudio.google.com/apikey',
+    'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-3.1-pro',
+    ['gemini-3.1-pro', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+    'responses', 'https://ai.google.dev/gemini-api', 'https://aistudio.google.com/apikey',
     'google', '#4285F4', 'Google AI 官方 API，Gemini 系列模型',
     'apiKey', [], true
   ),
   new ProviderPreset(
     'deepseek', 'DeepSeek', 'official',
-    'https://api.deepseek.com/anthropic', 'deepseek-v4-pro',
-    ['deepseek-v4-pro', 'deepseek-v4-flash'],
-    'anthropic', 'https://platform.deepseek.com', 'https://platform.deepseek.com/api_keys',
-    'deepseek', '#4D6BFE', 'DeepSeek 官方 API，Anthropic 兼容格式',
+    'https://api.deepseek.com/v1', 'deepseek-v4-pro',
+    ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-reasoner'],
+    'responses', 'https://platform.deepseek.com', 'https://platform.deepseek.com/api_keys',
+    'deepseek', '#4D6BFE', 'DeepSeek 官方 API，OpenAI 兼容格式',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'zhipu', 'ZhipuGLM (智谱)', 'official',
-    'https://open.bigmodel.cn/api/anthropic', 'glm-5',
+    'https://open.bigmodel.cn/api/paas/v4', 'glm-5',
     ['glm-5'],
-    'anthropic', 'https://open.bigmodel.cn', 'https://open.bigmodel.cn/usercenter/apikeys',
-    'zhipu', '#1677FF', '智谱 AI，GLM-5 模型，Anthropic 兼容格式',
+    'responses', 'https://open.bigmodel.cn', 'https://open.bigmodel.cn/usercenter/apikeys',
+    'zhipu', '#1677FF', '智谱 AI，GLM-5 模型，OpenAI 兼容格式',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'kimi', 'Kimi', 'official',
-    'https://api.moonshot.cn/anthropic', 'kimi-k2.6',
+    'https://api.moonshot.cn/v1', 'kimi-k2.6',
     ['kimi-k2.6'],
-    'anthropic', 'https://platform.moonshot.cn/console', 'https://platform.moonshot.cn/console/api-keys',
+    'responses', 'https://platform.moonshot.cn/console', 'https://platform.moonshot.cn/console/api-keys',
     'moonshot', '#000000', 'Moonshot AI Kimi 平台，kimi-k2.6 模型',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'dashscope', 'Bailian (阿里百炼)', 'official',
-    'https://dashscope.aliyuncs.com/apps/anthropic', 'qwen3-coder-plus',
-    ['qwen3-coder-plus', 'qwen3.5-plus', 'qwen-max', 'qwen-plus'],
-    'anthropic', 'https://bailian.console.aliyun.com', 'https://bailian.console.aliyun.com/?apiKey=1',
-    'alibaba', '#FF6A00', '阿里云百炼平台，通义千问系列，Anthropic 兼容',
+    'https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen3-coder-plus',
+    ['qwen3.5-plus', 'qwen3-coder-plus', 'qwen3-max', 'qwen-plus'],
+    'responses', 'https://bailian.console.aliyun.com', 'https://bailian.console.aliyun.com/?apiKey=1',
+    'alibaba', '#FF6A00', '阿里云百炼平台，通义千问系列，OpenAI 兼容',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'minimax', 'MiniMax', 'official',
-    'https://api.minimaxi.com/anthropic', 'MiniMax-M2.7',
+    'https://api.minimaxi.com/v1', 'MiniMax-M2.7',
     ['MiniMax-M2.7'],
-    'anthropic', 'https://platform.minimaxi.com', 'https://platform.minimaxi.com',
+    'responses', 'https://platform.minimaxi.com', 'https://platform.minimaxi.com',
     'minimax', '#6B21A8', 'MiniMax 开放平台，MiniMax-M2.7 模型',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'doubao', 'DouBaoSeed (豆包)', 'official',
-    'https://ark.cn-beijing.volces.com/api/coding', 'doubao-seed-2-0-code-preview-latest',
+    'https://ark.cn-beijing.volces.com/api/v3', 'doubao-seed-2-0-code-preview-latest',
     ['doubao-seed-2-0-code-preview-latest'],
-    'anthropic', 'https://www.volcengine.com/product/doubao', 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+    'responses', 'https://www.volcengine.com/product/doubao', 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
     'bytedance', '#325AB4', '火山引擎豆包 Seed 系列代码模型',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'mimo', 'Xiaomi MiMo', 'official',
-    'https://api.xiaomimimo.com/anthropic', 'mimo-v2-pro',
+    'https://api.xiaomimimo.com/v1', 'mimo-v2-pro',
     ['mimo-v2-pro'],
-    'anthropic', 'https://platform.xiaomimimo.com', 'https://platform.xiaomimimo.com',
+    'responses', 'https://platform.xiaomimimo.com', 'https://platform.xiaomimimo.com',
     'xiaomi', '#FF6900', '小米 MiMo 开放平台，mimo-v2-pro 模型',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'stepfun', 'StepFun (阶跃星辰)', 'official',
-    'https://api.stepfun.com/step_plan', 'step-3.5-flash-2603',
+    'https://api.stepfun.com/v1', 'step-3.5-flash-2603',
     ['step-3.5-flash-2603', 'step-3.5-flash'],
-    'anthropic', 'https://platform.stepfun.com/step-plan', 'https://platform.stepfun.com/step-plan',
-    'stepfun', '#0052D9', '阶跃星辰 Step Plan API',
+    'responses', 'https://platform.stepfun.com/step-plan', 'https://platform.stepfun.com/step-plan',
+    'stepfun', '#0052D9', '阶跃星辰 Step API',
     'apiKey', [], false
-  ),
-  // ── 云服务商 ──
-  new ProviderPreset(
-    'aws-bedrock', 'AWS Bedrock', 'cloud_provider',
-    'https://bedrock-runtime.us-west-2.amazonaws.com', 'global.anthropic.claude-sonnet-4-6',
-    ['global.anthropic.claude-opus-4-7', 'global.anthropic.claude-sonnet-4-6', 'global.anthropic.claude-haiku-4-5'],
-    'anthropic', 'https://aws.amazon.com/bedrock/', 'https://console.aws.amazon.com/bedrock',
-    'aws', '#FF9900', 'AWS Bedrock 托管 Claude，需 IAM 认证，region 请按实际修改',
-    'apiKey', [], true
   ),
   // ── 聚合商 ──
   new ProviderPreset(
     'openrouter', 'OpenRouter', 'aggregator',
-    'https://openrouter.ai/api', 'anthropic/claude-sonnet-4.6',
+    'https://openrouter.ai/api/v1', 'anthropic/claude-sonnet-4.6',
     ['anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.4',
      'google/gemini-3.1-pro', 'deepseek/deepseek-v4-pro'],
-    'anthropic', 'https://openrouter.ai', 'https://openrouter.ai/keys',
+    'responses', 'https://openrouter.ai', 'https://openrouter.ai/keys',
     'openrouter', '#6366F1', 'OpenRouter 多模型聚合平台',
     'apiKey', [new CustomHeadersEntry('HTTP-Referer', 'https://github.com/ArkPilot'),
               new CustomHeadersEntry('X-Title', 'ArkPilot')], false
@@ -182,7 +165,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'shengsuanyun', 'Shengsuanyun (盛算云)', 'aggregator',
     'https://router.shengsuanyun.com/api', 'claude-sonnet-4-6',
     ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-5.4', 'gemini-3.1-pro'],
-    'anthropic', 'https://www.shengsuanyun.com', 'https://www.shengsuanyun.com',
+    'responses', 'https://www.shengsuanyun.com', 'https://www.shengsuanyun.com',
     'shengsuanyun', '#E11D48', '盛算云，多模型聚合平台',
     'apiKey', [], false
   ),
@@ -190,7 +173,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'aihubmix', 'AiHubMix', 'aggregator',
     'https://aihubmix.com', 'claude-sonnet-4-6',
     ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-5.4'],
-    'anthropic', 'https://aihubmix.com', 'https://aihubmix.com',
+    'responses', 'https://aihubmix.com', 'https://aihubmix.com',
     'aihubmix', '#8B5CF6', 'AiHubMix 多模型聚合平台',
     'apiKey', [], false
   ),
@@ -198,25 +181,25 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'dmxapi', 'DMXAPI', 'aggregator',
     'https://www.dmxapi.cn', 'claude-sonnet-4-6',
     ['claude-opus-4-7', 'claude-sonnet-4-6', 'gpt-5.4'],
-    'anthropic', 'https://www.dmxapi.cn', 'https://www.dmxapi.cn',
+    'responses', 'https://www.dmxapi.cn', 'https://www.dmxapi.cn',
     'dmxapi', '#0EA5E9', 'DMXAPI 聚合平台',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'therouter', 'TheRouter', 'aggregator',
     'https://api.therouter.ai/v1', 'anthropic/claude-sonnet-4.6',
-    ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4', 'google/gemini-3-flash-preview',
+    ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4', 'google/gemini-3.1-pro',
      'deepseek/deepseek-v4-pro', 'qwen/qwen3-coder-480b'],
-    'anthropic', 'https://therouter.ai', 'https://therouter.ai',
+    'responses', 'https://therouter.ai', 'https://therouter.ai',
     'therouter', '#10B981', 'TheRouter 多模型聚合平台',
     'apiKey', [], false
   ),
   new ProviderPreset(
     'siliconflow', 'SiliconFlow (硅基流动)', 'aggregator',
-    'https://api.siliconflow.cn', 'Pro/MiniMaxAI/MiniMax-M2.7',
-    ['Pro/MiniMaxAI/MiniMax-M2.7', 'deepseek-ai/DeepSeek-V3',
+    'https://api.siliconflow.cn/v1', 'Pro/MiniMaxAI/MiniMax-M2.7',
+    ['Pro/MiniMaxAI/MiniMax-M2.7', 'deepseek-ai/DeepSeek-V4',
      'Qwen/Qwen3-235B-A22B', 'ZhipuAI/GLM-5'],
-    'chat', 'https://siliconflow.cn', 'https://cloud.siliconflow.cn/account/ak',
+    'responses', 'https://siliconflow.cn', 'https://cloud.siliconflow.cn/account/ak',
     'siliconflow', '#5B21B6', '硅基流动，国产模型聚合平台',
     'apiKey', [], false
   ),
@@ -225,7 +208,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'newapi', 'NewAPI (通用中转)', 'aggregator',
     'https://your-newapi-instance.com/v1', 'claude-sonnet-4-6',
     ['claude-sonnet-4-6', 'claude-opus-4-7', 'gpt-5.4', 'gemini-3.1-pro'],
-    'chat', 'https://github.com/Calcium-Ion/new-api', '',
+    'responses', 'https://github.com/Calcium-Ion/new-api', '',
     'newapi', '#10B981', 'NewAPI 自建中转站，支持多模型接入',
     'apiKey', [], false
   ),
@@ -233,7 +216,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'packycode', 'PackyCode', 'third_party',
     'https://www.packyapi.com/v1', 'claude-sonnet-4-6',
     ['claude-opus-4-7', 'claude-sonnet-4-6'],
-    'anthropic', 'https://www.packyapi.com', 'https://www.packyapi.com',
+    'responses', 'https://www.packyapi.com', 'https://www.packyapi.com',
     'packycode', '#F59E0B', 'PackyCode 第三方 API 服务',
     'apiKey', [], false
   ),
@@ -241,7 +224,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'cubence', 'Cubence', 'third_party',
     'https://api.cubence.com/v1', 'claude-sonnet-4-6',
     ['claude-opus-4-7', 'claude-sonnet-4-6'],
-    'anthropic', 'https://cubence.com', 'https://cubence.com',
+    'responses', 'https://cubence.com', 'https://cubence.com',
     'cubence', '#EC4899', 'Cubence 第三方 API 服务',
     'apiKey', [], false
   ),
@@ -249,7 +232,7 @@ export const BUILTIN_PROVIDER_PRESETS: ProviderPreset[] = [
     'aigocode', 'AIGoCode', 'third_party',
     'https://api.aigocode.com/v1', 'claude-sonnet-4-6',
     ['claude-opus-4-7', 'claude-sonnet-4-6'],
-    'anthropic', 'https://aigocode.com', 'https://aigocode.com',
+    'responses', 'https://aigocode.com', 'https://aigocode.com',
     'aigocode', '#3B82F6', 'AIGoCode 第三方 API 服务',
     'apiKey', [], false
   ),
