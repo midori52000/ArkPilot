@@ -1793,6 +1793,14 @@ struct SettingsPage {
       return;
     }
     this.triggerFeedback(apiManagementVM.state.statusText, 'success');
+    // Provider 切换：配置已写入 config.toml / provider catalog，但 embedded app-server
+    // 在启动时缓存了配置与登录态。新建会话虽会重读 config.toml，但 API key 等运行时状态
+    // 需重启应用才能完整生效，故弹窗引导用户重启。
+    AlertDialog.show({
+      title: '已更改配置',
+      message: '请重启软件以生效。',
+      confirm: { value: '知道了', action: () => {} }
+    });
   }
 
   private removeApiProvider(providerId: string): void {
