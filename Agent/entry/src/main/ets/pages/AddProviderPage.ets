@@ -564,6 +564,7 @@ struct AddProviderPage {
       }
       .margin({ top: 4 })
     }
+    .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(18)
     .backgroundColor(this.surface())
@@ -631,6 +632,7 @@ struct AddProviderPage {
             .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
             .padding({ left: 14, right: 14 }).margin({ top: 8 })
         }
+        .alignItems(HorizontalAlign.Start)
         .width('100%')
       } else {
         Row() {
@@ -641,6 +643,7 @@ struct AddProviderPage {
               .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
               .padding({ left: 14, right: 14 }).margin({ top: 8 })
           }
+          .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
           Column() {
@@ -650,6 +653,7 @@ struct AddProviderPage {
               .border({ width: 1, color: this.themeColor('#DEE6F2', '#475569') }).borderRadius(14)
               .padding({ left: 14, right: 14 }).margin({ top: 8 })
           }
+          .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           .margin({ left: 14 })
         }
@@ -723,6 +727,7 @@ struct AddProviderPage {
         .padding({ left: 14, right: 14 }).margin({ top: 8 })
       this.requestHint()
     }
+    .alignItems(HorizontalAlign.Start)
     .padding(18)
     .backgroundColor(this.surface())
     .border({ width: 1, color: this.themeColor('#E2EAF3', '#334155') })
