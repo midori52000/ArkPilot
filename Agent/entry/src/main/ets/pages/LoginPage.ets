@@ -16,6 +16,7 @@ struct LoginPage {
   @State private capabilitySupported: boolean = true;
   @State private lastAccount: string = '';
   @State private loginBusy: boolean = false;
+  @State private agreed: boolean = false;
 
   private loginController: loginComponentManager.LoginWithHuaweiIDButtonController = new loginComponentManager.LoginWithHuaweiIDButtonController();
   private loginCallbackRegistered: boolean = false;
@@ -55,6 +56,11 @@ struct LoginPage {
     this.loginCallbackRegistered = true;
     this.loginController.onClickLoginWithHuaweiIDButton((err: BusinessError, credential: loginComponentManager.HuaweiIDCredential) => {
       if (this.loginBusy) {
+        return;
+      }
+      // 未勾选同意时拦截，引导用户先阅读并同意协议
+      if (!this.agreed) {
+        this.errorText = '请先阅读并勾选同意《用户协议》与《隐私政策》。';
         return;
       }
       if (err !== null && err !== undefined) {
@@ -98,6 +104,14 @@ struct LoginPage {
     this.loginBusy = false;
     this.lastAccount = '';
     this.errorText = '';
+  }
+
+  private openAgreement(): void {
+    router.pushUrl({ url: 'pages/LegalPage', params: { kind: 'agreement' } });
+  }
+
+  private openPrivacy(): void {
+    router.pushUrl({ url: 'pages/LegalPage', params: { kind: 'privacy' } });
   }
 
   private textPrimary(): string {
@@ -204,13 +218,40 @@ struct LoginPage {
             .margin({ top: 20 })
         }
 
-        Text('登录即代表同意华为相关服务协议与隐私政策')
-          .copyOption(CopyOptions.None)
-          .fontSize(11)
-          .fontColor(this.textMuted())
-          .textAlign(TextAlign.Center)
-          .width('100%')
-          .margin({ top: 40 })
+        Row() {
+          Checkbox({ name: 'agreement', group: 'legal' })
+            .select(this.agreed)
+            .selectedColor('#2563EB')
+            .width(18)
+            .height(18)
+            .onChange((value: boolean) => {
+              this.agreed = value;
+              if (this.agreed) {
+                this.errorText = '';
+              }
+            })
+
+          Text('我已阅读并同意')
+            .copyOption(CopyOptions.None)
+            .fontSize(11)
+            .fontColor(this.textMuted())
+
+          Text('《用户协议》')
+            .copyOption(CopyOptions.None)
+            .fontSize(11)
+            .fontColor('#2563EB')
+            .onClick(() => { this.openAgreement(); })
+
+          Text('《隐私政策》')
+            .copyOption(CopyOptions.None)
+            .fontSize(11)
+            .fontColor('#2563EB')
+            .margin({ left: 4 })
+            .onClick(() => { this.openPrivacy(); })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 40 })
       }
       .width('100%')
       .constraintSize({ maxWidth: 380 })

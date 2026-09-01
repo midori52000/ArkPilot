@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/LoginPage",
+    "pages/LegalPage",
     "pages/Index",
     "pages/SettingsPage",
     "pages/AddProviderPage"
